@@ -1,4 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
+import { DEFAULT_MODEL, DIFFICULTIES } from '../models.js';
+import { normalizeQuizConfig, quizTimerSeconds, durationLabel } from '../quizConfig.js';
 import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
 
 /**
@@ -24,18 +26,16 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
  * Dilengkapi strategi multi-level retry & fallback agar selalu berhasil dengan default API key.
  */
 export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string): Promise<Quiz> {
+  config = normalizeQuizConfig(config);
+  const selectedModel = config.model ?? DEFAULT_MODEL;
   const ai = getGeminiClient(apiKey);
 
   const languagePrompt = config.language === 'en'
     ? 'All questions, options, explanations, and summaries MUST be written in fluent English.'
-    : 'Semua pertanyaan, pilihan jawaban, penjelasan, dan ringkasan WAJIB ditulis dalam Bahasa Indonesia yang baku dan akademis.';
+    : 'Semua pertanyaan, pilihan jawaban, penjelasan, dan ringkasan WAJIB ditulis dalam Bahasa Indonesia yang jelas dan akurat.';
 
-  const difficultyDesc = {
-    beginner: 'Tingkat Pemula: Menguji pemahaman konsep dasar dan fakta fundamental.',
-    intermediate: 'Tingkat Menengah: Menguji pemahaman konseptual, analisis terapan, dan diferensiasi ide.',
-    advanced: 'Tingkat Mahir: Menguji penalaran analitis mendalam, studi kasus kompleks, dan pemecahan masalah multidimensi.',
-    expert: 'Tingkat Olimpiade / Pakar: Soal berstandar kompetisi tingkat tinggi, penalaran logis abstrak, dan sintesis kritis.',
-  }[config.difficulty];
+  const level = DIFFICULTIES.find((item) => item.id === config.difficulty)!;
+  const difficultyDesc = `${level.name}: ${level.description}`;
 
   const systemInstruction = `Anda adalah Academic Assessment Engine tingkat tinggi.
 Tugas Anda:
@@ -50,8 +50,12 @@ Tugas Anda:
 - Topik Utama: "${config.topic}"
 - Tingkat Kesulitan: ${difficultyDesc}
 - Jumlah Soal: ${config.questionCount} butir soal
-- Durasi Rekomendasi: ${config.timeLimitMinutes} menit
+- Tampilan: ${config.displayMode === 'sequential' ? 'Satu soal per langkah' : 'Semua soal dengan navigasi bebas'}
+- Durasi: ${durationLabel(quizTimerSeconds(config))}${quizTimerSeconds(config) > 0 ? config.displayMode === 'sequential' ? ' per soal' : ' total kuis' : ''}
+- Gaya bahasa: ${config.languageStyle || 'Jelas, baku, dan akademis'}
 `;
+
+  if (config.additionalInstructions) userPrompt += `\nPreferensi tambahan pengguna (ikuti selama tetap sesuai topik, bahasa, tingkat kesulitan, jumlah soal, akurasi, dan format JSON di atas):\n${config.additionalInstructions}\n`;
 
   if (config.studyMaterial && config.studyMaterial.trim().length > 0) {
     userPrompt += `\nReferensi Catatan / Materi Bahan Bacaan Khusus:\n"""\n${config.studyMaterial.trim().slice(0, 15000)}\n"""\nGali butir-butir soal utama berdasarkan materi referensi di atas dengan ketat!\n`;
@@ -128,10 +132,10 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
 }
 
   // Pipeline model: Coba gemini-3.8-flash terlebih dahulu, jika demand spike (503/429) beralih mulus ke model flash lainnya
-  const modelCandidates = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  const modelCandidates = [selectedModel, selectedModel === DEFAULT_MODEL ? 'gemini-3.5-flash-lite' : DEFAULT_MODEL, 'gemini-flash-latest'];
 
   let rawResponse: any = null;
-  let usedModelName = 'gemini-3.8-flash';
+  let usedModelName: string = selectedModel;
   let usedGrounding = false;
   let lastError: any = null;
 
@@ -141,7 +145,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
       rawResponse = await callWithRetry(
         () =>
           ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+            model: selectedModel,
             contents: userPrompt,
             config: {
               systemInstruction,
@@ -151,7 +155,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
         0 // jangan buang waktu jika grounding kuota habis/demand spike
       );
       usedGrounding = true;
-      usedModelName = 'gemini-3.8-flash';
+      usedModelName = selectedModel;
     } catch (err: any) {
       lastError = err;
       // Lanjut otomatis ke percobaan tanpa tool pencarian agar tidak terhambat kuota grounding
@@ -265,8 +269,8 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
     };
   });
 
-  if (questions.length === 0) {
-    throw new Error('Format butir soal dari model AI tidak terbaca dengan benar.');
+  if (questions.length !== config.questionCount) {
+    throw new Error(`Model menghasilkan ${questions.length} soal dari ${config.questionCount} yang diminta. Silakan buat kuis kembali.`);
   }
 
   const resultQuiz: Quiz = {
@@ -276,9 +280,16 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
     summary: String(parsedData.summary || `Kuis evaluasi topik ${config.topic} tingkat ${config.difficulty}.`),
     difficulty: config.difficulty,
     timeLimitMinutes: config.timeLimitMinutes,
+    displayMode: config.displayMode,
+    timePerQuestionSeconds: config.timePerQuestionSeconds,
+    languageStyle: config.languageStyle,
+    additionalInstructions: config.additionalInstructions,
     createdAt: new Date().toISOString(),
     questions,
-    groundingQueriesUsed: webQueries.length > 0 ? webQueries : [`Fakta materi ${config.topic}`],
+    groundingQueriesUsed: webQueries,
+    requestedModel: selectedModel,
+    model: usedModelName,
+    usedGrounding,
   };
 
   return resultQuiz;
