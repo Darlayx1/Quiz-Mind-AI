@@ -1,6 +1,12 @@
 node_modules/
 build/
 dist/
+dist-server/
+.vercel/
+.sites-runtime/
+.sites-checkout/
+.worker-assets.json
+*.tar.gz
 coverage/
 .DS_Store
 *.log

@@ -12,8 +12,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-// Server applet AI Studio dev server wajib berjalan di port 3000
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const isProduction = process.env.NODE_ENV === 'production' || __dirname.endsWith('dist-server');
+const staticDir = path.resolve(__dirname, __dirname.endsWith('dist-server') ? '../dist' : 'dist');
 
 app.use(express.json({ limit: '15mb' }));
 
@@ -150,10 +151,10 @@ app.all('/api/*', (_req: Request, res: Response) => {
 // VITE DEV SERVER / STATIC ASSETS HANDLER
 // =========================================================================
 async function startServer() {
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+  if (isProduction) {
+    app.use(express.static(staticDir));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(staticDir, 'index.html'));
     });
   } else {
     const { createServer: createViteServer } = await import('vite');

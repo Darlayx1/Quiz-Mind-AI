@@ -5,9 +5,8 @@ import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
  * Inisialisasi client Gemini menggunakan SDK resmi @google/genai.
  * Menggunakan default API key dari runtime AI Studio Build (process.env.GEMINI_API_KEY).
  */
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new Error('GEMINI_API_KEY belum dikonfigurasi di lingkungan server runtime.');
   }
 
@@ -27,8 +26,8 @@ function getGeminiClient(): GoogleGenAI {
  * dengan penalaran mendalam dan integrasi Google Search Grounding.
  * Dilengkapi strategi multi-level retry & fallback agar selalu berhasil dengan default API key.
  */
-export async function generateQuizWithGemini(config: QuizConfig): Promise<Quiz> {
-  const ai = getGeminiClient();
+export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string): Promise<Quiz> {
+  const ai = getGeminiClient(apiKey);
 
   const languagePrompt = config.language === 'en'
     ? 'All questions, options, explanations, and summaries MUST be written in fluent English.'

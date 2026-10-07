@@ -26,14 +26,14 @@ Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpi
 ## Panduan Instalasi & Menjalankan Aplikasi
 
 ### 1. Prasyarat
-- Node.js versi 18 atau lebih baru
+- Node.js versi 22.12 atau lebih baru
 - NPM
 
 ### 2. Kloning & Instalasi Dependensi
 ```bash
-git clone https://github.com/USERNAME/quizmind-ai.git
-cd quizmind-ai
-npm install
+git clone https://github.com/Darlayx1/Quiz-Mind-AI.git
+cd Quiz-Mind-AI
+npm ci
 ```
 
 ### 3. Konfigurasi Lingkungan (.env)
@@ -53,6 +53,31 @@ PORT=3000
 npm run dev
 ```
 Buka peramban di `http://localhost:3000`.
+
+### 5. Build dan Deployment Produksi
+
+```bash
+npm ci
+npm run lint
+npm run build
+node scripts/smoke-test.mjs
+npm start
+```
+
+`npm start` menjalankan server produksi dari `dist-server/server.js` dan melayani
+halaman dari `dist`. Port mengikuti variabel `PORT` dari penyedia hosting, dengan
+default `3000`. Gunakan Node.js 22.12 atau lebih baru. Build juga menghasilkan
+Worker ESM untuk Sites di `dist/server/index.js`, berisi halaman, aset, dan API.
+
+Di pengaturan lingkungan hosting, pasang `GEMINI_API_KEY` sebagai secret dan
+`ENCRYPTION_SECRET` sebagai secret acak. Jangan gunakan awalan `VITE_` untuk
+kredensial, karena variabel tersebut masuk ke bundle browser. Situs dapat dibuka
+tanpa kunci Gemini; pembuatan kuis memerlukan kunci yang valid dan kuota tersedia.
+`/api/health` mengembalikan status pemasangan kunci tanpa menampilkan kunci lengkap.
+
+Sites menggunakan identitas pada `.openai/hosting.json`. Publikasi awal bersifat
+privat untuk pemilik. Hosting statis saja (misalnya GitHub Pages) tidak dapat
+menjalankan endpoint server Gemini aplikasi ini.
 
 ---
 
