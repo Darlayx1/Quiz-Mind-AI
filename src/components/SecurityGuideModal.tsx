@@ -17,12 +17,14 @@ interface SecurityGuideModalProps {
   isOpen: boolean;
   onClose: () => void;
   maskedKey: string;
+  personalMode: boolean;
 }
 
 export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
   isOpen,
   onClose,
   maskedKey,
+  personalMode,
 }) => {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [testText, setTestText] = useState('Data Ujian & Kunci Jawaban Rahasia');
@@ -93,7 +95,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
                 Pusat Keamanan & Kesiapan GitHub
               </h2>
               <p className="text-xs text-slate-500">
-                Arsitektur proteksi API key dan enkripsi AES-256-GCM
+                {personalMode ? 'Penggunaan kunci pribadi di browser' : 'Arsitektur proteksi API key dan enkripsi AES-256-GCM'}
               </p>
             </div>
           </div>
@@ -111,17 +113,18 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 mb-2">
               <KeyRound className="w-4 h-4 text-blue-600" />
-              <span>Status Proteksi API Key (.env)</span>
+              <span>Privasi API Key</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed mb-3">
-              Kunci API Gemini dikelola <strong>100% di sisi server (Node.js/Express)</strong> via variabel lingkungan <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800">GEMINI_API_KEY</code>. Browser client tidak pernah memegang atau mengekspos API key.
+              {personalMode ? 'Kunci pribadi hanya berada dalam memori halaman dan dikirim langsung ke Google Gemini. Kunci tidak disimpan dalam localStorage, riwayat kuis, atau kode GitHub. Muat ulang halaman atau pilih Hapus kunci untuk mengosongkannya. Gunakan perangkat yang Anda percayai.' : 'Kunci server disimpan dalam variabel GEMINI_API_KEY di hosting. Kunci pribadi yang Anda masukkan digunakan langsung dari browser ke Google Gemini selama sesi halaman ini.'}
             </p>
             <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200 font-mono">
-              <span className="text-slate-500">Kunci Saat Ini di Server:</span>
+              <span className="text-slate-500">{personalMode ? 'Status kunci pribadi:' : 'Status kunci server:'}</span>
               <span className="font-semibold text-emerald-700">{maskedKey}</span>
             </div>
           </div>
 
+          {!personalMode && <>
           {/* Section 2: Git & GitHub Safe Push */}
           <div>
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900 mb-2">
@@ -203,6 +206,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
               )}
             </div>
           </div>
+          </>}
         </div>
 
         {/* Footer */}

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { fetchApi } from './api.js';
+import { fetchApi, setPersonalApiKey, standalonePages } from './api.js';
 import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
@@ -25,6 +25,13 @@ export default function App() {
   const [loadingTopic, setLoadingTopic] = useState('');
   const [loadingGrounding, setLoadingGrounding] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const personalMode = standalonePages || Boolean(apiKey.trim());
+  const handleApiKeyChange = (value: string) => {
+    setPersonalApiKey(value);
+    setApiKey(value);
+    setErrorMessage(null);
+  };
 
   const [historyItems, setHistoryItems] = useState<
     Array<{ quiz: Quiz; lastResult?: QuizResult; savedAt: string }>
@@ -73,7 +80,7 @@ export default function App() {
       .catch((err) => {
         console.warn('Gagal menghubungi /api/health:', err);
       });
-  }, []);
+  }, [apiKey]);
 
   // Handle Quiz Generation
   const handleGenerateQuiz = async (config: QuizConfig) => {
@@ -253,6 +260,9 @@ export default function App() {
             onGenerate={handleGenerateQuiz}
             isLoading={isLoading}
             errorMessage={errorMessage}
+            apiKey={apiKey}
+            onApiKeyChange={handleApiKeyChange}
+            requiresApiKey={standalonePages}
           />
         ) : activeView === 'runner' && currentQuiz ? (
           <QuizRunner
@@ -300,10 +310,10 @@ export default function App() {
               onClick={() => setIsSecurityModalOpen(true)}
               className="hover:text-slate-800 transition-colors cursor-pointer"
             >
-              Proteksi API Key (.env) & Git Vault
+              Privasi API Key
             </button>
             <span>·</span>
-            <span>AES-256-GCM Secure</span>
+            <span>{personalMode ? 'Kunci hanya untuk sesi ini' : 'AES-256-GCM Secure'}</span>
           </div>
         </div>
       </footer>
@@ -313,6 +323,7 @@ export default function App() {
         isOpen={isSecurityModalOpen}
         onClose={() => setIsSecurityModalOpen(false)}
         maskedKey={serverSecurity.maskedKey}
+        personalMode={personalMode}
       />
     </div>
   );

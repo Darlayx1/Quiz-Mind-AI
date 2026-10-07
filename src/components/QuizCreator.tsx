@@ -16,6 +16,9 @@ interface QuizCreatorProps {
   onGenerate: (config: QuizConfig) => void;
   isLoading: boolean;
   errorMessage: string | null;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+  requiresApiKey: boolean;
 }
 
 const PRESET_TOPICS = [
@@ -31,7 +34,11 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({
   onGenerate,
   isLoading,
   errorMessage,
+  apiKey,
+  onApiKeyChange,
+  requiresApiKey,
 }) => {
+  const [showApiKey, setShowApiKey] = useState(false);
   const [inputMode, setInputMode] = useState<'topic' | 'material'>('topic');
   const [topic, setTopic] = useState('');
   const [studyMaterial, setStudyMaterial] = useState('');
@@ -112,6 +119,21 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({
         onSubmit={handleSubmit}
         className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-8"
       >
+        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+          <label htmlFor="personal-api-key" className="block text-sm font-semibold text-slate-900">API Key Pribadi {requiresApiKey ? '*' : '(opsional)'}</label>
+          <div className="flex flex-wrap gap-2">
+            <input id="personal-api-key" type={showApiKey ? 'text' : 'password'} value={apiKey}
+              onChange={(event) => onApiKeyChange(event.target.value)} autoComplete="off" spellCheck={false}
+              required={requiresApiKey} disabled={isLoading} placeholder="Masukkan API key Gemini Anda"
+              aria-describedby="personal-api-key-help"
+              className="min-w-0 flex-1 basis-48 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" />
+            <button type="button" onClick={() => setShowApiKey(!showApiKey)} aria-pressed={showApiKey}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium">{showApiKey ? 'Sembunyikan' : 'Tampilkan'}</button>
+            {apiKey && <button type="button" onClick={() => onApiKeyChange('')} className="px-3 py-2 text-sm font-medium text-slate-600">Hapus kunci</button>}
+          </div>
+          <p id="personal-api-key-help" className="text-sm text-slate-600">Kunci digunakan di browser dan dikirim langsung ke Google Gemini. Tidak disimpan di riwayat atau penyimpanan browser; isi kembali setelah halaman dimuat ulang. Kuota mengikuti proyek Google Anda.</p>
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="inline-block text-sm font-medium text-blue-700 underline">Buat API key di Google AI Studio</a>
+        </div>
         {/* Input Mode Switcher */}
         <div>
           <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">

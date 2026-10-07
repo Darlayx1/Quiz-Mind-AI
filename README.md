@@ -8,8 +8,9 @@ Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpi
 
 - **Model Gemini 3.8 Flash**: Penalaran mendalam (*deep thinking*) dalam menyusun opsi jawaban, distractor realistis, dan pembahasan analitis.
 - **Google Search Grounding Terintegrasi**: Memvalidasi fakta ilmiah, peristiwa sejarah, dan konsep terkini secara langsung via mesin pencari Google, lengkap dengan tautan sumber web yang dapat diverifikasi.
-- **Keamanan Server-Side & Enkripsi AES-256-GCM**:
-  - API Key **100% aman** di server Node.js/Express (`process.env.GEMINI_API_KEY`) dan tidak pernah bocor ke bundle JavaScript browser.
+- **API Key Pribadi & Backend Opsional**:
+  - Pengguna GitHub Pages memasukkan kunci Gemini sendiri. Kunci berada dalam memori halaman dan dikirim langsung ke Google, tanpa disimpan di riwayat atau `localStorage`.
+  - Hosting Node.js/Express juga mendukung kunci milik server (`process.env.GEMINI_API_KEY`), yang tidak dimasukkan ke bundle browser.
   - File `.env` diproteksi secara otomatis melalui `.gitignore` sehingga aman saat di-push ke GitHub.
   - Modul vault kriptografi AES-256-GCM terotentikasi untuk perlindungan token dan integritas kuis.
 - **Pengerjaan Kuis Interaktif**:
@@ -29,16 +30,20 @@ Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpi
 
 Halaman aplikasi diterbitkan di `https://darlayx1.github.io/Quiz-Mind-AI/`
 melalui workflow `.github/workflows/pages.yml` setiap push ke `main`.
-GitHub Pages hanya menjalankan halaman statis; API Gemini perlu server Node.js terpisah.
+Pengguna mengisi kolom **API Key Pribadi**, memilih materi, lalu membuat kuis.
+Browser menghubungi Google Gemini secara langsung sehingga tidak memerlukan backend
+Render atau konfigurasi `VITE_API_BASE_URL`. Kunci disamarkan secara bawaan,
+dapat ditampilkan atau dihapus, dan perlu diisi kembali setelah halaman dimuat ulang.
+Kuota dan akses model mengikuti proyek Google milik masing-masing pengguna.
 
-Backend dapat dibuat dari `render.yaml` menggunakan
+Sebagai pilihan untuk menggunakan kunci milik server, backend dapat dibuat dari `render.yaml` menggunakan
 [Deploy to Render](https://render.com/deploy?repo=https://github.com/Darlayx1/Quiz-Mind-AI).
 Pasang `GEMINI_API_KEY` sebagai secret di Render. Setelah backend aktif, atur
 repository variable `VITE_API_BASE_URL` di GitHub ke URL HTTPS layanan Render
 (tanpa `/api`), lalu jalankan ulang workflow **Deploy GitHub Pages**.
 `VITE_API_BASE_URL` hanya alamat backend, bukan API key.
 
-Tanpa backend, halaman dapat dibuka tetapi pembuatan kuis belum tersedia.
+Jangan masukkan API key ke repository atau variabel dengan awalan `VITE_`.
 
 ### 1. Prasyarat
 - Node.js versi 22.12 atau lebih baru
@@ -91,8 +96,8 @@ tanpa kunci Gemini; pembuatan kuis memerlukan kunci yang valid dan kuota tersedi
 `/api/health` mengembalikan status pemasangan kunci tanpa menampilkan kunci lengkap.
 
 Sites menggunakan identitas pada `.openai/hosting.json`. Publikasi awal bersifat
-privat untuk pemilik. Hosting statis saja (misalnya GitHub Pages) tidak dapat
-menjalankan endpoint server Gemini aplikasi ini.
+privat untuk pemilik. GitHub Pages menggunakan API key pribadi melalui browser;
+endpoint server dan demo vault hanya tersedia jika menggunakan backend.
 
 ---
 
