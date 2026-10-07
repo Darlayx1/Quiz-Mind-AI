@@ -51,7 +51,12 @@ export default {
         if (typeof body.encrypted !== 'string' || !body.encrypted) return json({ error: 'Field "encrypted" wajib diisi.' }, 400);
         return json({ success: true, decrypted: decryptData(body.encrypted, secret) });
       } catch (error) {
-        console.error('QuizMind API error:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        const quotaExceeded = /429|RESOURCE_EXHAUSTED|quota/i.test(message);
+        console.error('QuizMind API error:', { kind: quotaExceeded ? 'quota_exceeded' : 'request_failed' });
+        if (pathname === '/api/generate-quiz' && quotaExceeded) {
+          return json({ success: false, error: 'Kuota Gemini untuk proyek Google Anda sudah habis. Periksa kuota di Google AI Studio dan coba lagi setelah kuota tersedia. API key sudah terpasang di server.' }, 429);
+        }
         if (pathname.endsWith('/decrypt')) return json({ success: false, error: 'Dekripsi gagal atau kunci salah.' }, 400);
         return json({ success: false, error: 'Permintaan gagal diproses. Periksa konfigurasi API dan kuota Gemini, lalu coba kembali.' }, 500);
       }
