@@ -4,7 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { generateQuizWithGemini } from './src/server/geminiService.js';
 import { encryptData, decryptData, maskSecret } from './src/server/cryptoVault.js';
-import { QuizConfig } from './src/types/quiz.js';
+import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
+import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
 dotenv.config();
 
@@ -46,7 +47,8 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     version: '1.0.0',
-    model: 'gemini-3.8-flash',
+    model: DEFAULT_MODEL,
+    models: AI_MODELS.map(model => model.id),
     features: {
       deepThinking: true,
       googleSearchGrounding: true,
@@ -67,37 +69,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
  */
 app.post('/api/generate-quiz', async (req: Request, res: Response) => {
   try {
-    const {
-      topic,
-      studyMaterial,
-      difficulty = 'intermediate',
-      questionCount = 5,
-      timeLimitMinutes = 10,
-      language = 'id',
-      enableGrounding = true,
-    } = req.body;
-
-    if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Topik kuis tidak boleh kosong.',
-      });
-    }
-
-    const countNum = Math.min(Math.max(Number(questionCount) || 5, 1), 20);
-    const validDifficulty = ['beginner', 'intermediate', 'advanced', 'expert'].includes(difficulty)
-      ? difficulty
-      : 'intermediate';
-
-    const config: QuizConfig = {
-      topic: topic.trim(),
-      studyMaterial: typeof studyMaterial === 'string' ? studyMaterial.trim() : undefined,
-      difficulty: validDifficulty as any,
-      questionCount: countNum,
-      timeLimitMinutes: Math.max(Number(timeLimitMinutes) || 10, 1),
-      language: language === 'en' ? 'en' : 'id',
-      enableGrounding: Boolean(enableGrounding),
-    };
+    const config = normalizeQuizConfig(req.body);
 
     const quiz = await generateQuizWithGemini(config);
 
@@ -110,6 +82,7 @@ app.post('/api/generate-quiz', async (req: Request, res: Response) => {
       integrityToken,
     });
   } catch (error: any) {
+    if (error instanceof QuizConfigError) return res.status(400).json({ success: false, error: error.message });
     console.error('Error saat membuat kuis:', error);
     let errorMessage = error?.message || 'Terjadi kesalahan sistem saat menghubungi model Gemini.';
     if (errorMessage.includes('503') || errorMessage.includes('high demand') || errorMessage.includes('UNAVAILABLE')) {

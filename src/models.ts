@@ -1,0 +1,100 @@
+export const AI_MODELS = [
+  {
+    id: "gemini-3.8-flash",
+    name: "Gemini 3.8 Flash",
+    tag: "Penalaran mendalam",
+    description: "Untuk latihan analitis dan materi yang kompleks.",
+  },
+  {
+    id: "gemini-3.7-flash",
+    name: "Gemini 3.7 Flash",
+    tag: "Penalaran & analisis",
+    description: "Untuk latihan dengan penalaran bertahap dan analisis konsep.",
+  },
+  {
+    id: "gemini-3.6-flash",
+    name: "Gemini 3.6 Flash",
+    tag: "Serbaguna",
+    description: "Untuk pemahaman terapan dan beragam topik belajar.",
+  },
+  {
+    id: "gemini-3.5-flash",
+    name: "Gemini 3.5 Flash",
+    tag: "Latihan harian",
+    description: "Untuk membangun pemahaman melalui latihan rutin.",
+  },
+  {
+    id: "gemini-3.5-flash-lite",
+    name: "Gemini 3.5 Flash Lite",
+    tag: "Cepat & efisien",
+    description: "Untuk latihan harian dengan respons yang ringan.",
+  },
+  {
+    id: "gemma-4-31b-it",
+    name: "Gemma 4 31B",
+    tag: "Model terbuka · 31B",
+    description: "Alternatif model Gemma untuk eksplorasi dan latihan konsep.",
+  },
+] as const;
+export type AIModel = (typeof AI_MODELS)[number]["id"];
+export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
+export const isAIModel = (value: unknown): value is AIModel =>
+  AI_MODELS.some((model) => model.id === value);
+export const modelName = (id?: string) =>
+  AI_MODELS.find((model) => model.id === id)?.name ?? id ?? "Gemini";
+export const DIFFICULTIES = [
+  {
+    id: "primitive",
+    name: "Primitif",
+    description:
+      "Mengenali fakta paling dasar, dengan pertanyaan langsung dan opsi sederhana.",
+  },
+  {
+    id: "very_easy",
+    name: "Sangat mudah",
+    description:
+      "Mengingat istilah dan konsep dasar dengan konteks yang familiar.",
+  },
+  {
+    id: "easy",
+    name: "Mudah",
+    description: "Memahami konsep dasar dan hubungan sederhana antaride.",
+  },
+  {
+    id: "moderate",
+    name: "Sedang",
+    description: "Menerapkan satu konsep pada contoh atau situasi sehari-hari.",
+  },
+  {
+    id: "intermediate",
+    name: "Menengah",
+    description:
+      "Menghubungkan beberapa konsep dan melakukan analisis terapan.",
+  },
+  {
+    id: "hard",
+    name: "Sulit",
+    description: "Menganalisis studi kasus dan menyelesaikan masalah bertahap.",
+  },
+  {
+    id: "very_hard",
+    name: "Sangat sulit",
+    description: "Mengevaluasi masalah kompleks dengan beberapa sudut pandang.",
+  },
+  {
+    id: "master",
+    name: "Master",
+    description:
+      "Mensintesis konsep tingkat pakar dengan penalaran abstrak mendalam.",
+  },
+  {
+    id: "grand_master",
+    name: "Grand master",
+    description:
+      "Memecahkan persoalan orisinal tingkat kompetisi dengan sintesis lintas konsep.",
+  },
+] as const;
+export const difficultyName = (id: string) =>
+  DIFFICULTIES.find((level) => level.id === id)?.name ??
+  { beginner: "Pemula", advanced: "Mahir", expert: "Olimpiade" }[id] ??
+  id;

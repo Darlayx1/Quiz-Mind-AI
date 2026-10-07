@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Quiz, QuizResult } from '../types/quiz.js';
 import { Button } from './Button.js';
+import { difficultyName } from '../models.js';
+import { durationLabel, quizTimerSeconds } from '../quizConfig.js';
 import { ConfirmModal } from './ConfirmModal.js';
 import {
   History,
@@ -46,7 +48,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
         </div>
         <h2 className="text-xl font-bold text-slate-900 mb-2">Belum Ada Riwayat Kuis</h2>
         <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-          Setiap kuis yang Anda buat dengan Gemini 3.8 Flash akan tersimpan di browser untuk dipelajari kembali kapan saja.
+          Setiap kuis yang Anda buat akan tersimpan di browser untuk dipelajari kembali kapan saja.
         </p>
         <Button
           label="Buat Kuis Pertama Sekarang"
@@ -102,10 +104,10 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
               className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
             >
               <div className="space-y-1.5 flex-1">
-                <div className="flex items-center gap-2 text-xs text-slate-500">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                   <span className="font-semibold text-blue-700">{quiz.topic}</span>
                   <span>·</span>
-                  <span>{quiz.difficulty.toUpperCase()}</span>
+                  <span>{difficultyName(quiz.difficulty)}</span>
                   <span>·</span>
                   <span>{quiz.questions.length} Soal</span>
                   <span>·</span>
@@ -117,6 +119,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
                 </h3>
 
                 <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p>
+                <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1"><Clock size={12} />{quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'} · {durationLabel(quizTimerSeconds(quiz))}{quizTimerSeconds(quiz) > 0 ? quiz.displayMode === 'sequential' ? ' / soal' : ' total' : ''}</p>
               </div>
 
               {/* Score or Action */}

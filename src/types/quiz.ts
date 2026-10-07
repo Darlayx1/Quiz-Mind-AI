@@ -1,4 +1,7 @@
-export type DifficultyLevel = 'beginner' | 'intermediate' | 'advanced' | 'expert';
+import type { AIModel } from "../models.js";
+export type DifficultyLevel =
+  (typeof import("../models.js").DIFFICULTIES)[number]["id"];
+export type QuizDisplayMode = "non_sequential" | "sequential";
 
 export interface GroundingSource {
   title: string;
@@ -23,18 +26,30 @@ export interface Quiz {
   summary: string;
   difficulty: DifficultyLevel;
   timeLimitMinutes: number;
+  displayMode?: QuizDisplayMode;
+  timePerQuestionSeconds?: number;
+  languageStyle?: string;
+  additionalInstructions?: string;
   createdAt: string;
   questions: Question[];
   groundingQueriesUsed?: string[];
+  requestedModel?: AIModel;
+  model?: string;
+  usedGrounding?: boolean;
 }
 
 export interface QuizConfig {
+  model?: AIModel;
   topic: string;
   studyMaterial?: string;
   difficulty: DifficultyLevel;
   questionCount: number;
   timeLimitMinutes: number;
-  language: 'id' | 'en';
+  displayMode?: QuizDisplayMode;
+  timePerQuestionSeconds?: number;
+  languageStyle?: string;
+  additionalInstructions?: string;
+  language: "id" | "en";
   enableGrounding: boolean;
 }
 

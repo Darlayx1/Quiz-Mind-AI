@@ -1,0 +1,80 @@
+import { DEFAULT_MODEL, DIFFICULTIES, isAIModel } from "./models.js";
+import type { DifficultyLevel, QuizConfig } from "./types/quiz.js";
+
+export class QuizConfigError extends Error {}
+
+// Shared validation keeps server, Worker, and personal-key mode consistent.
+export function normalizeQuizConfig(input: unknown): QuizConfig {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new QuizConfigError("Konfigurasi kuis tidak valid.");
+  const body = input as Record<string, unknown>;
+  if (typeof body.topic !== "string" || !body.topic.trim())
+    throw new QuizConfigError("Topik kuis tidak boleh kosong.");
+  const model = body.model ?? DEFAULT_MODEL;
+  if (!isAIModel(model)) throw new QuizConfigError("Model AI tidak didukung.");
+  const difficulty =
+    { beginner: "easy", advanced: "hard", expert: "master" }[
+      String(body.difficulty)
+    ] ??
+    body.difficulty ??
+    "intermediate";
+  if (!DIFFICULTIES.some((level) => level.id === difficulty))
+    throw new QuizConfigError("Tingkat kesulitan tidak didukung.");
+  const count = Number(body.questionCount ?? 5);
+  if (!Number.isInteger(count) || count < 1 || count > 100)
+    throw new QuizConfigError(
+      "Jumlah soal harus bilangan bulat antara 1 dan 100.",
+    );
+  const displayMode = body.displayMode ?? "non_sequential";
+  if (displayMode !== "non_sequential" && displayMode !== "sequential")
+    throw new QuizConfigError("Tampilan soal tidak didukung.");
+  const minutes = Number(body.timeLimitMinutes ?? 10);
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 120)
+    throw new QuizConfigError("Durasi total harus antara 0 dan 120 menit.");
+  const seconds = Number(
+    body.timePerQuestionSeconds ?? (minutes === 0 ? 0 : 60),
+  );
+  if (!Number.isInteger(seconds) || seconds < 0 || seconds > 600)
+    throw new QuizConfigError("Durasi per soal harus antara 0 dan 600 detik.");
+  const optionalText = (value: unknown, max: number) =>
+    typeof value === "string"
+      ? value.trim().slice(0, max) || undefined
+      : undefined;
+  return {
+    model,
+    topic: body.topic.trim().slice(0, 300),
+    studyMaterial: optionalText(body.studyMaterial, 15000),
+    difficulty: difficulty as DifficultyLevel,
+    questionCount: count,
+    displayMode,
+    timeLimitMinutes: minutes,
+    timePerQuestionSeconds: displayMode === "sequential" ? seconds : undefined,
+    language: body.language === "en" ? "en" : "id",
+    enableGrounding: body.enableGrounding !== false,
+    languageStyle: optionalText(body.languageStyle, 500),
+    additionalInstructions: optionalText(body.additionalInstructions, 2000),
+  };
+}
+
+export function quizTimerSeconds(
+  quiz: Pick<
+    QuizConfig,
+    "displayMode" | "timeLimitMinutes" | "timePerQuestionSeconds"
+  >,
+) {
+  return quiz.displayMode === "sequential"
+    ? (quiz.timePerQuestionSeconds ?? (quiz.timeLimitMinutes === 0 ? 0 : 60))
+    : quiz.timeLimitMinutes * 60;
+}
+
+export function durationLabel(seconds: number) {
+  if (seconds === 0) return "Tanpa batas";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return [
+    minutes ? `${minutes} menit` : "",
+    remainder ? `${remainder} detik` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}

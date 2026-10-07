@@ -13,6 +13,7 @@ import { QuizRunner } from './components/QuizRunner.js';
 import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
 import { SecurityGuideModal } from './components/SecurityGuideModal.js';
+import { DEFAULT_MODEL, AIModel } from './models.js';
 
 const STORAGE_KEY = 'quizmind_ai_history_v1';
 
@@ -20,10 +21,12 @@ export default function App() {
   const [activeView, setActiveView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
   const [currentQuiz, setCurrentQuiz] = useState<Quiz | null>(null);
   const [currentResult, setCurrentResult] = useState<QuizResult | null>(null);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [activeView]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadingTopic, setLoadingTopic] = useState('');
   const [loadingGrounding, setLoadingGrounding] = useState(true);
+  const [loadingModel, setLoadingModel] = useState<AIModel>(DEFAULT_MODEL);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
   const personalMode = standalonePages || Boolean(apiKey.trim());
@@ -84,6 +87,7 @@ export default function App() {
 
   // Handle Quiz Generation
   const handleGenerateQuiz = async (config: QuizConfig) => {
+    setLoadingModel(config.model ?? DEFAULT_MODEL);
     setIsLoading(true);
     setLoadingTopic(config.topic);
     setLoadingGrounding(config.enableGrounding);
@@ -109,7 +113,7 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Gagal memproses kuis dengan model Gemini 3.8 Flash.');
+        throw new Error(data.error || 'Gagal memproses kuis dengan model Gemini yang dipilih.');
       }
 
       const generatedQuiz: Quiz = data.quiz;
@@ -238,10 +242,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/50 text-slate-900 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
       {/* TopBar 3-zone standard navigation */}
       <TopBar
         activeView={activeView}
+        isBusy={isLoading}
         onNavigate={(view) => setActiveView(view)}
         onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
         isKeyConfigured={serverSecurity.hasApiKey}
@@ -249,13 +254,16 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full pb-16">
-        {isLoading ? (
+      <main className="flex-1 w-full" aria-busy={isLoading}>
+        {isLoading && (
           <GenerationLoader
             topic={loadingTopic}
             enableGrounding={loadingGrounding}
+            model={loadingModel}
           />
-        ) : activeView === 'creator' ? (
+        )}
+        {activeView === 'creator' ? (
+          <div hidden={isLoading}>
           <QuizCreator
             onGenerate={handleGenerateQuiz}
             isLoading={isLoading}
@@ -264,6 +272,7 @@ export default function App() {
             onApiKeyChange={handleApiKeyChange}
             requiresApiKey={standalonePages}
           />
+          </div>
         ) : activeView === 'runner' && currentQuiz ? (
           <QuizRunner
             quiz={currentQuiz}
@@ -303,7 +312,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700">QuizMind AI</span>
             <span>·</span>
-            <span>Gemini 3.8 Flash & Google Grounding Engine</span>
+            <span>Belajar dengan rasa ingin tahu.</span>
           </div>
           <div className="flex items-center gap-4">
             <button
@@ -313,7 +322,7 @@ export default function App() {
               Privasi API Key
             </button>
             <span>·</span>
-            <span>{personalMode ? 'Kunci hanya untuk sesi ini' : 'AES-256-GCM Secure'}</span>
+            <span>{personalMode ? 'Kunci hanya untuk sesi ini' : 'Privasi terjaga'}</span>
           </div>
         </div>
       </footer>

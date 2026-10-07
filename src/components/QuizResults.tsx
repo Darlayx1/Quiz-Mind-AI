@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
-import { QuizResult } from '../types/quiz.js';
-import { Button } from './Button.js';
+import React, { useState } from "react";
+import { QuizResult } from "../types/quiz.js";
+import { modelName, difficultyName } from "../models.js";
+import { durationLabel, quizTimerSeconds } from "../quizConfig.js";
+import { Button } from "./Button.js";
 import {
   Trophy,
   CheckCircle2,
@@ -12,336 +14,318 @@ import {
   Plus,
   Printer,
   Sparkles,
-  Search,
   BookOpen,
-} from 'lucide-react';
-
+  ArrowUpRight,
+  Search,
+} from "lucide-react";
 interface QuizResultsProps {
   result: QuizResult;
   onRetake: () => void;
   onNewQuiz: () => void;
 }
-
 export const QuizResults: React.FC<QuizResultsProps> = ({
   result,
   onRetake,
   onNewQuiz,
 }) => {
-  const [filterMode, setFilterMode] = useState<'all' | 'incorrect' | 'correct'>('all');
-
-  const { quiz, submission, score, correctCount, incorrectCount, unansweredCount, accuracyPercentage } = result;
-
-  // Filter questions based on filterMode
-  const filteredQuestions = quiz.questions.filter((q) => {
-    const userAnswer = submission.userAnswers[q.id];
-    const isCorrect = userAnswer === q.correctAnswerIndex;
-
-    if (filterMode === 'correct') return isCorrect;
-    if (filterMode === 'incorrect') return !isCorrect;
-    return true;
+  const [filter, setFilter] = useState<
+    "all" | "incorrect" | "correct" | "unanswered"
+  >("all");
+  const {
+    quiz,
+    submission,
+    score,
+    correctCount,
+    incorrectCount,
+    unansweredCount,
+  } = result;
+  const questions = quiz.questions.filter((q) => {
+    const answer = submission.userAnswers[q.id];
+    return (
+      filter === "all" ||
+      (filter === "correct"
+        ? answer === q.correctAnswerIndex
+        : filter === "unanswered"
+          ? answer === undefined
+          : answer !== undefined && answer !== q.correctAnswerIndex)
+    );
   });
-
-  const minutesTaken = Math.floor(submission.timeTakenSeconds / 60);
-  const secondsTaken = submission.timeTakenSeconds % 60;
-  const formattedTimeTaken = `${minutesTaken > 0 ? `${minutesTaken}m ` : ''}${secondsTaken}d`;
-
-  const handlePrint = () => {
-    window.print();
-  };
-
+  const headline =
+    score >= 90
+      ? "Pemahaman yang luar biasa."
+      : score >= 70
+        ? "Langkah belajar yang bagus."
+        : "Setiap latihan membawa kemajuan.";
+  const time = `${Math.floor(submission.timeTakenSeconds / 60)}m ${submission.timeTakenSeconds % 60}d`;
   return (
-    <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6">
-      {/* Printable Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 shadow-xs mb-8 print:border-none print:shadow-none">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pb-6 border-b border-slate-100">
-          <div className="text-center sm:text-left">
-            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 mb-1">
-              <Trophy className="w-4 h-4" />
-              <span>Hasil Evaluasi Kuis</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
-              {quiz.title}
-            </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Topik: {quiz.topic} · Tingkat: {quiz.difficulty.toUpperCase()} · Selesai pada {new Date(submission.completedAt).toLocaleDateString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-            </p>
-          </div>
-
-          {/* Big Score Callout */}
-          <div className="flex flex-col items-center justify-center p-4 bg-slate-50 rounded-2xl border border-slate-200/80 min-w-[140px]">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Skor Akhir</span>
-            <span className="text-4xl sm:text-5xl font-black text-blue-600 font-mono tabular-nums">
-              {score}
+    <div className="page-shell results-page">
+      <div className="page-heading">
+        <div className="eyebrow">
+          <Trophy size={15} /> HASIL SESI BELAJAR
+        </div>
+        <h1>{headline}</h1>
+        <p>Kuis selesai. Saatnya melihat kemajuan dan menemukan hal baru.</p>
+      </div>
+      <section className="surface result-overview">
+        <div className="result-intro">
+          <div className="flex flex-wrap gap-2 mb-4">
+            <span className="soft-badge">
+              {difficultyName(quiz.difficulty)}
             </span>
-            <span className="text-xs text-slate-500">dari 100</span>
+            <span className="soft-badge">{quiz.questions.length} soal</span>
+            <span className="soft-badge">{quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'}</span>
+            <span className="soft-badge">{durationLabel(quizTimerSeconds(quiz))}{quizTimerSeconds(quiz) > 0 ? quiz.displayMode === 'sequential' ? ' / soal' : ' total' : ''}</span>
+          </div>
+          <h2>{quiz.title}</h2>
+          <p className="text-sm text-slate-500 mt-2">
+            {new Date(submission.completedAt).toLocaleString("id-ID", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </p>
+          <div className="result-analysis">
+            <Sparkles size={19} />
+            <p>{result.evaluationAnalysis}</p>
           </div>
         </div>
-
-        {/* Metrics Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-6">
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
+        <div className="score-block">
+          <div
+            className="score-ring"
+            style={
+              { "--score-angle": `${score * 3.6}deg` } as React.CSSProperties
+            }
+          >
             <div>
-              <span className="text-xs text-slate-500 block">Jawaban Benar</span>
-              <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
-                {correctCount}
-              </span>
+              <strong>{score}</strong>
+              <span>dari 100 poin</span>
             </div>
           </div>
-
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-red-100 text-red-700 flex items-center justify-center shrink-0">
-              <XCircle className="w-4 h-4" />
-            </div>
-            <div>
-              <span className="text-xs text-slate-500 block">Jawaban Salah</span>
-              <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
-                {incorrectCount}
-              </span>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-              <Trophy className="w-4 h-4" />
-            </div>
-            <div>
-              <span className="text-xs text-slate-500 block">Akurasi</span>
-              <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
-                {accuracyPercentage}%
-              </span>
-            </div>
-          </div>
-
-          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-slate-200 text-slate-700 flex items-center justify-center shrink-0">
-              <Clock className="w-4 h-4" />
-            </div>
-            <div>
-              <span className="text-xs text-slate-500 block">Waktu Selesai</span>
-              <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
-                {formattedTimeTaken}
-              </span>
-            </div>
-          </div>
+          <span className="text-xs text-slate-500 mt-3">
+            Skor pemahaman Anda
+          </span>
         </div>
-
-        {/* Action Buttons (Hidden when printing) */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-6 mt-6 border-t border-slate-100 print:hidden">
-          <div className="flex items-center gap-2">
+        <div className="result-metrics">
+          {[
+            {
+              icon: CheckCircle2,
+              label: "Jawaban benar",
+              value: correctCount,
+              color: "emerald",
+            },
+            {
+              icon: XCircle,
+              label: "Jawaban salah",
+              value: incorrectCount,
+              color: "rose",
+            },
+            {
+              icon: HelpCircle,
+              label: "Belum dijawab",
+              value: unansweredCount,
+              color: "slate",
+            },
+            {
+              icon: Clock,
+              label: "Waktu pengerjaan",
+              value: time,
+              color: "indigo",
+            },
+          ].map((m) => (
+            <div className="result-metric" key={m.label}>
+              <span className={`metric-icon ${m.color}`}>
+                <m.icon size={19} />
+              </span>
+              <div>
+                <span>{m.label}</span>
+                <strong>{m.value}</strong>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="result-footer">
+          <div className="text-xs text-slate-500 flex flex-col gap-1">
+            <span className="flex items-center gap-1.5">
+              <Sparkles size={14} /> {modelName(quiz.model)}
+            </span>
+            {quiz.requestedModel && quiz.model !== quiz.requestedModel && (
+              <span>
+                Model cadangan digunakan. Pilihan awal:{" "}
+                {modelName(quiz.requestedModel)}.
+              </span>
+            )}
+            <span className="flex items-center gap-1.5">
+              <Search size={14} />
+              {quiz.usedGrounding === true
+                ? "Menggunakan pencarian Google"
+                : quiz.usedGrounding === false
+                  ? "Dibuat tanpa pencarian web; periksa referensi secara mandiri."
+                  : "Referensi tersedia pada pembahasan"}
+            </span>
+          </div>
+          <div className="result-actions print:hidden">
             <Button
-              label="Ulangi Kuis"
-              icon={<RotateCcw className="w-4 h-4" />}
+              label="Cetak"
+              icon={<Printer size={16} />}
+              iconPosition="leading"
+              variant="ghost"
+              onClick={() => window.print()}
+            />
+            <Button
+              label="Ulangi kuis"
+              icon={<RotateCcw size={16} />}
               iconPosition="leading"
               variant="outline"
-              size="md"
               onClick={onRetake}
             />
             <Button
-              label="Cetak / Simpan PDF"
-              icon={<Printer className="w-4 h-4" />}
+              label="Kuis baru"
+              icon={<Plus size={16} />}
               iconPosition="leading"
-              variant="outline"
-              size="md"
-              onClick={handlePrint}
+              onClick={onNewQuiz}
             />
           </div>
-
-          <Button
-            label="Buat Kuis Baru"
-            icon={<Plus className="w-4 h-4" />}
-            iconPosition="leading"
-            variant="primary"
-            size="md"
-            onClick={onNewQuiz}
-          />
         </div>
-      </div>
-
-      {/* Review Section */}
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
+      </section>
+      <section className="review-section">
+        <div className="review-heading">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">Pembahasan & Sumber Fakta</h2>
-            <p className="text-xs text-slate-500">
-              Penalaran mendalam model Gemini 3.8 Flash beserta verifikasi Google Grounding
-            </p>
+            <div className="eyebrow">
+              <BookOpen size={15} /> BELAJAR DARI JAWABAN
+            </div>
+            <h2>Pembahasan soal</h2>
+            <p>Kenali alasan di balik setiap jawaban.</p>
           </div>
-
-          {/* Filter Segmented Control */}
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg print:hidden">
-            <button
-              onClick={() => setFilterMode('all')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                filterMode === 'all'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Semua ({quiz.questions.length})
-            </button>
-            <button
-              onClick={() => setFilterMode('incorrect')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                filterMode === 'incorrect'
-                  ? 'bg-white text-red-700 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Salah ({incorrectCount})
-            </button>
-            <button
-              onClick={() => setFilterMode('correct')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors cursor-pointer ${
-                filterMode === 'correct'
-                  ? 'bg-white text-emerald-700 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Benar ({correctCount})
-            </button>
+          <div
+            className="review-filters print:hidden"
+            aria-label="Filter pembahasan"
+          >
+            {[
+              { id: "all", label: "Semua", count: quiz.questions.length },
+              { id: "incorrect", label: "Salah", count: incorrectCount },
+              { id: "correct", label: "Benar", count: correctCount },
+              {
+                id: "unanswered",
+                label: "Belum dijawab",
+                count: unansweredCount,
+              },
+            ].map((f) => (
+              <button
+                key={f.id}
+                aria-pressed={filter === f.id}
+                onClick={() => setFilter(f.id as typeof filter)}
+              >
+                {f.label}
+                <span>{f.count}</span>
+              </button>
+            ))}
           </div>
         </div>
-
-        {/* Questions Loop */}
-        <div className="space-y-6">
-          {filteredQuestions.map((q, idx) => {
-            const originalIndex = quiz.questions.findIndex((item) => item.id === q.id);
-            const userAnswer = submission.userAnswers[q.id];
-            const isCorrect = userAnswer === q.correctAnswerIndex;
-            const isUnanswered = userAnswer === undefined;
-
+        <div className="space-y-4">
+          {questions.map((q) => {
+            const answer = submission.userAnswers[q.id];
+            const correct = answer === q.correctAnswerIndex;
+            const empty = answer === undefined;
+            const index = quiz.questions.indexOf(q);
             return (
-              <div
-                key={q.id}
-                className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5"
-              >
-                {/* Header Question */}
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-md bg-slate-100 text-slate-800 text-xs font-bold font-mono flex items-center justify-center">
-                      {originalIndex + 1}
-                    </span>
-                    <span className="text-xs font-medium text-slate-500">
-                      {q.topicCategory || quiz.topic}
-                    </span>
-                  </div>
-
-                  {/* Status Indicator */}
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
-                    {isUnanswered ? (
-                      <span className="text-slate-500 flex items-center gap-1">
-                        <HelpCircle className="w-4 h-4" />
-                        <span>Tidak Dijawab</span>
-                      </span>
-                    ) : isCorrect ? (
-                      <span className="text-emerald-600 flex items-center gap-1">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Jawaban Benar</span>
-                      </span>
+              <article key={q.id} className="surface review-card">
+                <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
+                  <span className="text-xs font-semibold text-slate-500">
+                    SOAL {String(index + 1).padStart(2, "0")}
+                    <span className="font-normal ml-3">{q.topicCategory}</span>
+                  </span>
+                  <span
+                    className={`answer-status ${correct ? "correct" : empty ? "empty" : "incorrect"}`}
+                  >
+                    {correct ? (
+                      <CheckCircle2 size={14} />
+                    ) : empty ? (
+                      <HelpCircle size={14} />
                     ) : (
-                      <span className="text-red-600 flex items-center gap-1">
-                        <XCircle className="w-4 h-4" />
-                        <span>Jawaban Kurang Tepat</span>
-                      </span>
+                      <XCircle size={14} />
                     )}
-                  </div>
+                    {correct
+                      ? "Benar"
+                      : empty
+                        ? "Belum dijawab"
+                        : "Perlu ditinjau"}
+                  </span>
                 </div>
-
-                {/* Question Text */}
-                <p className="text-base font-semibold text-slate-900 leading-relaxed">
+                <h3 className="text-base sm:text-lg font-semibold text-slate-900 leading-relaxed mb-5">
                   {q.question}
-                </p>
-
-                {/* Options Review */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {q.options.map((optionText, optIdx) => {
-                    const isKeyAnswer = optIdx === q.correctAnswerIndex;
-                    const isUserChoice = optIdx === userAnswer;
-                    const optLabel = String.fromCharCode(65 + optIdx);
-
-                    let optionBorder = 'border-slate-200 bg-slate-50/50 text-slate-700';
-                    if (isKeyAnswer) {
-                      optionBorder = 'border-emerald-500 bg-emerald-50/70 text-emerald-950 font-medium ring-1 ring-emerald-400';
-                    } else if (isUserChoice && !isCorrect) {
-                      optionBorder = 'border-red-400 bg-red-50 text-red-950 line-through';
-                    }
-
-                    return (
-                      <div
-                        key={optIdx}
-                        className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${optionBorder}`}
-                      >
-                        <span
-                          className={`w-5 h-5 rounded-md flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 ${
-                            isKeyAnswer
-                              ? 'bg-emerald-600 text-white'
-                              : isUserChoice && !isCorrect
-                              ? 'bg-red-600 text-white'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {optLabel}
-                        </span>
-                        <div className="flex-1">
-                          <span>{optionText}</span>
-                          {isKeyAnswer && (
-                            <span className="block text-[10px] text-emerald-700 font-semibold mt-0.5">
-                              ✓ Kunci Jawaban
-                            </span>
-                          )}
-                          {isUserChoice && !isCorrect && (
-                            <span className="block text-[10px] text-red-600 font-semibold mt-0.5">
-                              ✗ Pilihan Anda
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Deep Thinking Explanation */}
-                <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-100 text-xs text-slate-800 space-y-1.5">
-                  <div className="flex items-center gap-1.5 font-bold text-blue-900">
-                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Penalaran Mendalam Gemini 3.8 Flash</span>
-                  </div>
-                  <p className="leading-relaxed text-slate-700 pl-5">
-                    {q.explanation}
-                  </p>
-                </div>
-
-                {/* Google Search Grounding Sources */}
-                {q.groundingSources && q.groundingSources.length > 0 && (
-                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
-                      <Search className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Sumber Fakta Google Grounding:</span>
+                </h3>
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  {q.options.map((option, i) => (
+                    <div
+                      key={i}
+                      className={`review-option ${i === q.correctAnswerIndex ? "correct-option" : i === answer ? "wrong-option" : ""}`}
+                    >
+                      <span className="option-letter">
+                        {String.fromCharCode(65 + i)}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        {option}
+                        {(i === answer || i === q.correctAnswerIndex) && (
+                          <small>
+                            {i === q.correctAnswerIndex
+                              ? "Jawaban benar"
+                              : "Jawaban Anda"}
+                            {i === answer && i === q.correctAnswerIndex
+                              ? " · Pilihan Anda"
+                              : ""}
+                          </small>
+                        )}
+                      </span>
+                      {i === q.correctAnswerIndex ? (
+                        <CheckCircle2 size={17} className="shrink-0" />
+                      ) : i === answer ? (
+                        <XCircle size={17} className="shrink-0" />
+                      ) : null}
                     </div>
-                    <div className="flex flex-wrap gap-2 pl-5">
-                      {q.groundingSources.map((src, sIdx) => (
+                  ))}
+                </div>
+                <div className="explanation">
+                  <div className="flex items-center gap-2 text-indigo-700 font-semibold text-sm mb-2">
+                    <BookOpen size={16} /> Mengapa jawaban ini benar?
+                  </div>
+                  <p>{q.explanation}</p>
+                </div>
+                {q.groundingSources.length > 0 && (
+                  <div className="reference-list">
+                    <span>Pelajari lebih lanjut</span>
+                    {q.groundingSources
+                      .filter((s) => /^https?:\/\//i.test(s.url))
+                      .map((s, i) => (
                         <a
-                          key={sIdx}
-                          href={src.url}
+                          href={s.url}
+                          key={i}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:underline bg-white px-2.5 py-1 rounded-md border border-slate-200 transition-colors"
                         >
-                          <span className="max-w-[220px] truncate">{src.title}</span>
-                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          {s.title}
+                          <ArrowUpRight size={13} />
                         </a>
                       ))}
-                    </div>
                   </div>
                 )}
-              </div>
+              </article>
             );
           })}
+          {questions.length === 0 && (
+            <div className="surface p-10 text-center">
+              <CheckCircle2
+                className="mx-auto text-indigo-500 mb-3"
+                size={28}
+              />
+              <h3 className="font-semibold text-slate-800">
+                Tidak ada soal dalam kategori ini
+              </h3>
+              <p className="text-sm text-slate-500 mt-2">
+                Pilih filter lain untuk melanjutkan pembahasan.
+              </p>
+            </div>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

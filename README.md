@@ -158,3 +158,26 @@ git push -u origin main
 ├── .gitignore                 # Proteksi ketat file kredensial
 └── metadata.json              # Konfigurasi applet AI Studio
 ```
+
+## Pilihan model & pengalaman belajar
+
+Menu pembuatan kuis menyediakan enam model: **Gemini 3.8 Flash**, **Gemini 3.7 Flash**, **Gemini 3.6 Flash**, **Gemini 3.5 Flash**, **Gemini 3.5 Flash Lite**, dan **Gemma 4 31B** (`gemma-4-31b-it`). Pilihan diterapkan pada API server, Worker, dan mode API key pribadi di browser. Konfigurasi lama tanpa `model` tetap menggunakan Gemini 3.8 Flash. ID model mengikuti [katalog Gemini API](https://ai.google.dev/gemini-api/docs/models) dan [dokumentasi Gemma pada Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api).
+
+Jika model tidak tersedia, sistem mencoba model lainnya lalu `gemini-flash-latest`. Kuis menyimpan `requestedModel`, `model` aktual, dan `usedGrounding` agar halaman hasil menjelaskan penggunaan model cadangan dan status pencarian web. Ketersediaan dan kuota mengikuti proyek Google pengguna. Referensi yang dihasilkan AI tetap perlu ditinjau.
+
+Tampilan menu, pengerjaan, dan hasil menggunakan desain indigo yang konsisten dengan layout responsif, ringkasan pengaturan, progres jawaban, timer berbasis waktu nyata, filter benar/salah/belum dijawab, dan navigasi keyboard.
+
+Konfigurasi dibagi menjadi materi, ritme kuis, partner AI, dan personalisasi:
+
+- Sembilan tingkat kesulitan: primitif, sangat mudah, mudah, sedang, menengah, sulit, sangat sulit, master, dan grand master. Masing-masing memiliki arahan penalaran tersendiri di prompt AI.
+- Jumlah soal: 5, 10, 15, 20, atau custom berupa bilangan bulat 1–100. Hasil AI harus memuat tepat jumlah soal yang diminta; hasil tidak lengkap menghasilkan pesan untuk mencoba kembali.
+- **Non sekuensial**: semua soal ditampilkan dan dapat dikerjakan atau ditinjau dengan urutan bebas. Slider mengatur durasi total 1–120 menit. Saat waktu habis, jawaban otomatis dikumpulkan.
+- **Sekuensial**: satu soal per langkah, tanpa kembali ke soal sebelumnya. Slider mengatur 15–600 detik per soal dengan langkah 15 detik. Waktu direset setelah beralih; saat habis, soal dikunci dan kuis otomatis melanjutkan. Setelah soal terakhir, jawaban otomatis dikumpulkan.
+- Kedua mode mendukung **tanpa batas**; nilai timer aktif `0` menonaktifkan countdown. Waktu pengerjaan tetap dicatat. Timer menggunakan deadline absolut agar tetap akurat saat tab tidak aktif.
+- Gaya bahasa opsional menerima saran atau teks bebas, maksimal 500 karakter. Instruksi tambahan opsional menerima maksimal 2.000 karakter. Kedua preferensi dikirim ke AI dan disimpan bersama kuis.
+
+Validasi bersama berada di `src/quizConfig.ts`. Kuis lama tetap dapat dibuka; konfigurasi lama `beginner`, `advanced`, dan `expert` dipetakan ke level baru saat digunakan untuk membuat kuis.
+
+Verifikasi lokal: `npm run lint`, `npm run build`, `node --import tsx scripts/model-test.ts`, dan `node scripts/smoke-test.mjs`. Tes model menggunakan respons tiruan sehingga tidak memakai kuota Gemini.
+
+Untuk memeriksa alur pengerjaan tanpa API atau penyimpanan riwayat, jalankan `npm run dev`, lalu buka `/scripts/quiz-session-preview.html`. Fixture lokal menyediakan kedua mode dengan dan tanpa timer singkat untuk menguji navigasi, penguncian jawaban, dan pengumpulan otomatis. Halaman fixture tidak disertakan dalam build produksi.

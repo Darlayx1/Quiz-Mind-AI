@@ -35,7 +35,7 @@ export const Button: React.FC<ButtonProps> = ({
   }[variant];
 
   const sizeStyles = {
-    sm: 'text-xs py-1.5 px-3 min-h-[36px]',
+    sm: 'text-xs py-2 px-3 min-h-[44px]',
     md: 'text-sm py-2 px-4 min-h-[44px]',
     lg: 'text-base py-2.5 px-5 min-h-[48px]',
   }[size];
@@ -52,7 +52,7 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled}
       aria-label={label}
       title={isIconOnly ? label : undefined}
-      className={`inline-flex items-center justify-center gap-2 font-medium select-none whitespace-nowrap rounded-lg outline-none ${sizeStyles} ${variantStyles} ${disabledStyles} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 font-semibold select-none whitespace-nowrap rounded-xl outline-none ${sizeStyles} ${variantStyles} ${disabledStyles} ${className}`}
     >
       {icon && (iconPosition === 'leading' || iconPosition === 'only') && (
         <span className="shrink-0 flex items-center justify-center">{icon}</span>

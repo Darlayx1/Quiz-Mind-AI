@@ -1,7 +1,8 @@
 import assets from './.worker-assets.json';
 import { generateQuizWithGemini } from './src/server/geminiService.js';
 import { encryptData, decryptData, maskSecret } from './src/server/cryptoVault.js';
-import type { QuizConfig } from './src/types/quiz.js';
+import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
+import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
 type Environment = { GEMINI_API_KEY?: string; ENCRYPTION_SECRET?: string };
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -11,7 +12,7 @@ export default {
     const pathname = new URL(request.url).pathname;
     if (pathname === '/api/health' && request.method === 'GET') {
       const hasApiKey = Boolean(env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
-      return json({ status: 'ok', version: '1.0.0', model: 'gemini-3.8-flash',
+      return json({ status: 'ok', version: '1.0.0', model: DEFAULT_MODEL, models: AI_MODELS.map(model => model.id),
         features: { deepThinking: true, googleSearchGrounding: true, serverSideProxy: true, aes256GcmVault: true },
         security: { hasApiKey, maskedKey: hasApiKey ? maskSecret(env.GEMINI_API_KEY) : 'Belum dikonfigurasi di server', gitProtected: true },
         timestamp: new Date().toISOString() });
@@ -31,15 +32,8 @@ export default {
       } catch { return json({ success: false, error: 'Isi permintaan harus berupa JSON yang valid.' }, 400); }
       try {
         if (pathname === '/api/generate-quiz') {
-          if (typeof body.topic !== 'string' || !body.topic.trim()) return json({ success: false, error: 'Topik kuis tidak boleh kosong.' }, 400);
+          const config = normalizeQuizConfig(body);
           if (!env.GEMINI_API_KEY || env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY') return json({ success: false, error: 'GEMINI_API_KEY belum dikonfigurasi di server. Pemilik aplikasi perlu memasangnya pada pengaturan hosting.' }, 503);
-          const config: QuizConfig = {
-            topic: body.topic.trim(), studyMaterial: typeof body.studyMaterial === 'string' ? body.studyMaterial.trim() : undefined,
-            difficulty: ['beginner', 'intermediate', 'advanced', 'expert'].includes(body.difficulty) ? body.difficulty : 'intermediate',
-            questionCount: Math.min(Math.max(Math.floor(Number(body.questionCount) || 5), 1), 20),
-            timeLimitMinutes: Math.max(Number(body.timeLimitMinutes) || 10, 1),
-            language: body.language === 'en' ? 'en' : 'id', enableGrounding: body.enableGrounding !== false,
-          };
           const quiz = await generateQuizWithGemini(config, env.GEMINI_API_KEY);
           return json({ success: true, quiz, integrityToken: encryptData(JSON.stringify({ quizId: quiz.id, createdAt: quiz.createdAt }), env.ENCRYPTION_SECRET || env.GEMINI_API_KEY) });
         }
@@ -51,7 +45,9 @@ export default {
         if (typeof body.encrypted !== 'string' || !body.encrypted) return json({ error: 'Field "encrypted" wajib diisi.' }, 400);
         return json({ success: true, decrypted: decryptData(body.encrypted, secret) });
       } catch (error) {
+        if (error instanceof QuizConfigError) return json({ success: false, error: error.message }, 400);
         const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith('Model menghasilkan')) return json({ success: false, error: message }, 502);
         const quotaExceeded = /429|RESOURCE_EXHAUSTED|quota/i.test(message);
         console.error('QuizMind API error:', { kind: quotaExceeded ? 'quota_exceeded' : 'request_failed' });
         if (pathname === '/api/generate-quiz' && quotaExceeded) {
