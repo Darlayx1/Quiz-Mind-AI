@@ -1,0 +1,6 @@
+{
+  "name": "QuizMind AI - Generator Kuis Gemini 3.8 Flash & Grounding",
+  "description": "Aplikasi kuis interaktif cerdas bertenaga Gemini 3.8 Flash dengan penalaran mendalam (deep thinking) dan verifikasi fakta Google Search Grounding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
