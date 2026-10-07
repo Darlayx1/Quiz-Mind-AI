@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: quiz-mind-ai-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24.13.1
+      - key: CORS_ORIGIN
+        value: https://darlayx1.github.io
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ENCRYPTION_SECRET
+        generateValue: true

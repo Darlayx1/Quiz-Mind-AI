@@ -2,6 +2,7 @@ node_modules/
 build/
 dist/
 dist-server/
+dist-pages/
 .vercel/
 .sites-runtime/
 .sites-checkout/

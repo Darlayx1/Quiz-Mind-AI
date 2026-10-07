@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { fetchApi } from '../api.js';
 import { Button } from './Button.js';
 import {
   ShieldCheck,
@@ -40,7 +41,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
   const handleTestEncrypt = async () => {
     try {
       setIsEncrypting(true);
-      const res = await fetch('/api/vault/encrypt', {
+      const res = await fetchApi('/api/vault/encrypt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: testText }),
@@ -49,7 +50,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
       if (data.encrypted) {
         setEncryptedOutput(data.encrypted);
         // otomatis uji dekripsi
-        const decRes = await fetch('/api/vault/decrypt', {
+        const decRes = await fetchApi('/api/vault/decrypt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ encrypted: data.encrypted }),

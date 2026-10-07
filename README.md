@@ -25,6 +25,21 @@ Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpi
 
 ## Panduan Instalasi & Menjalankan Aplikasi
 
+## Deployment GitHub Pages
+
+Halaman aplikasi diterbitkan di `https://darlayx1.github.io/Quiz-Mind-AI/`
+melalui workflow `.github/workflows/pages.yml` setiap push ke `main`.
+GitHub Pages hanya menjalankan halaman statis; API Gemini perlu server Node.js terpisah.
+
+Backend dapat dibuat dari `render.yaml` menggunakan
+[Deploy to Render](https://render.com/deploy?repo=https://github.com/Darlayx1/Quiz-Mind-AI).
+Pasang `GEMINI_API_KEY` sebagai secret di Render. Setelah backend aktif, atur
+repository variable `VITE_API_BASE_URL` di GitHub ke URL HTTPS layanan Render
+(tanpa `/api`), lalu jalankan ulang workflow **Deploy GitHub Pages**.
+`VITE_API_BASE_URL` hanya alamat backend, bukan API key.
+
+Tanpa backend, halaman dapat dibuka tetapi pembuatan kuis belum tersedia.
+
 ### 1. Prasyarat
 - Node.js versi 22.12 atau lebih baru
 - NPM

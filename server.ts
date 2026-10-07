@@ -16,6 +16,20 @@ const PORT = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === 'production' || __dirname.endsWith('dist-server');
 const staticDir = path.resolve(__dirname, __dirname.endsWith('dist-server') ? '../dist' : 'dist');
 
+app.use('/api', (req, res, next) => {
+  const allowedOrigin = process.env.CORS_ORIGIN;
+  const origin = req.headers.origin;
+  if (allowedOrigin && origin) {
+    if (origin !== allowedOrigin) return res.status(403).json({ success: false, error: 'Origin tidak diizinkan.' });
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+  }
+  next();
+});
+
 app.use(express.json({ limit: '15mb' }));
 
 // =========================================================================

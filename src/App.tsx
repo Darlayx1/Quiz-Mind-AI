@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { fetchApi } from './api.js';
 import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
@@ -59,7 +60,7 @@ export default function App() {
 
   // Fetch server health & security status
   useEffect(() => {
-    fetch('/api/health')
+    fetchApi('/api/health')
       .then((res) => res.json())
       .then((data) => {
         if (data.security) {
@@ -82,7 +83,7 @@ export default function App() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch('/api/generate-quiz', {
+      const response = await fetchApi('/api/generate-quiz', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
