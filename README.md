@@ -163,7 +163,9 @@ git push -u origin main
 
 Menu pembuatan kuis menyediakan enam model: **Gemini 3.8 Flash**, **Gemini 3.7 Flash**, **Gemini 3.6 Flash**, **Gemini 3.5 Flash**, **Gemini 3.5 Flash Lite**, dan **Gemma 4 31B** (`gemma-4-31b-it`). Pilihan diterapkan pada API server, Worker, dan mode API key pribadi di browser. Konfigurasi lama tanpa `model` tetap menggunakan Gemini 3.8 Flash. ID model mengikuti [katalog Gemini API](https://ai.google.dev/gemini-api/docs/models) dan [dokumentasi Gemma pada Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api).
 
-Jika model tidak tersedia, sistem mencoba model lainnya lalu `gemini-flash-latest`. Kuis menyimpan `requestedModel`, `model` aktual, dan `usedGrounding` agar halaman hasil menjelaskan penggunaan model cadangan dan status pencarian web. Ketersediaan dan kuota mengikuti proyek Google pengguna. Referensi yang dihasilkan AI tetap perlu ditinjau.
+Jika model Gemini tidak tersedia, sistem mencoba model lainnya lalu `gemini-flash-latest`. Pilihan Gemma 4 31B tetap menggunakan `gemma-4-31b-it`, tanpa perpindahan otomatis ke Gemini. Jalur Gemma menggunakan prompt teks gabungan dan `thinkingLevel: MINIMAL` tanpa Google Search; opsi referensi web dinonaktifkan untuk jalur ini. Kuis menyimpan `requestedModel`, `model` aktual, dan `usedGrounding` agar halaman hasil menjelaskan penggunaan model cadangan dan status pencarian web. Ketersediaan dan kuota mengikuti proyek Google pengguna. Referensi yang dihasilkan AI tetap perlu ditinjau.
+
+Uji Gemma melalui API nyata: pasang `GEMINI_API_KEY` di `.env`, lalu jalankan `node --import tsx scripts/gemma-live-test.ts`. Tes ini menggunakan kuota API dan hanya lulus jika Gemma sendiri menghasilkan satu soal. Tes tiruan tidak membuktikan layanan Google sedang tersedia. Error `500 INTERNAL` atau `504 DEADLINE_EXCEEDED` pada API nyata harus diselesaikan sebelum menyatakan integrasi berhasil atau menerbitkan perubahan.
 
 Tampilan menu, pengerjaan, dan hasil menggunakan desain indigo yang konsisten dengan layout responsif, ringkasan pengaturan, progres jawaban, timer berbasis waktu nyata, filter benar/salah/belum dijawab, dan navigasi keyboard.
 

@@ -3,6 +3,7 @@ import { generateQuizWithGemini } from "../src/server/geminiService.js";
 import { AI_MODELS, DEFAULT_MODEL, DIFFICULTIES } from "../src/models.js";
 import { normalizeQuizConfig, quizTimerSeconds } from "../src/quizConfig.js";
 import type { QuizConfig } from "../src/types/quiz.js";
+const modelFromRequest = (url: string) => decodeURIComponent(url.match(/models\/([^:]+):/)?.[1] || "");
 const originalFetch = globalThis.fetch;
 const calls: Array<{ model: string; grounded: boolean }> = [];
 let failFirst = false;
@@ -20,6 +21,12 @@ globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
   lastPrompt = JSON.stringify(body.contents);
+  if (modelFromRequest(request.url) === "gemma-4-31b-it") {
+    assert.equal(body.systemInstruction, undefined);
+    assert.equal(body.tools, undefined);
+    assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+    assert.ok(lastPrompt.includes("Academic Assessment Engine"));
+  }
   const model = decodeURIComponent(
     request.url.match(/models\/([^:]+):/)?.[1] || "",
   );
@@ -71,8 +78,8 @@ try {
       "test-key",
     );
     assert.equal(calls[0].model, model);
-    assert.equal(calls[0].grounded, true);
-    assert.equal(grounded.usedGrounding, true);
+    assert.equal(calls[0].grounded, model !== "gemma-4-31b-it");
+    assert.equal(grounded.usedGrounding, model !== "gemma-4-31b-it");
   }
   calls.length = 0;
   assert.equal(
@@ -97,6 +104,9 @@ try {
     /tidak didukung/,
   );
   assert.equal(calls.length, 0);
+  calls.length = 0;
+  await assert.rejects(generateQuizWithGemini({ ...config, model: "gemma-4-31b-it" }, "test-key"), /Unavailable/);
+  assert.deepEqual(calls.map(c => c.model), ["gemma-4-31b-it"]);
   failFirst = false;
   for (const difficulty of DIFFICULTIES) {
     const quiz = await generateQuizWithGemini(

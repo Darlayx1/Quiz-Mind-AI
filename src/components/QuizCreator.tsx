@@ -43,6 +43,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
   const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
   const selectedDifficulty = DIFFICULTIES.find(level => level.id === difficulty)!;
+  const supportsGrounding = model !== "gemma-4-31b-it";
   const selectedModel = AI_MODELS.find(item => item.id === model)!;
   const missingReason = !topic.trim() ? "Isi topik kuis untuk melanjutkan."
     : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."
@@ -83,7 +84,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
         : Number(totalMinutes),
       timePerQuestionSeconds: sequential ? unlimited ? 0 : Number(perQuestionSeconds) : undefined,
       language, languageStyle: languageStyle.trim() || undefined,
-      additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding,
+      additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding: enableGrounding && supportsGrounding,
     });
   };
 
@@ -179,7 +180,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
                 <div><label htmlFor="ai-model" className="field-label">Model AI</label><select id="ai-model" className="field-input" value={model} onChange={e => setModel(e.target.value as AIModel)}>{AI_MODELS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="field-help">{selectedModel.description}</p></div>
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
-              <label className="menu-checkbox menu-grounding"><input type="checkbox" checked={enableGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>Perkaya materi dengan rujukan dari Google Search.</small></span></label>
+              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? "Perkaya materi dengan rujukan dari Google Search." : "Gemma menggunakan materi dan pengetahuan model tanpa Google Search."}</small></span></label>
               <label htmlFor="language-style" className="field-label">Gaya bahasa <span className="optional-badge">Opsional</span></label>
               <input id="language-style" list="language-styles" className="field-input" maxLength={500} value={languageStyle} onChange={e => setLanguageStyle(e.target.value)} placeholder="Baku & akademis" aria-describedby="style-help" />
               <datalist id="language-styles">{STYLES.map(style => <option key={style} value={style} />)}</datalist>
@@ -207,7 +208,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             <div><dt>{sequential ? "Waktu per soal" : "Waktu total"}</dt><dd>{timerLabel}</dd></div>
             <div><dt>Bahasa</dt><dd>{language === "id" ? "Indonesia" : "English"}</dd></div>
             {languageStyle.trim() && <div><dt>Gaya bahasa</dt><dd>{languageStyle}</dd></div>}
-            <div><dt>Referensi web</dt><dd>{enableGrounding ? "Aktif" : "Nonaktif"}</dd></div>
+            <div><dt>Referensi web</dt><dd>{enableGrounding && supportsGrounding ? "Aktif" : "Nonaktif"}</dd></div>
             {additionalInstructions.trim() && <div><dt>Instruksi tambahan</dt><dd><Check size={14} /> Ditambahkan</dd></div>}
           </dl>
           <div className="menu-summary-model"><BrainCircuit size={17} /><span>{modelName(model)}</span></div>

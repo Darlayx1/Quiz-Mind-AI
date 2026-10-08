@@ -29,6 +29,7 @@ jobs:
       - uses: actions/configure-pages@v5
       - run: npm ci
       - run: npm run lint
+      - run: node --import tsx scripts/model-test.ts
       - run: npm run build:pages
         env:
           VITE_BASE_PATH: /Quiz-Mind-AI/

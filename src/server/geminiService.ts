@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { DEFAULT_MODEL, DIFFICULTIES } from '../models.js';
 import { normalizeQuizConfig, quizTimerSeconds, durationLabel } from '../quizConfig.js';
 import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
@@ -15,7 +15,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
   return new GoogleGenAI({
     apiKey: apiKey,
     httpOptions: {
-      timeout: 60000,
+      timeout: 120000,
     },
   });
 }
@@ -28,6 +28,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
 export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string): Promise<Quiz> {
   config = normalizeQuizConfig(config);
   const selectedModel = config.model ?? DEFAULT_MODEL;
+  const isGemma = selectedModel === 'gemma-4-31b-it';
   const ai = getGeminiClient(apiKey);
 
   const languagePrompt = config.language === 'en'
@@ -115,6 +116,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
 
       // Hanya ulangi jika murni kesalahan koneksi soket sesaat
       const isNetworkTransient =
+        /500|502|503|INTERNAL|UNAVAILABLE/.test(msg) ||
         msg.includes('fetch failed') ||
         msg.includes('ECONNRESET') ||
         msg.includes('ETIMEDOUT') ||
@@ -132,7 +134,8 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
 }
 
   // Pipeline model: Coba gemini-3.8-flash terlebih dahulu, jika demand spike (503/429) beralih mulus ke model flash lainnya
-  const modelCandidates = [selectedModel, selectedModel === DEFAULT_MODEL ? 'gemini-3.5-flash-lite' : DEFAULT_MODEL, 'gemini-flash-latest'];
+  // A Gemma selection must actually use Gemma, rather than silently switch providers/models.
+  const modelCandidates = isGemma ? [selectedModel] : [selectedModel, selectedModel === DEFAULT_MODEL ? 'gemini-3.5-flash-lite' : DEFAULT_MODEL, 'gemini-flash-latest'];
 
   let rawResponse: any = null;
   let usedModelName: string = selectedModel;
@@ -140,7 +143,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
   let lastError: any = null;
 
   // Percobaan 1: Dengan model utama dan Google Search Grounding jika diaktifkan
-  if (config.enableGrounding) {
+  if (config.enableGrounding && !isGemma) {
     try {
       rawResponse = await callWithRetry(
         () =>
@@ -170,12 +173,14 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 1, baseDelayM
           () =>
             ai.models.generateContent({
               model: model,
-              contents: userPrompt,
-              config: {
-                systemInstruction,
-              },
+              // Use the minimal text API for Gemma. Put instructions in the user
+              // content to avoid optional Gemini features on hosted Gemma deployments.
+              contents: isGemma ? `${systemInstruction}\n\n${userPrompt}` : userPrompt,
+              config: isGemma
+                ? { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }
+                : { systemInstruction },
             }),
-          0 // failover instan ke model berikutnya jika model ini sedang 503
+          isGemma ? 1 : 0
         );
         usedModelName = model;
         lastError = null;
