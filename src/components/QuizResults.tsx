@@ -157,7 +157,7 @@ export const QuizResults: React.FC<QuizResultsProps> = ({
             <span className="flex items-center gap-1.5">
               <Search size={14} />
               {quiz.usedGrounding === true
-                ? "Menggunakan pencarian Google"
+                ? quiz.provider === 'groq' ? 'Menggunakan pencarian web Groq' : 'Menggunakan pencarian Google'
                 : quiz.usedGrounding === false
                   ? "Dibuat tanpa pencarian web; periksa referensi secara mandiri."
                   : "Referensi tersedia pada pembahasan"}

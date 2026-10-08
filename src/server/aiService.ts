@@ -23,7 +23,7 @@ export async function generateQuiz(input: QuizConfig, apiKey?: string, options: 
     const supportsGrounding = modelInfo(fallbackModel)?.grounding === true;
     if (config.enableGrounding && !supportsGrounding && !settings.allowGroundingFallback) throw new QuizGenerationError('Penyedia cadangan tidak mendukung referensi web yang diminta. Periksa pengaturan cadangan.', 503, 'FALLBACK_CAPABILITY');
     options.onNotice?.(`Beralih dari ${providerName(provider)} ke ${providerName(fallbackProvider)} sesuai pengaturan. Materi dikirim ke penyedia cadangan.${config.enableGrounding && !supportsGrounding ? ' Melanjutkan tanpa pencarian web.' : ''}`);
-    const quiz = await execute(fallbackProvider, { ...config, provider: fallbackProvider, model: fallbackModel, enableGrounding: config.enableGrounding && supportsGrounding });
+    const quiz = await execute(fallbackProvider, { ...config, provider: fallbackProvider, model: fallbackModel, enableGrounding: fallbackProvider === 'groq' || (config.enableGrounding && supportsGrounding) });
     return { ...quiz, requestedProvider: provider, requestedModel: config.model };
   }
 }

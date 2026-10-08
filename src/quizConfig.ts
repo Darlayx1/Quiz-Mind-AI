@@ -56,7 +56,7 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
     timeLimitMinutes: minutes,
     timePerQuestionSeconds: displayMode === "sequential" ? seconds : undefined,
     language: body.language === "en" ? "en" : "id",
-    enableGrounding: body.enableGrounding !== false,
+    enableGrounding: provider === 'groq' || body.enableGrounding !== false,
     languageStyle: optionalText(body.languageStyle, 500),
     additionalInstructions: optionalText(body.additionalInstructions, 2000),
   };

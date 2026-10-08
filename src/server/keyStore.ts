@@ -189,7 +189,7 @@ export class ServerKeyStore {
       if (!entry) return res.status(404).json({ error: 'Key tidak ditemukan.' });
       const probe = new KeyPool({ keys: [{ ...entry, enabled: true }], settings: { ...defaultSettings } });
       try {
-        const quiz = await generateQuiz({ provider: entry.provider, model: req.body.model ?? defaultProviderModel(entry.provider ?? 'gemini'), topic: 'Penjumlahan dasar', difficulty: 'easy', questionCount: 1, timeLimitMinutes: 0, language: 'id', enableGrounding: false }, undefined, { pool: probe, signal: AbortSignal.any([session.controller.signal,AbortSignal.timeout(90_000)]) });
+        const quiz = await generateQuiz({ provider: entry.provider, model: req.body.model ?? defaultProviderModel(entry.provider ?? 'gemini'), topic: 'Penjumlahan dasar', difficulty: 'easy', questionCount: 1, timeLimitMinutes: 0, language: 'id', enableGrounding: false }, undefined, { pool: probe, signal: AbortSignal.any([session.controller.signal,AbortSignal.timeout(300_000)]) });
         if (this.pool().collection.keys.some(key => key.id === entry.id && key.key === entry.key)) {
           this.pool().reset(entry.id); this.pool().health.set(entry.id,{ state: 'ready', lastSuccess: Date.now(), successes: 1, failures: 0, reason: `Pembuatan soal berhasil: ${quiz.model}` });
         }

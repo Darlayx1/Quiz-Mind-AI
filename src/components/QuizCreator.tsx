@@ -51,7 +51,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
   const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
   const selectedDifficulty = DIFFICULTIES.find(level => level.id === difficulty)!;
-  const supportsGrounding = modelInfo(model)?.grounding === true;
+  const supportsGrounding = provider === 'groq' || modelInfo(model)?.grounding === true;
   const selectedModel = modelInfo(model);
   const providerReady = hasSessionKeys(provider) || (!apiKey && !requiresApiKey && serverProviders.includes(provider));
   const backupReady = settings.allowProviderFallback && settings.fallbackProvider !== provider && hasSessionKeys(settings.fallbackProvider) && (!enableGrounding || !supportsGrounding || settings.allowGroundingFallback);
@@ -60,6 +60,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     : !validCount ? "Masukkan jumlah soal antara 1–100."
     : !validTimer ? `Masukkan durasi ${sequential ? "15–600 detik" : "1–120 menit"}.`
     : !validModelId(model) ? 'Isi ID model yang valid.'
+    : provider === 'groq' && !modelInfo(model)?.structured ? 'Pilih Qwen 3.8 atau GPT-OSS agar thinking tertinggi tersedia.'
     : !providerReady && !backupReady ? `Tambahkan atau buka API key ${providerName(provider)} di Koneksi AI.` : "";
   const canGenerate = !isLoading && !missingReason;
   const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,7 +96,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
         : Number(totalMinutes),
       timePerQuestionSeconds: sequential ? unlimited ? 0 : Number(perQuestionSeconds) : undefined,
       language, languageStyle: languageStyle.trim() || undefined,
-      additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding: enableGrounding && supportsGrounding,
+      additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding: provider === 'groq' || (enableGrounding && supportsGrounding),
     });
   };
 
@@ -198,7 +199,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
               <div className="menu-setting-grid">
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
-              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? "Perkaya materi dengan rujukan dari Google Search." : "Model ini menggunakan materi dan pengetahuan AI tanpa pencarian Google."}</small></span></label>
+              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={provider === 'groq' || !supportsGrounding} checked={provider === 'groq' || (enableGrounding && supportsGrounding)} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{provider === 'groq' ? 'Wajib aktif: Groq mencari informasi web terbaru sebelum menyusun kuis.' : supportsGrounding ? 'Perkaya materi dengan rujukan dari Google Search.' : 'Model ini menggunakan materi dan pengetahuan AI tanpa pencarian Google.'}</small></span></label>
               <label htmlFor="language-style" className="field-label">Gaya bahasa <span className="optional-badge">Opsional</span></label>
               <input id="language-style" list="language-styles" className="field-input" maxLength={500} value={languageStyle} onChange={e => setLanguageStyle(e.target.value)} placeholder="Baku & akademis" aria-describedby="style-help" />
               <datalist id="language-styles">{STYLES.map(style => <option key={style} value={style} />)}</datalist>
@@ -221,7 +222,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             <div><dt>Bahasa</dt><dd>{language === "id" ? "Indonesia" : "English"}</dd></div>
             <div><dt>Penyedia AI</dt><dd>{providerName(provider)}</dd></div>
             {languageStyle.trim() && <div><dt>Gaya bahasa</dt><dd>{languageStyle}</dd></div>}
-            <div><dt>Referensi web</dt><dd>{enableGrounding && supportsGrounding ? "Aktif" : "Nonaktif"}</dd></div>
+            <div><dt>Referensi web</dt><dd>{provider === 'groq' || (enableGrounding && supportsGrounding) ? "Aktif" : "Nonaktif"}</dd></div>
             {additionalInstructions.trim() && <div><dt>Instruksi tambahan</dt><dd><Check size={14} /> Ditambahkan</dd></div>}
           </dl>
           <div className="menu-summary-model"><BrainCircuit size={17} /><span>{modelName(model)}</span></div>

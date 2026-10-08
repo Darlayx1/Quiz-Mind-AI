@@ -20,7 +20,7 @@ const keys = [
 const config: QuizConfig = { provider: 'groq', model: 'openai/gpt-oss-20b', topic: 'Aljabar', difficulty: 'easy', questionCount: 7, timeLimitMinutes: 5, language: 'id', enableGrounding: false };
 const originalFetch = globalThis.fetch;
 const calls: { provider: string; key: string; model?: string; body?: any }[] = [];
-let failGroq = 0, failGoogle = 0, malformed = false, invalidQuestion = false, truncate = false, serial = 0, slow = false;
+let failGroq = 0, failGoogle = 0, malformed = false, invalidQuestion = false, truncate = false, searchEmpty = false, serial = 0, slow = false;
 const makeQuiz = (count: number) => ({ title: 'Aljabar', topic: 'Aljabar', summary: 'Konsep aljabar.', questions: Array.from({length: count},() => ({ question: `Pertanyaan ${++serial}: berapa dua tambah dua?`, options: invalidQuestion ? ['4','4','4','4'] : ['4','3','5','6'], correctAnswerIndex: invalidQuestion ? 8 : 0, explanation: 'Dua tambah dua adalah empat.', topicCategory: 'Penjumlahan', referenceTitle: '' })) });
 globalThis.fetch = async (input, init) => {
   const request = new Request(input,init);
@@ -34,12 +34,13 @@ globalThis.fetch = async (input, init) => {
   const failure = provider === 'groq' ? failGroq : failGoogle;
   if (failure) return Response.json({error:{ code: failure, message: 'Test provider error', status: failure === 401 ? 'UNAUTHENTICATED' : 'RESOURCE_EXHAUSTED' }},{status:failure,headers:{'retry-after':'120'}});
   if (request.method === 'GET') return provider === 'groq' ? Response.json({data:[{id:'openai/gpt-oss-20b'},{id:'custom/text-model'}]}) : Response.json({models:[{name:'models/gemini-3.8-flash',supportedGenerationMethods:['generateContent']}]});
+  if (provider === 'groq' && body.tools?.[0]?.type === 'browser_search') return Response.json({ choices:[{message:{content:searchEmpty ? '' : 'Hasil pencarian web: aljabar adalah cabang matematika. Sumber terbaru tersedia untuk topik ini.'},finish_reason:'stop'}] });
   const prompt = provider === 'groq' ? body.messages.at(-1).content : JSON.stringify(body.contents);
   const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1] ?? 1);
   const content = malformed ? 'not json' : JSON.stringify(makeQuiz(count));
   return provider === 'groq' ? Response.json({ choices:[{message:{content},finish_reason:truncate?'length':'stop'}] }) : Response.json({candidates:[{content:{role:'model',parts:[{text:content}]}}]});
 };
-const reset = () => { calls.length=0; failGroq=failGoogle=0; malformed=invalidQuestion=truncate=slow=false; };
+const reset = () => { calls.length=0; failGroq=failGoogle=0; malformed=invalidQuestion=truncate=searchEmpty=slow=false; };
 try {
   assert.equal(normalizeQuizConfig({...config,model:'custom/text-model'}).provider,'groq');
   assert.equal(normalizeQuizConfig({topic:'Aljabar',provider:'groq'}).model,'qwen/qwen3.8-27b');
@@ -61,14 +62,26 @@ try {
   assert.equal((await decryptCollection(v2,'fake-legacy-password')).keys[0].provider,'gemini');
   let pool = new KeyPool(collection);
   const quiz = await generateQuiz(config,undefined,{pool});
-  assert.equal(quiz.questions.length,7); assert.equal(quiz.provider,'groq'); assert.equal(quiz.requestedProvider,'groq'); assert.equal(quiz.usedGrounding,false);
-  assert.equal(calls.length,2); assert.ok(calls.every(call => call.provider === 'groq' && call.key === 'fake-groq-secret'));
-  assert.equal(calls[0].body.response_format.json_schema.strict,true);
+  assert.equal(quiz.questions.length,7); assert.equal(quiz.provider,'groq'); assert.equal(quiz.requestedProvider,'groq'); assert.equal(quiz.usedGrounding,true);
+  assert.equal(calls.length,3); assert.ok(calls.every(call => call.provider === 'groq' && call.key === 'fake-groq-secret'));
+  assert.equal(calls[0].body.tools[0].type,'browser_search'); assert.equal(calls[0].body.tool_choice,'required');
+  assert.ok(calls.every(call => call.body?.reasoning_effort === 'high'));
+  assert.equal(calls[1].body.response_format.json_schema.strict,true);
+  assert.equal(calls[0].body.response_format,undefined);
+  assert.ok(calls[1].body.messages.at(-1).content.includes('Hasil pencarian web'));
   reset();
-  await generateQuiz({...config,questionCount:1,model:'custom/text-model'},undefined,{pool});
-  assert.equal(calls[0].body.response_format.type,'json_object');
+  assert.equal((await generateQuiz({...config,model:'qwen/qwen3.8-27b',questionCount:1},undefined,{pool})).usedGrounding,true);
+  assert.equal(calls[1].body.model,'qwen/qwen3.8-27b');
+  assert.equal(calls[1].body.reasoning_format,'hidden');
+  reset(); searchEmpty=true;
+  await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool}),/Pencarian web Groq tidak menghasilkan/);
+  assert.equal(calls.length,1);
   reset();
-  await assert.rejects(generateQuiz({...config,enableGrounding:true},undefined,{pool}),/Pencarian Google/); assert.equal(calls.length,0);
+  await assert.rejects(generateQuiz({...config,questionCount:1,model:'custom/text-model'},undefined,{pool}),/thinking tertinggi/);
+  assert.equal(calls.length,0);
+  reset();
+  assert.equal((await generateQuiz({...config,enableGrounding:true,questionCount:1},undefined,{pool})).usedGrounding,true);
+  assert.equal(calls[0].body.tools[0].type,'browser_search');
   assert.deepEqual(await probeKey(keys[1]),['openai/gpt-oss-20b','custom/text-model']);
   reset(); failGroq=429;
   pool=new KeyPool(collection);
@@ -82,8 +95,8 @@ try {
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowModelFallback:true}});
   // Only the requested model is missing; model fallback uses the same provider and key.
   const mockFetch=globalThis.fetch;
-  globalThis.fetch=async(input,init)=>{const req=new Request(input,init);if(req.method==='POST' && req.url.includes('api.groq.com')) {const body=await req.clone().json();failGroq=body.model==='openai/gpt-oss-20b'?404:0;}return mockFetch(input,init);};
-  assert.equal((await generateQuiz({...config,questionCount:1},undefined,{pool})).model,'openai/gpt-oss-120b'); assert.deepEqual(calls.map(call=>call.model),['openai/gpt-oss-20b','openai/gpt-oss-120b']);
+  globalThis.fetch=async(input,init)=>{const req=new Request(input,init);if(req.method==='POST' && req.url.includes('api.groq.com')) {const body=await req.clone().json();failGroq=!body.tools && body.model==='openai/gpt-oss-20b'?404:0;}return mockFetch(input,init);};
+  assert.equal((await generateQuiz({...config,questionCount:1},undefined,{pool})).model,'openai/gpt-oss-120b'); assert.deepEqual(calls.map(call=>call.model),['openai/gpt-oss-20b','openai/gpt-oss-20b','openai/gpt-oss-120b']);
   globalThis.fetch=mockFetch;
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true}});
@@ -92,12 +105,12 @@ try {
   assert.equal(fallback.provider,'groq'); assert.equal(fallback.requestedProvider,'gemini'); assert.equal(fallback.requestedModel,'gemini-3.8-flash'); assert.ok(notices.some(message=>message.includes('Materi dikirim')));
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true}});
-  await assert.rejects(generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool}),/tidak mendukung referensi/); assert.ok(calls.every(call=>call.provider==='gemini'));
+  assert.equal((await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})).usedGrounding,true);
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true,allowGroundingFallback:true}});
-  assert.equal((await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})).usedGrounding,false);
+  assert.equal((await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})).usedGrounding,true);
   reset(); malformed=true;
-  await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection)}),/JSON/); assert.equal(calls.length,1);
+  await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection)}),/JSON/); assert.equal(calls.length,2);
   reset(); invalidQuestion=true;
   await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection)}),/soal valid/);
   reset(); truncate=true;

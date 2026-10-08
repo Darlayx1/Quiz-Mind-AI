@@ -41,9 +41,9 @@ const GEMINI_MODELS = [
 ] as const;
 export const AI_MODELS = [
   ...GEMINI_MODELS.map(model => ({ ...model, provider: 'gemini' as const, grounding: model.id !== 'gemma-4-31b-it', structured: model.id !== 'gemma-4-31b-it' })),
-  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B', provider: 'groq' as const, tag: 'Model utama · 27B', description: 'Model utama Groq untuk latihan, penalaran, dan analisis konsep.', grounding: false, structured: true },
-  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', provider: 'groq' as const, tag: 'Cepat & efisien', description: 'Latihan harian melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
-  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'groq' as const, tag: 'Penalaran mendalam', description: 'Materi kompleks melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
+  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B', provider: 'groq' as const, tag: 'Model utama · 27B', description: 'Thinking tertinggi dan informasi web terbaru melalui Groq.', grounding: true, structured: true },
+  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', provider: 'groq' as const, tag: 'Cepat & efisien', description: 'Thinking tertinggi dan informasi web terbaru melalui Groq.', grounding: true, structured: true },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'groq' as const, tag: 'Penalaran mendalam', description: 'Thinking tertinggi dan informasi web terbaru melalui Groq.', grounding: true, structured: true },
 ];
 export type AIModel = string;
 export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
