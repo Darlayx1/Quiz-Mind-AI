@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
-import { fetchApi, setPersonalApiKey, standalonePages, keyRevision, subscribeKeys, hasSessionKeys, logoutCloud, isCloudActive, safeError, cloudApi } from './api.js';
+import { fetchApi, setPersonalApiKey, standalonePages, keyRevision, subscribeKeys, hasSessionKeys, logoutCloud, isCloudActive, safeError, cloudApi, activateCollection, lockKeys } from './api.js';
 import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
@@ -17,6 +17,7 @@ import { AIConnectionsModal } from './components/AIConnectionsModal.js';
 import { DEFAULT_MODEL, AIModel, type AIProvider } from './models.js';
 import { VAULT_STORAGE_KEY } from './personalKeyVault.js';
 import { MULTI_VAULT_KEY } from './multiKeyVault.js';
+import { CLIENT_STORAGE_KEY, hasStoredClientKeys, loadStoredClientKeys } from './clientKeyStorage.js';
 
 const STORAGE_KEY = 'quizmind_ai_history_v1';
 
@@ -39,27 +40,48 @@ export default function App() {
   const [loadingGrounding, setLoadingGrounding] = useState(true);
   const [loadingModel, setLoadingModel] = useState<AIModel>(DEFAULT_MODEL);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState('');
+  const [apiKey, setApiKey] = useState(() => (hasStoredClientKeys() ? '__pool__' : ''));
   const personalMode = standalonePages || Boolean(apiKey.trim());
   const handleApiKeyChange = useCallback((value: string) => {
     setPersonalApiKey(value);
     setApiKey(value);
     setErrorMessage(null);
   }, []);
-  useEffect(() => { if (apiKey === '__cloud__' && !isCloudActive()) setApiKey(''); }, [keysRevision, apiKey]);
+  useEffect(() => { if (apiKey === '__cloud__' && !isCloudActive()) setApiKey(hasStoredClientKeys() ? '__pool__' : ''); }, [keysRevision, apiKey]);
 
-  // Changes in another tab invalidate the active key on every application view.
+  // Sync client storage and legacy vaults across tabs
   useEffect(() => {
     const syncVault = (event: StorageEvent) => {
-      if (event.key === VAULT_STORAGE_KEY || event.key === MULTI_VAULT_KEY || event.key === null) handleApiKeyChange('');
+      if (event.key === CLIENT_STORAGE_KEY) {
+        if (event.newValue) {
+          const loaded = loadStoredClientKeys();
+          if (loaded && loaded.keys.length > 0) {
+            activateCollection(loaded, false);
+            setApiKey('__pool__');
+            setErrorMessage(null);
+            return;
+          }
+        }
+        lockKeys(false);
+        setApiKey('');
+        return;
+      }
+      if (event.key === VAULT_STORAGE_KEY || event.key === MULTI_VAULT_KEY || event.key === null) {
+        if (!hasStoredClientKeys()) handleApiKeyChange('');
+      }
     };
     window.addEventListener('storage', syncVault);
     return () => window.removeEventListener('storage', syncVault);
   }, [handleApiKeyChange]);
 
-  // Expire plaintext using a deadline, including when background timers are delayed.
+  // Expire plaintext using a deadline only for cloud/temporary sessions (persisted client keys do not expire)
   useEffect(() => {
     if (!apiKey) return;
+    if (!isCloudActive() && hasStoredClientKeys()) {
+      const onUnload = () => { requestController.current?.abort(); };
+      window.addEventListener('pagehide', onUnload);
+      return () => window.removeEventListener('pagehide', onUnload);
+    }
     let timer: ReturnType<typeof setTimeout>;
     let deadline = 0;
     let lastPing = 0;

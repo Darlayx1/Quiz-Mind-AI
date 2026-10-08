@@ -2,6 +2,9 @@ import { QuizConfigError } from "./quizConfig.js";
 import { KeyPool, defaultSettings, type KeyCollection } from './keyPool.js';
 import { readGenerationStream } from './generationStream.js';
 import type { AIProvider } from './models.js';
+import { loadStoredClientKeys, saveStoredClientKeys, deleteStoredClientKeys, hasStoredClientKeys } from './clientKeyStorage.js';
+
+export { loadStoredClientKeys, saveStoredClientKeys, deleteStoredClientKeys, hasStoredClientKeys };
 
 const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 export const standalonePages = !apiBase && import.meta.env.BASE_URL !== "/";
@@ -16,12 +19,37 @@ let activeGeneration = false;
 let revision = 0;
 const listeners = new Set<() => void>();
 const notify = () => { revision++; listeners.forEach(fn => fn()); };
+
+// Auto-load stored client keys on startup if present
+const initialStored = loadStoredClientKeys();
+if (initialStored && initialStored.keys.length > 0) {
+  pool = new KeyPool(initialStored, notify);
+}
+
 export const refreshKeyStatus = () => notify();
 export const subscribeKeys = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const keyRevision = () => revision;
 export const getKeyPool = () => pool;
-export function activateCollection(value: KeyCollection) { if (pool) pool.update(value); else pool = new KeyPool(value, notify); personalApiKey = ''; cloud = false; notify(); }
-export function lockKeys() { pool?.lock(); pool = undefined; personalApiKey = ''; cloud = false; cloudKeyCount = 0; cloudProviders = []; cloudSettings = { ...defaultSettings }; csrf = ''; notify(); }
+export function activateCollection(value: KeyCollection, persist = true) {
+  if (pool) pool.update(value);
+  else pool = new KeyPool(value, notify);
+  personalApiKey = '';
+  cloud = false;
+  if (persist) saveStoredClientKeys(value);
+  notify();
+}
+export function lockKeys(clearStorage = false) {
+  pool?.lock();
+  pool = undefined;
+  personalApiKey = '';
+  cloud = false;
+  cloudKeyCount = 0;
+  cloudProviders = [];
+  cloudSettings = { ...defaultSettings };
+  csrf = '';
+  if (clearStorage) deleteStoredClientKeys();
+  notify();
+}
 export async function cloudApi(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST') {
   const response = await fetch(apiBase + '/api/keys/' + path, { method, credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-Vault-CSRF': csrf } : {}) },
@@ -40,9 +68,9 @@ export function keyNotice(message: string) { if (typeof window !== 'undefined') 
 
 export function setPersonalApiKey(value: string) {
   if (value === '__pool__' || value === '__cloud__') return;
-  if (!value) { lockKeys(); return; }
+  if (!value) { lockKeys(true); return; }
   personalApiKey = value.trim();
-  activateCollection({ keys: [{ id: 'session', name: 'Key sesi', project: '', key: personalApiKey, enabled: true, priority: 1 }], settings: { ...defaultSettings } });
+  activateCollection({ keys: [{ id: 'session', name: 'Key pribadi', project: '', key: personalApiKey, enabled: true, priority: 1 }], settings: { ...defaultSettings } }, true);
 }
 
 export async function fetchApi(

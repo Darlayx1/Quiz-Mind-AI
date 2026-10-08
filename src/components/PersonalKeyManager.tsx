@@ -6,6 +6,7 @@ import { probeKey } from '../server/providerClient.js';
 import { defaultSettings, KeyPool, type KeyEntry, type KeyHealth, type PoolSettings } from '../keyPool.js';
 import { decryptCollection, deleteVault, encryptCollection, MULTI_VAULT_KEY, openVault, savedVault, storeVault } from '../multiKeyVault.js';
 import { VAULT_STORAGE_KEY } from '../personalKeyVault.js';
+import { hasStoredClientKeys, CLIENT_STORAGE_KEY, deleteStoredClientKeys } from '../clientKeyStorage.js';
 type Row = Omit<KeyEntry,'key'> & { masked: string; health: KeyHealth };
 type CloudData = { revision: number; settings: PoolSettings; keys: Row[] };
 const statuses = { untested: 'Belum diuji', ready: 'Siap digunakan', waiting: 'Menunggu', invalid: 'Perlu mengganti key', restricted: 'Perlu memperbaiki akses' };
@@ -45,7 +46,15 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
   useEffect(() => {
     refreshSaved();
     if (import.meta.env.BASE_URL === '/' || import.meta.env.VITE_API_BASE_URL) void cloudApi('capabilities').then(data => setAvailable(data.configured)).catch(() => {});
-    const sync = (event: StorageEvent) => { if ([MULTI_VAULT_KEY, VAULT_STORAGE_KEY, null].includes(event.key)) { lockKeys(); onApiKeyChange(''); clearFields(); setDirty(false); refreshSaved(); setMessage('Vault berubah di tab lain. Buka kembali.'); } };
+    const sync = (event: StorageEvent) => {
+      if ([CLIENT_STORAGE_KEY, MULTI_VAULT_KEY, VAULT_STORAGE_KEY, null].includes(event.key)) {
+        refreshSaved();
+        if (!hasStoredClientKeys() && !savedVault()) {
+          clearFields();
+          setDirty(false);
+        }
+      }
+    };
     window.addEventListener('storage',sync);
     const timer = setInterval(() => setNow(Date.now()),1000);
     return () => { window.removeEventListener('storage',sync); clearInterval(timer); };
@@ -56,7 +65,7 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
     try { await fn(); } catch (err) { let text = safeError(err); for (const secret of draft.split(/\r?\n/).map(value => value.trim()).filter(Boolean)) text = text.replaceAll(secret,'[key disamarkan]'); setError(text); }
     finally { setBusy(false); setPassword(''); setConfirmation(''); setBackupPassword(''); setBackupConfirmation(''); }
   };
-  const activate = (collection: Parameters<typeof activateCollection>[0]) => { activateCollection(collection); onApiKeyChange('__pool__'); setDirty(true); };
+  const activate = (collection: Parameters<typeof activateCollection>[0]) => { activateCollection(collection, true); onApiKeyChange('__pool__'); setDirty(false); refreshSaved(); };
   const updateRemote = (data: CloudData) => { setRemote(data); activateCloud(data.keys.filter(k => k.enabled).length, data.keys.filter(k => k.enabled).map(k => k.provider ?? 'gemini'), data.settings); onApiKeyChange('__cloud__'); };
   useEffect(() => { if (isCloudActive()) void cloudApi('session').then(updateRemote).catch(() => { lockKeys(); onApiKeyChange(''); }); }, []);
   useEffect(() => {
@@ -79,7 +88,7 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
       if (remoteActive) await mutate('add', { keys }); else activate({ keys: [...(pool?.collection.keys || []), ...keys], settings: pool?.collection.keys.length ? settings : { ...settings, preferredProvider: provider, preferredModel: defaultProviderModel(provider), fallbackProvider: provider === 'groq' ? 'gemini' : 'groq', fallbackModel: defaultProviderModel(provider === 'groq' ? 'gemini' : 'groq') } });
     }
     setName(''); setProject(''); setDraft(''); setShow(false); setEdit(null);
-    setMessage(remoteActive ? 'Key tersimpan terenkripsi di server.' : 'Key aktif untuk sesi ini. Buka Penyimpanan untuk menyimpannya terenkripsi.');
+    setMessage(remoteActive ? 'Key tersimpan terenkripsi di server.' : 'Key berhasil disimpan di perangkat ini dan siap digunakan.');
   });
   const toggle = (row: Row) => run(async () => {
     if (remoteActive) await mutate('update', { id: row.id, patch: { enabled: !row.enabled } });
@@ -123,8 +132,32 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
     anchor.href = url; anchor.download = 'quizmind-' + new Date().toISOString().slice(0,10) + '.vault.json'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
   };
   const remove = () => run(async () => {
-    if (confirm === 'all') { if (remoteActive) await mutate('clear',{}); else { deleteVault(); lockKeys(); onApiKeyChange(''); setSaved(false); setDirty(false); } }
-    else if (confirm) { if (remoteActive) await mutate('remove',{ id: confirm }); else activate({ ...pool!.collection, keys: pool!.collection.keys.filter(k => k.id !== confirm) }); }
+    if (confirm === 'all') {
+      if (remoteActive) await mutate('clear',{});
+      else {
+        deleteStoredClientKeys();
+        deleteVault();
+        lockKeys(true);
+        onApiKeyChange('');
+        setSaved(false);
+        setDirty(false);
+      }
+    } else if (confirm) {
+      if (remoteActive) await mutate('remove',{ id: confirm });
+      else {
+        const nextKeys = pool!.collection.keys.filter(k => k.id !== confirm);
+        if (!nextKeys.length) {
+          deleteStoredClientKeys();
+          deleteVault();
+          lockKeys(true);
+          onApiKeyChange('');
+          setSaved(false);
+          setDirty(false);
+        } else {
+          activate({ ...pool!.collection, keys: nextKeys });
+        }
+      }
+    }
     setConfirm(null); setMessage('Penghapusan selesai. Untuk mencabut key, buka konsol penyedianya.');
   });
   const lock = () => run(async () => { if (remoteActive) await cloudApi('logout',{}); lockKeys(); onApiKeyChange(''); setRemote(null); setDirty(false); clearFields(); setMessage(saved || remoteActive ? 'Sesi terkunci. Salinan terenkripsi tetap tersimpan.' : 'Sesi terkunci. Key yang belum disimpan dihapus dari memori.'); });
@@ -146,7 +179,7 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
             <button type="button" className="topic-chip" disabled={busy} onClick={() => { setProvider(id); setFilter(id); setTab('keys'); }}>Kelola koneksi <ArrowRight size={14}/></button>
           </article>;
         })}</div>
-        <div className="connection-summary"><KeyRound size={19}/><div><strong>{unlocked ? `${rows.filter(row => row.enabled).length} key aktif untuk sesi ini` : saved ? 'Koleksi tersimpan · terkunci' : 'Mulai dengan menambahkan API key'}</strong><p>{unlocked ? `${providerName(settings.preferredProvider ?? 'gemini')} · ${settings.preferredModel}${dirty ? ' · perubahan belum disimpan' : remoteActive ? ' · tersimpan di server' : ' · sesi browser'}` : 'API key adalah kode akses dari penyedia AI. Anda dapat memakai key milik sendiri.'}</p></div></div>
+        <div className="connection-summary"><KeyRound size={19}/><div><strong>{unlocked ? (hasStoredClientKeys() ? `${rows.filter(row => row.enabled).length} key tersimpan di perangkat ini` : `${rows.filter(row => row.enabled).length} key aktif untuk sesi ini`) : saved ? 'Koleksi tersimpan · terkunci' : 'Mulai dengan menambahkan API key'}</strong><p>{unlocked ? `${providerName(settings.preferredProvider ?? 'gemini')} · ${settings.preferredModel}${remoteActive ? ' · tersimpan di server' : hasStoredClientKeys() ? ' · tersimpan di perangkat (tahan refresh)' : dirty ? ' · perubahan belum disimpan' : ' · sesi browser'}` : 'API key adalah kode akses dari penyedia AI. Anda dapat memakai key milik sendiri.'}</p></div></div>
         <div className="key-actions"><button type="button" className="connection-primary" onClick={() => setTab(saved && !unlocked ? 'storage' : 'keys')}>{saved && !unlocked ? 'Buka koleksi tersimpan' : 'Tambahkan API key'}</button><button type="button" className="topic-chip" onClick={() => setTab('storage')}>Atur penyimpanan</button></div>
       </section>
       <fieldset disabled={busy} className="key-controls">
@@ -160,8 +193,8 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
             <label htmlFor="key-name" className="field-label">3. Nama koneksi <span className="optional-badge">Opsional</span></label><input id="key-name" className="field-input" value={name} onChange={e => setName(e.target.value)} maxLength={70} placeholder="Contoh: Koneksi utama / Cadangan"/>
             <details open={advanced} onToggle={event => setAdvanced(event.currentTarget.open)} className="connection-advanced"><summary>Pengaturan lanjutan</summary><div className="key-form-grid"><div><label htmlFor="key-project" className="field-label">{provider === 'groq' ? 'ID organisasi Groq' : 'ID proyek Google'} · opsional</label><input id="key-project" className="field-input" value={project} onChange={e => setProject(e.target.value)} maxLength={100}/></div><div><label htmlFor="key-priority" className="field-label">Urutan penggunaan</label><input id="key-priority" className="field-input" type="number" min={1} max={100} value={priority} onChange={e => setPriority(e.target.value)}/></div></div><p className="field-help">Urutan 1 didahulukan. Key dalam {provider === 'groq' ? 'organisasi' : 'proyek'} yang sama berbagi kuota. ID diisi manual. Key tanpa ID dikelompokkan bersama untuk penyedia ini. Untuk menambah massal, tempel satu key per baris.</p></details>
             {draftTest && <p className="field-help" role="status">{draftTest}</p>}
-            <div className="key-actions">{!remoteActive && <button type="button" className="topic-chip" disabled={!draft.trim()} onClick={() => void testDraft()}>4. Uji koneksi</button>}<button type="button" className="connection-primary" disabled={!edit && !draft.trim()} onClick={() => void add()}>{edit ? 'Terapkan perubahan' : remoteActive ? 'Tambahkan & simpan di server' : 'Tambahkan untuk sesi ini'}</button>{edit && <button type="button" className="topic-chip" onClick={() => { setEdit(null); setDraft(''); setName(''); setProject(''); }}>Batal edit</button>}</div>
-            <p className="field-help">{remoteActive ? 'Setelah ditambahkan, gunakan Uji koneksi pada daftar untuk memeriksa key melalui server.' : 'Key belum diuji tetap dapat ditambahkan. Untuk menyimpannya setelah reload, buka Penyimpanan.'}</p>
+            <div className="key-actions">{!remoteActive && <button type="button" className="topic-chip" disabled={!draft.trim()} onClick={() => void testDraft()}>4. Uji koneksi</button>}<button type="button" className="connection-primary" disabled={!edit && !draft.trim()} onClick={() => void add()}>{edit ? 'Terapkan perubahan' : remoteActive ? 'Tambahkan & simpan di server' : 'Simpan di perangkat ini'}</button>{edit && <button type="button" className="topic-chip" onClick={() => { setEdit(null); setDraft(''); setName(''); setProject(''); }}>Batal edit</button>}</div>
+            <p className="field-help">{remoteActive ? 'Setelah ditambahkan, gunakan Uji koneksi pada daftar untuk memeriksa key melalui server.' : 'Key tersimpan di perangkat Anda dan otomatis aktif kembali saat halaman direfresh atau browser dibuka kembali.'}</p>
           </div>}
           {unlocked && <><div className="connection-list-heading"><h4>Koneksi Anda</h4><select aria-label="Filter penyedia" className="field-input" value={filter} onChange={e => setFilter(e.target.value as typeof filter)}><option value="all">Semua penyedia</option><option value="gemini">Gemini</option><option value="groq">Groq</option></select></div>
             <div className="key-list" aria-label="Daftar API key">{rows.filter(row => filter === 'all' || row.provider === filter).map(row => <article className="key-card" key={row.id}>
@@ -188,20 +221,20 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
           </>}
         </section>
         <section hidden={tab !== 'storage'}>
-          <div className="connection-section-heading"><div><h3>Penyimpanan & Keamanan</h3><p>{remoteActive ? 'Perubahan otomatis tersimpan terenkripsi di server.' : dirty ? 'Ada perubahan yang belum disimpan setelah reload.' : saved ? 'Koleksi terenkripsi tersimpan di browser ini.' : 'Key sesi akan terkunci setelah reload. Simpan terenkripsi untuk digunakan kembali.'}</p></div><ShieldCheck size={23}/></div>
+          <div className="connection-section-heading"><div><h3>Penyimpanan & Keamanan</h3><p>{remoteActive ? 'Perubahan otomatis tersimpan terenkripsi di server.' : hasStoredClientKeys() ? 'API key tersimpan di browser ini (localStorage). Tidak perlu mengisi ulang saat refresh atau membuka ulang.' : dirty ? 'Ada perubahan yang belum disimpan.' : saved ? 'Koleksi terenkripsi tersimpan di browser ini.' : 'Simpan key di perangkat ini agar tidak perlu diisi ulang saat refresh.'}</p></div><ShieldCheck size={23}/></div>
           <label className="field-label">Lokasi penyimpanan</label><div className="key-tabs"><button type="button" className="topic-chip" aria-pressed={mode === 'local'} disabled={unlocked} onClick={() => setMode('local')}>Perangkat ini</button><button type="button" className="topic-chip" aria-pressed={mode === 'server'} disabled={unlocked || !available} onClick={() => setMode('server')}>Server · lintas perangkat</button></div>
           <p className="field-help">{available ? 'Server tersedia untuk penggunaan lintas perangkat. Kunci sesi aktif sebelum berpindah lokasi.' : 'Penyimpanan server memerlukan backend Node dengan login dan disk persisten. Penyimpanan perangkat ini tersedia.'}</p>
           {mode === 'server' && !remoteActive && <><label className="field-label" htmlFor="vault-user">Nama pengguna</label><input id="vault-user" className="field-input" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} maxLength={80}/><label className="field-label" htmlFor="server-password">Kata sandi akun server</label><input id="server-password" type="password" className="field-input" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} maxLength={1024}/><button type="button" className="connection-primary" disabled={!password} onClick={() => void run(async () => { updateRemote(await cloudApi('login',{ username,password })); setMessage('Penyimpanan server terbuka.'); setTab('keys'); })}>Masuk ke server</button></>}
           {mode === 'local' && saved && !pool && <><label className="field-label" htmlFor="unlock-password">Kata sandi koleksi</label><input id="unlock-password" type="password" className="field-input" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} maxLength={1024}/><button type="button" className="connection-primary" disabled={!password} onClick={() => void run(async () => { activateCollection(await openVault(password)); onApiKeyChange('__pool__'); setDirty(false); setMessage('Koleksi terbuka. Key lama dikenali sebagai Gemini. Simpan untuk memperbarui format.'); setTab('keys'); })}>Buka koleksi</button></>}
-          {mode === 'local' && unlocked && <div className="connection-save"><h4>{saved ? 'Simpan perubahan' : 'Simpan koleksi pertama Anda'}</h4><p className="field-help">Gunakan kata sandi minimal 12 karakter. Untuk mengganti kata sandi, simpan kembali dengan kata sandi baru. Kata sandi tidak disimpan dan tidak dapat dipulihkan.</p><label htmlFor="vault-password" className="field-label">Kata sandi penyimpanan</label><input id="vault-password" className="field-input" type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} maxLength={1024}/><label htmlFor="vault-confirmation" className="field-label">Ulangi kata sandi</label><input id="vault-confirmation" className="field-input" type="password" autoComplete="new-password" value={confirmation} onChange={e => setConfirmation(e.target.value)} maxLength={1024}/><button type="button" className="connection-primary" disabled={password.length < 12 || password !== confirmation} onClick={() => void run(async () => { await storeVault(pool!.collection,password); setSaved(true); setDirty(false); setMessage('Koleksi tersimpan terenkripsi.'); })}>Simpan terenkripsi</button></div>}
+          {mode === 'local' && unlocked && <div className="connection-save"><h4>{saved ? 'Simpan perubahan' : 'Simpan koleksi pertama Anda'}</h4><p className="field-help">Gunakan kata sandi minimal 12 karakter. Untuk mengganti kata sandi, simpan kembali dengan kata sandi baru. Kata sandi tidak disimpan dan tidak dapat dipulihkan.</p><label htmlFor="vault-password" className="field-label">Kata sandi penyimpanan</label><input id="vault-password" className="field-input" type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} maxLength={1024}/><label htmlFor="vault-confirmation" className="field-label">Ulangi kata sandi</label><input id="vault-confirmation" className="field-input" type="password" autoComplete="new-password" value={confirmation} onChange={e => setPassword(e.target.value)} maxLength={1024}/><button type="button" className="connection-primary" disabled={password.length < 12 || password !== confirmation} onClick={() => void run(async () => { await storeVault(pool!.collection,password); setSaved(true); setDirty(false); setMessage('Koleksi tersimpan terenkripsi.'); })}>Simpan terenkripsi</button></div>}
           {unlocked && <div className="key-actions"><button type="button" className="topic-chip" onClick={() => dirty ? setConfirm('lock') : void lock()}>Kunci sesi</button>{remoteActive && <button type="button" className="topic-chip" onClick={() => void run(async () => { updateRemote(await cloudApi('session')); setMessage('Daftar terbaru dimuat.'); })}>Muat ulang daftar</button>}</div>}
           <details className="key-backup"><summary>Cadangan terenkripsi · ekspor / impor</summary><p className="field-help">Ekspor menyimpan seluruh koleksi Gemini dan Groq. Impor menambahkan key tanpa menimpa koleksi lama. Simpan kata sandi cadangan secara terpisah.</p><label className="field-label" htmlFor="backup-password">Kata sandi cadangan · minimal 12 karakter</label><input id="backup-password" className="field-input" type="password" autoComplete="off" maxLength={1024} value={backupPassword} onChange={e => setBackupPassword(e.target.value)}/>{unlocked && <><label className="field-label" htmlFor="backup-confirmation">Ulangi kata sandi untuk ekspor</label><input id="backup-confirmation" className="field-input" type="password" autoComplete="off" maxLength={1024} value={backupConfirmation} onChange={e => setBackupConfirmation(e.target.value)}/></>}<button type="button" className="topic-chip" disabled={!unlocked || backupPassword.length < 12 || backupPassword !== backupConfirmation} onClick={() => void run(async () => { const raw = remoteActive ? (await cloudApi('export',{ password: backupPassword })).backup : await encryptCollection(pool!.collection,backupPassword); download(raw); setMessage('Cadangan terenkripsi diunduh.'); })}>Ekspor cadangan</button><label className="field-label" htmlFor="backup-file">File cadangan untuk diimpor</label><input id="backup-file" className="field-input" type="file" accept=".json,application/json" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void run(async () => { if (file.size > 200_000) throw new Error('Cadangan maksimal 200 KB.'); setBackup(await file.text()); setMessage('Cadangan siap dibuka. Masukkan kata sandi cadangan.'); }); }}/><button type="button" className="topic-chip" disabled={!backup || backupPassword.length < 12 || (!unlocked && (mode === 'server' || saved))} onClick={() => void run(async () => { if (remoteActive) await mutate('import',{ backup,password: backupPassword }); else { const imported = await decryptCollection(backup,backupPassword); activate({ keys: [...(pool?.collection.keys || []), ...imported.keys], settings: pool?.collection.settings || imported.settings }); } setBackup(''); setMessage(remoteActive ? 'Cadangan ditambahkan dan tersimpan di server.' : 'Cadangan dibuka untuk sesi. Simpan koleksi untuk mempertahankan perubahan.'); })}>Impor cadangan</button></details>
           {(unlocked || (mode === 'local' && saved)) && <details className="connection-advanced"><summary>Hapus penyimpanan</summary><p className="field-help">Penghapusan di aplikasi tidak mencabut key di penyedia. Simpan cadangan jika masih diperlukan.</p><button type="button" className="topic-chip connection-danger" onClick={() => setConfirm('all')}>Hapus seluruh koleksi di lokasi ini</button></details>}
-          <p className="field-help">Sesi terkunci setelah reload atau 15 menit tanpa aktivitas. Data perangkat dapat hilang saat data situs dihapus. Enkripsi melindungi data tersimpan; key aktif tetap berada di memori sesi.</p>
+          <p className="field-help">API key tersimpan di browser ini (localStorage) agar tetap tersedia saat halaman direfresh atau ditutup. Anda dapat menghapus data ini kapan saja.</p>
         </section>
         {confirm && <div className="key-confirm" role="group" aria-label="Konfirmasi tindakan"><p>{confirm === 'lock' ? 'Perubahan sesi belum disimpan. Mengunci sekarang akan menghapus perubahan tersebut dari memori.' : confirm === 'all' ? 'Hapus seluruh koleksi dan salinan tersimpan di lokasi ini?' : 'Hapus key ini? Perubahan browser perlu disimpan kembali.'}</p><button type="button" className="topic-chip connection-danger" onClick={() => { if (confirm === 'lock') { setConfirm(null); void lock(); } else void remove(); }}>{confirm === 'lock' ? 'Kunci tanpa menyimpan' : 'Ya, hapus'}</button><button type="button" className="topic-chip" onClick={() => setConfirm(null)}>Batal</button></div>}
       </fieldset>
-      <div className="connection-session-status" role="status"><span className={'status-dot ' + (unlocked ? '' : 'inactive')}/>{busy ? 'Memproses…' : remoteActive ? 'Tersimpan terenkripsi di server' : dirty ? 'Aktif untuk sesi ini · perubahan belum disimpan' : saved ? unlocked ? 'Tersimpan terenkripsi · sesi terbuka' : 'Tersimpan terenkripsi · terkunci' : 'Belum ada koleksi tersimpan'}</div>
+      <div className="connection-session-status" role="status"><span className={'status-dot ' + (unlocked ? '' : 'inactive')}/>{busy ? 'Memproses…' : remoteActive ? 'Tersimpan terenkripsi di server' : hasStoredClientKeys() ? 'Tersimpan di perangkat ini · siap digunakan' : dirty ? 'Aktif untuk sesi ini · perubahan belum disimpan' : saved ? unlocked ? 'Tersimpan terenkripsi · sesi terbuka' : 'Tersimpan terenkripsi · terkunci' : 'Belum ada koleksi tersimpan'}</div>
     </div>
   </div>;
 }
