@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchApi, setPersonalApiKey, standalonePages } from './api.js';
+import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
+import { fetchApi, setPersonalApiKey, standalonePages, keyRevision, subscribeKeys, hasSessionKeys, logoutCloud, isCloudActive, safeError, cloudApi } from './api.js';
 import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
@@ -13,12 +13,22 @@ import { QuizRunner } from './components/QuizRunner.js';
 import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
 import { SecurityGuideModal } from './components/SecurityGuideModal.js';
-import { DEFAULT_MODEL, AIModel } from './models.js';
+import { AIConnectionsModal } from './components/AIConnectionsModal.js';
+import { DEFAULT_MODEL, AIModel, type AIProvider } from './models.js';
 import { VAULT_STORAGE_KEY } from './personalKeyVault.js';
+import { MULTI_VAULT_KEY } from './multiKeyVault.js';
 
 const STORAGE_KEY = 'quizmind_ai_history_v1';
 
 export default function App() {
+  const keysRevision = useSyncExternalStore(subscribeKeys, keyRevision);
+  const requestController = useRef<AbortController | null>(null);
+  const [keyMessage,setKeyMessage] = useState('');
+  useEffect(() => {
+    const notice = (event: Event) => setKeyMessage((event as CustomEvent<string>).detail);
+    window.addEventListener('key-notice',notice);
+    return () => { window.removeEventListener('key-notice',notice); requestController.current?.abort(); };
+  }, []);
   const [activeView, setActiveView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
   const [currentQuiz, setCurrentQuiz] = useState<Quiz | null>(null);
   const [currentResult, setCurrentResult] = useState<QuizResult | null>(null);
@@ -36,11 +46,12 @@ export default function App() {
     setApiKey(value);
     setErrorMessage(null);
   }, []);
+  useEffect(() => { if (apiKey === '__cloud__' && !isCloudActive()) setApiKey(''); }, [keysRevision, apiKey]);
 
   // Changes in another tab invalidate the active key on every application view.
   useEffect(() => {
     const syncVault = (event: StorageEvent) => {
-      if (event.key === VAULT_STORAGE_KEY || event.key === null) handleApiKeyChange('');
+      if (event.key === VAULT_STORAGE_KEY || event.key === MULTI_VAULT_KEY || event.key === null) handleApiKeyChange('');
     };
     window.addEventListener('storage', syncVault);
     return () => window.removeEventListener('storage', syncVault);
@@ -51,12 +62,17 @@ export default function App() {
     if (!apiKey) return;
     let timer: ReturnType<typeof setTimeout>;
     let deadline = 0;
-    const lock = () => handleApiKeyChange('');
+    let lastPing = 0;
+    const lock = () => { requestController.current?.abort(); if (isCloudActive()) void logoutCloud().catch(() => {}); handleApiKeyChange(''); };
     const reset = () => {
       if (deadline && Date.now() >= deadline) { lock(); return; }
       clearTimeout(timer);
       deadline = Date.now() + 15 * 60 * 1000;
       timer = setTimeout(lock, 15 * 60 * 1000);
+      if (isCloudActive() && Date.now() - lastPing > 60_000) {
+        lastPing = Date.now();
+        void cloudApi('session').catch(lock);
+      }
     };
     const check = () => { if (Date.now() >= deadline) lock(); };
     reset();
@@ -80,8 +96,10 @@ export default function App() {
   >([]);
 
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [connectionsOpen,setConnectionsOpen] = useState(false);
   const [serverSecurity, setServerSecurity] = useState({
     hasApiKey: false,
+    providers: [] as AIProvider[],
     maskedKey: 'Memuat...',
   });
 
@@ -115,6 +133,7 @@ export default function App() {
         if (data.security) {
           setServerSecurity({
             hasApiKey: Boolean(data.security.hasApiKey),
+            providers: data.security.providers || [],
             maskedKey: data.security.maskedKey || 'Tidak terdeteksi',
           });
         }
@@ -122,10 +141,14 @@ export default function App() {
       .catch((err) => {
         console.warn('Gagal menghubungi /api/health:', err);
       });
-  }, [apiKey]);
+  }, [apiKey, keysRevision]);
 
   // Handle Quiz Generation
   const handleGenerateQuiz = async (config: QuizConfig) => {
+    if (requestController.current) return;
+    const controller = new AbortController();
+    requestController.current = controller;
+    setKeyMessage('');
     setLoadingModel(config.model ?? DEFAULT_MODEL);
     setIsLoading(true);
     setLoadingTopic(config.topic);
@@ -137,6 +160,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
+        signal: controller.signal,
       });
 
       const contentType = response.headers.get('content-type') || '';
@@ -150,6 +174,7 @@ export default function App() {
       }
 
       const data = await response.json();
+      if (data.notices?.length) setKeyMessage(data.notices.join(' '));
 
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Gagal memproses kuis dengan model Gemini yang dipilih.');
@@ -172,10 +197,10 @@ export default function App() {
       // Pindah ke tampilan runner kuis
       setActiveView('runner');
     } catch (err: any) {
-      console.error('Generate quiz error:', err);
-      setErrorMessage(err.message || 'Terjadi kesalahan sistem saat menghubungi server.');
+      setErrorMessage(err?.name === 'AbortError' ? 'Pembuatan kuis dibatalkan. Pengaturan Anda tetap tersedia.' : safeError(err));
     } finally {
       setIsLoading(false);
+      requestController.current = null;
     }
   };
 
@@ -288,18 +313,20 @@ export default function App() {
         isBusy={isLoading}
         onNavigate={(view) => setActiveView(view)}
         onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
-        isKeyConfigured={Boolean(apiKey.trim()) || (!standalonePages && serverSecurity.hasApiKey)}
+        onOpenConnections={() => setConnectionsOpen(true)}
+        isKeyConfigured={hasSessionKeys() || (!apiKey && !standalonePages && serverSecurity.hasApiKey)}
         onNewQuizClick={handleNewQuiz}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 w-full" aria-busy={isLoading}>
+        {keyMessage && <p className="key-notice" role="status">{keyMessage}</p>}
         {isLoading && (
-          <GenerationLoader
+          <div><GenerationLoader
             topic={loadingTopic}
             enableGrounding={loadingGrounding}
             model={loadingModel}
-          />
+          /><div className="generation-cancel"><button type="button" className="topic-chip" onClick={() => requestController.current?.abort()}>Batalkan pembuatan kuis</button><p className="field-help">Permintaan yang sudah diterima penyedia AI dapat tetap memakai kuota.</p></div></div>
         )}
         {activeView === 'creator' ? (
           <div hidden={isLoading}>
@@ -310,6 +337,8 @@ export default function App() {
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
             requiresApiKey={standalonePages}
+            onOpenConnections={() => setConnectionsOpen(true)}
+            serverProviders={serverSecurity.providers}
           />
           </div>
         ) : activeView === 'runner' && currentQuiz ? (
@@ -367,6 +396,7 @@ export default function App() {
       </footer>
 
       {/* Security Guide Modal */}
+      <AIConnectionsModal open={connectionsOpen} onClose={() => setConnectionsOpen(false)} apiKey={apiKey} onApiKeyChange={handleApiKeyChange} serverProviders={serverSecurity.providers}/>
       <SecurityGuideModal
         isOpen={isSecurityModalOpen}
         onClose={() => setIsSecurityModalOpen(false)}

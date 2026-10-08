@@ -5,6 +5,7 @@ import {
   ShieldCheck,
   History,
   LayoutGrid,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "./Button.js";
 interface TopBarProps {
@@ -12,6 +13,7 @@ interface TopBarProps {
   isBusy?: boolean;
   onNavigate: (view: "creator" | "history") => void;
   onOpenSecurityModal: () => void;
+  onOpenConnections: () => void;
   isKeyConfigured: boolean;
   onNewQuizClick: () => void;
 }
@@ -20,6 +22,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   isBusy,
   onNavigate,
   onOpenSecurityModal,
+  onOpenConnections,
   isKeyConfigured,
   onNewQuizClick,
 }) => (
@@ -55,6 +58,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </nav>
       <div className="header-actions">
+        <button type="button" className="connection-trigger" onClick={onOpenConnections} disabled={isBusy}><KeyRound size={16}/><span>Koneksi AI</span><span className={'status-dot ' + (isKeyConfigured ? '' : 'inactive')}/></button>
         <button
           onClick={onOpenSecurityModal}
           className="icon-button"

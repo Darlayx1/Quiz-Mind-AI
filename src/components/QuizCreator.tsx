@@ -1,8 +1,8 @@
-import React, { useRef, useState } from "react";
-import { PersonalKeyManager } from "./PersonalKeyManager.js";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { hasSessionKeys, keyRevision, subscribeKeys, connectionSettings } from '../api.js';
 import { Button } from "./Button.js";
 import type { QuizConfig, DifficultyLevel, QuizDisplayMode } from "../types/quiz.js";
-import { AI_MODELS, DIFFICULTIES, AIModel, DEFAULT_MODEL, difficultyName, modelName } from "../models.js";
+import { AI_MODELS, DIFFICULTIES, AIModel, DEFAULT_MODEL, difficultyName, modelName, modelInfo, providerName, defaultProviderModel, validModelId, type AIProvider } from "../models.js";
 import { durationLabel } from "../quizConfig.js";
 import { ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, FileText, KeyRound, LayoutGrid, ListOrdered, ShieldCheck, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
 
@@ -13,11 +13,14 @@ interface QuizCreatorProps {
   apiKey: string;
   onApiKeyChange: (value: string) => void;
   requiresApiKey: boolean;
+  onOpenConnections?: () => void;
+  serverProviders?: AIProvider[];
 }
 const PRESETS = ["Kecerdasan Buatan", "Biologi Molekuler", "Sejarah Dunia", "Algoritma & Struktur Data"];
 const STYLES = ["Baku & akademis", "Santai & komunikatif", "Sederhana & mudah dipahami", "Profesional & ringkas"];
 
-export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, apiKey, onApiKeyChange, requiresApiKey }) => {
+export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, apiKey, requiresApiKey, onOpenConnections, serverProviders = [] }) => {
+  useSyncExternalStore(subscribeKeys, keyRevision);
   const [inputMode, setInputMode] = useState<"topic" | "material">("topic");
   const [topic, setTopic] = useState("");
   const [studyMaterial, setStudyMaterial] = useState("");
@@ -33,6 +36,11 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const [additionalInstructions, setAdditionalInstructions] = useState("");
   const [enableGrounding, setEnableGrounding] = useState(true);
   const [model, setModel] = useState<AIModel>(DEFAULT_MODEL);
+  const [provider,setProvider] = useState<AIProvider>('gemini');
+  const [customModel,setCustomModel] = useState(false);
+  const settings = connectionSettings();
+  useEffect(() => { if (hasSessionKeys()) { setProvider(settings.preferredProvider ?? 'gemini'); setModel(settings.preferredModel ?? DEFAULT_MODEL); setCustomModel(!modelInfo(settings.preferredModel)); } }, [settings.preferredProvider,settings.preferredModel]);
+  useEffect(() => { if (!hasSessionKeys() && !apiKey && serverProviders.length) { const value = serverProviders.includes('gemini') ? 'gemini' : serverProviders[0]; setProvider(value); setModel(defaultProviderModel(value)); setCustomModel(false); } }, [serverProviders.join(',')]);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const questionCount = countChoice === "custom" ? Number(customCount) : countChoice;
@@ -43,13 +51,16 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
   const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
   const selectedDifficulty = DIFFICULTIES.find(level => level.id === difficulty)!;
-  const supportsGrounding = model !== "gemma-4-31b-it";
-  const selectedModel = AI_MODELS.find(item => item.id === model)!;
+  const supportsGrounding = modelInfo(model)?.grounding === true;
+  const selectedModel = modelInfo(model);
+  const providerReady = hasSessionKeys(provider) || (!apiKey && !requiresApiKey && serverProviders.includes(provider));
+  const backupReady = settings.allowProviderFallback && settings.fallbackProvider !== provider && hasSessionKeys(settings.fallbackProvider) && (!enableGrounding || !supportsGrounding || settings.allowGroundingFallback);
   const missingReason = !topic.trim() ? "Isi topik kuis untuk melanjutkan."
     : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."
     : !validCount ? "Masukkan jumlah soal antara 1–100."
     : !validTimer ? `Masukkan durasi ${sequential ? "15–600 detik" : "1–120 menit"}.`
-    : requiresApiKey && !apiKey.trim() ? "Isi API key pribadi untuk membuat kuis." : "";
+    : !validModelId(model) ? 'Isi ID model yang valid.'
+    : !providerReady && !backupReady ? `Tambahkan atau buka API key ${providerName(provider)} di Koneksi AI.` : "";
   const canGenerate = !isLoading && !missingReason;
   const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -76,7 +87,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     event.preventDefault();
     if (!canGenerate) return;
     onGenerate({
-      model, topic: topic.trim(),
+      provider, model, topic: topic.trim(),
       studyMaterial: inputMode === "material" ? studyMaterial.trim() : undefined,
       difficulty, questionCount, displayMode,
       timeLimitMinutes: unlimited ? 0 : sequential
@@ -173,14 +184,21 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             </div>
           </section>
 
+          <section className="surface menu-section">
+            <div className="menu-section-title"><BrainCircuit size={19}/><h2>Koneksi & Model AI</h2></div>
+            <div className="menu-setting-grid"><div><label htmlFor="ai-provider" className="field-label">Penyedia AI</label><select id="ai-provider" className="field-input" value={provider} onChange={e => { const value = e.target.value as AIProvider; setProvider(value); setModel(defaultProviderModel(value)); setCustomModel(false); }}><option value="gemini">Google Gemini</option><option value="groq">Groq</option></select></div><div><label htmlFor="ai-model" className="field-label">Model AI</label><select id="ai-model" className="field-input" value={customModel ? '__custom__' : model} onChange={e => { if (e.target.value === '__custom__') { setCustomModel(true); setModel(''); } else { setCustomModel(false); setModel(e.target.value); } }}>{AI_MODELS.filter(item => item.provider === provider).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__custom__">ID model kustom…</option></select></div></div>
+            {customModel && <><label htmlFor="quiz-custom-model" className="field-label">ID model kustom</label><input id="quiz-custom-model" className="field-input" value={model} maxLength={120} onChange={e => setModel(e.target.value.trim())} placeholder="ID persis dari konsol penyedia"/></>}
+            <p className="field-help">{selectedModel?.description ?? 'Model kustom harus tersedia untuk akun dan penyedia Anda.'}</p>
+            <div className="connection-creator-status"><span className={'status-dot ' + (providerReady ? '' : 'inactive')}/><span>{providerReady ? 'Key penyedia ini tersedia' : backupReady ? 'Menggunakan penyedia cadangan jika koneksi utama tidak tersedia' : 'Key penyedia ini belum tersedia'}</span><button type="button" className="topic-chip" onClick={onOpenConnections}>Kelola Koneksi AI</button></div>
+          </section>
+
           <details className="surface menu-advanced">
-            <summary><SlidersHorizontal size={18} /><span><strong>Pengaturan lanjutan</strong><small>Model AI, bahasa, dan instruksi tambahan</small></span><ChevronDown size={18} /></summary>
+            <summary><SlidersHorizontal size={18} /><span><strong>Pengaturan lanjutan</strong><small>Bahasa, referensi web, dan instruksi tambahan</small></span><ChevronDown size={18} /></summary>
             <div className="menu-advanced-body">
               <div className="menu-setting-grid">
-                <div><label htmlFor="ai-model" className="field-label">Model AI</label><select id="ai-model" className="field-input" value={model} onChange={e => setModel(e.target.value as AIModel)}>{AI_MODELS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="field-help">{selectedModel.description}</p></div>
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
-              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? "Perkaya materi dengan rujukan dari Google Search." : "Gemma menggunakan materi dan pengetahuan model tanpa Google Search."}</small></span></label>
+              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? "Perkaya materi dengan rujukan dari Google Search." : "Model ini menggunakan materi dan pengetahuan AI tanpa pencarian Google."}</small></span></label>
               <label htmlFor="language-style" className="field-label">Gaya bahasa <span className="optional-badge">Opsional</span></label>
               <input id="language-style" list="language-styles" className="field-input" maxLength={500} value={languageStyle} onChange={e => setLanguageStyle(e.target.value)} placeholder="Baku & akademis" aria-describedby="style-help" />
               <datalist id="language-styles">{STYLES.map(style => <option key={style} value={style} />)}</datalist>
@@ -190,12 +208,6 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             </div>
           </details>
 
-          <details className="surface menu-advanced menu-api" open={requiresApiKey || undefined}>
-            <summary><KeyRound size={18} /><span><strong>API key pribadi</strong><small>{apiKey.trim() ? "Kunci tersedia untuk sesi ini" : requiresApiKey ? "Wajib diisi sebelum membuat kuis" : "Opsional · gunakan kunci Anda sendiri"}</small></span><ChevronDown size={18} /></summary>
-            <div className="menu-advanced-body">
-              <PersonalKeyManager apiKey={apiKey} onApiKeyChange={onApiKeyChange} />
-            </div>
-          </details>
         </fieldset>
 
         <aside className="surface menu-summary" aria-label="Ringkasan kuis">
@@ -207,6 +219,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             <div><dt>Mode kuis</dt><dd>{sequential ? "Satu per satu" : "Urutan bebas"}</dd></div>
             <div><dt>{sequential ? "Waktu per soal" : "Waktu total"}</dt><dd>{timerLabel}</dd></div>
             <div><dt>Bahasa</dt><dd>{language === "id" ? "Indonesia" : "English"}</dd></div>
+            <div><dt>Penyedia AI</dt><dd>{providerName(provider)}</dd></div>
             {languageStyle.trim() && <div><dt>Gaya bahasa</dt><dd>{languageStyle}</dd></div>}
             <div><dt>Referensi web</dt><dd>{enableGrounding && supportsGrounding ? "Aktif" : "Nonaktif"}</dd></div>
             {additionalInstructions.trim() && <div><dt>Instruksi tambahan</dt><dd><Check size={14} /> Ditambahkan</dd></div>}

@@ -3,14 +3,15 @@ import crypto from 'node:crypto';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // 96 bits for GCM
 const AUTH_TAG_LENGTH = 16;
-const SALT = 'quizmind-ai-fixed-salt-v1';
 
 /**
  * Mendapatkan derived key 256-bit (32 bytes) dari secret string.
  */
-function getDerivedKey(secret?: string): Buffer {
-  const masterKey = secret || process.env.ENCRYPTION_SECRET || process.env.GEMINI_API_KEY || 'default-quizmind-vault-key-32b-str';
-  return crypto.scryptSync(masterKey, SALT, 32);
+function getDerivedKey(salt: Buffer, secret?: string): Buffer {
+  const masterKey = secret || process.env.ENCRYPTION_SECRET;
+  if (!masterKey || masterKey.length < 32 || /quizmind-ai-super-secret|default-quizmind/.test(masterKey))
+    throw new Error('ENCRYPTION_SECRET harus berupa secret acak khusus minimal 32 karakter.');
+  return crypto.scryptSync(masterKey, salt, 32);
 }
 
 /**
@@ -19,7 +20,8 @@ function getDerivedKey(secret?: string): Buffer {
  */
 export function encryptData(plainText: string, customSecret?: string): string {
   try {
-    const key = getDerivedKey(customSecret);
+    const salt = crypto.randomBytes(16);
+    const key = getDerivedKey(salt, customSecret);
     const iv = crypto.randomBytes(IV_LENGTH);
     const cipher = crypto.createCipheriv(ALGORITHM, key, iv, {
       authTagLength: AUTH_TAG_LENGTH,
@@ -33,10 +35,9 @@ export function encryptData(plainText: string, customSecret?: string): string {
     const authTag = cipher.getAuthTag();
 
     // Satukan iv (12B) + authTag (16B) + ciphertext
-    const payload = Buffer.concat([iv, authTag, encrypted]);
+    const payload = Buffer.concat([Buffer.from([2]), salt, iv, authTag, encrypted]);
     return payload.toString('base64');
   } catch (err) {
-    console.error('Enkripsi gagal:', err);
     throw new Error('Gagal mengenkripsi data secara aman');
   }
 }
@@ -46,16 +47,17 @@ export function encryptData(plainText: string, customSecret?: string): string {
  */
 export function decryptData(encryptedBase64: string, customSecret?: string): string {
   try {
-    const key = getDerivedKey(customSecret);
     const raw = Buffer.from(encryptedBase64, 'base64');
 
-    if (raw.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+    if (raw.length < 1 + 16 + IV_LENGTH + AUTH_TAG_LENGTH || raw[0] !== 2) {
       throw new Error('Panjang payload enkripsi tidak valid');
     }
 
-    const iv = raw.subarray(0, IV_LENGTH);
-    const authTag = raw.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
-    const cipherText = raw.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+    const salt = raw.subarray(1, 17);
+    const key = getDerivedKey(salt, customSecret);
+    const iv = raw.subarray(17, 17 + IV_LENGTH);
+    const authTag = raw.subarray(17 + IV_LENGTH, 17 + IV_LENGTH + AUTH_TAG_LENGTH);
+    const cipherText = raw.subarray(17 + IV_LENGTH + AUTH_TAG_LENGTH);
 
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv, {
       authTagLength: AUTH_TAG_LENGTH,
@@ -69,7 +71,6 @@ export function decryptData(encryptedBase64: string, customSecret?: string): str
 
     return decrypted.toString('utf8');
   } catch (err) {
-    console.error('Dekripsi gagal:', err);
     throw new Error('Gagal mendekripsi payload (integritas atau kunci tidak cocok)');
   }
 }

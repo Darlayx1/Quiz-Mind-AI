@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fetchApi } from '../api.js';
+import { isCloudActive } from '../api.js';
 import { Button } from './Button.js';
 import {
   ShieldCheck,
@@ -43,25 +43,13 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
   const handleTestEncrypt = async () => {
     try {
       setIsEncrypting(true);
-      const res = await fetchApi('/api/vault/encrypt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: testText }),
-      });
-      const data = await res.json();
-      if (data.encrypted) {
-        setEncryptedOutput(data.encrypted);
-        // otomatis uji dekripsi
-        const decRes = await fetchApi('/api/vault/decrypt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ encrypted: data.encrypted }),
-        });
-        const decData = await decRes.json();
-        setDecryptedOutput(decData.decrypted || '');
-      }
+      const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt','decrypt']);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(testText));
+      setEncryptedOutput(btoa(String.fromCharCode(...new Uint8Array(ciphertext))));
+      setDecryptedOutput(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)));
     } catch (err) {
-      console.error('Error vault demo:', err);
+      setDecryptedOutput('Uji enkripsi memerlukan HTTPS atau localhost.');
     } finally {
       setIsEncrypting(false);
     }
@@ -116,7 +104,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
               <span>Privasi API Key</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed mb-3">
-              {personalMode ? 'Key pribadi dikirim langsung ke Google Gemini. Vault opsional menyimpan salinan terenkripsi AES-256-GCM di browser, dilindungi kata sandi melalui PBKDF2-SHA-256. Kata sandi tidak disimpan. Key aktif hanya berada di memori; reload, tombol Kunci, atau 15 menit tanpa aktivitas mengosongkannya. Enkripsi melindungi data tersimpan, tetapi tidak melindungi key aktif dari skrip berbahaya atau perangkat yang terkompromi. Gunakan perangkat tepercaya.' : 'Kunci server disimpan dalam variabel GEMINI_API_KEY di hosting. Key pribadi dikirim langsung ke Google Gemini dan dapat disimpan dalam vault browser terenkripsi dengan kata sandi yang tidak disimpan.'}
+              {isCloudActive() ? 'Vault server menyimpan koleksi key terenkripsi pada disk persisten. Browser hanya menerima metadata dan status. Login, cookie HttpOnly, serta token keamanan melindungi akses. Penggantian key tidak memerlukan build ulang. Kelola pencabutan dan kuota melalui Google AI Studio atau konsol Groq sesuai penyedia.' : personalMode ? 'Key pribadi dikirim langsung ke penyedia yang dipilih, Gemini atau Groq. Vault menyimpan koleksi terenkripsi AES-256-GCM di browser dengan satu kata sandi melalui PBKDF2-SHA-256. Kata sandi tidak disimpan. Reload, tombol Kunci, atau 15 menit tanpa aktivitas mengunci sesi. Ekspor cadangan terenkripsi untuk pemulihan. Enkripsi tidak melindungi key aktif dari skrip berbahaya atau perangkat terkompromi.' : 'Kunci server lama dapat disimpan dalam secret GEMINI_API_KEY dan GROQ_API_KEY di hosting. Pengelola API key mendukung vault browser terenkripsi serta vault server dengan login pemilik dan disk persisten.'}
             </p>
             <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200 font-mono">
               <span className="text-slate-500">{personalMode ? 'Status kunci pribadi:' : 'Status kunci server:'}</span>
@@ -132,7 +120,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
               <span>Langkah Push Aman ke GitHub</span>
             </div>
             <p className="text-xs text-slate-600 mb-3">
-              File <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">.gitignore</code> telah dikonfigurasi untuk mengecualikan semua file <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">.env*</code> sehingga API key asli Anda tidak akan pernah bocor ke publik:
+              File <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-800">.gitignore</code> mengecualikan file secret dan database vault untuk membantu mencegah kredensial masuk ke repository. File yang sudah terlanjur dilacak Git perlu ditangani terpisah:
             </p>
 
             <div className="relative bg-slate-900 text-slate-200 p-4 rounded-xl font-mono text-xs overflow-x-auto">
@@ -160,10 +148,10 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
           <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-100">
             <div className="flex items-center gap-2 text-sm font-bold text-blue-900 mb-2">
               <Lock className="w-4 h-4 text-blue-600" />
-              <span>Uji Coba Enkripsi Server AES-256-GCM</span>
+              <span>Uji Coba Enkripsi Lokal AES-256-GCM</span>
             </div>
             <p className="text-xs text-slate-600 mb-3">
-              Sistem menyertakan modul kriptografi AES-256-GCM terotentikasi untuk mengenkripsi token kuis dan data rahasia sebelum disimpan:
+              Demo ini berjalan di browser dengan key acak sementara. Data demo tidak dikirim ke server dan tidak disimpan.
             </p>
 
             <div className="space-y-3">

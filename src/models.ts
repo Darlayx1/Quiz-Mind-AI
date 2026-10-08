@@ -1,4 +1,7 @@
-export const AI_MODELS = [
+export type AIProvider = 'gemini' | 'groq';
+export const isProvider = (value: unknown): value is AIProvider => value === 'gemini' || value === 'groq';
+export const providerName = (value: AIProvider) => value === 'groq' ? 'Groq' : 'Google Gemini';
+const GEMINI_MODELS = [
   {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
@@ -36,10 +39,19 @@ export const AI_MODELS = [
     description: "Alternatif model Gemma untuk eksplorasi dan latihan konsep.",
   },
 ] as const;
-export type AIModel = (typeof AI_MODELS)[number]["id"];
+export const AI_MODELS = [
+  ...GEMINI_MODELS.map(model => ({ ...model, provider: 'gemini' as const, grounding: model.id !== 'gemma-4-31b-it', structured: model.id !== 'gemma-4-31b-it' })),
+  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', provider: 'groq' as const, tag: 'Cepat & efisien', description: 'Latihan harian melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'groq' as const, tag: 'Penalaran mendalam', description: 'Materi kompleks melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
+  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B', provider: 'groq' as const, tag: 'Serbaguna', description: 'Alternatif model Groq untuk latihan dan analisis konsep.', grounding: false, structured: true },
+];
+export type AIModel = string;
 export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
 export const isAIModel = (value: unknown): value is AIModel =>
   AI_MODELS.some((model) => model.id === value);
+export const validModelId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$/.test(value);
+export const modelInfo = (id?: string) => AI_MODELS.find(model => model.id === id);
+export const defaultProviderModel = (provider: AIProvider) => provider === 'groq' ? 'openai/gpt-oss-20b' : DEFAULT_MODEL;
 export const modelName = (id?: string) =>
   AI_MODELS.find((model) => model.id === id)?.name ?? id ?? "Gemini";
 export const DIFFICULTIES = [

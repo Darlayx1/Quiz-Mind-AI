@@ -1,29 +1,32 @@
 import assets from './.worker-assets.json';
-import { generateQuizWithGemini } from './src/server/geminiService.js';
-import { encryptData, decryptData, maskSecret } from './src/server/cryptoVault.js';
+import { generateQuiz } from './src/server/aiService.js';
+import { KeyPool, defaultSettings } from './src/keyPool.js';
+import { maskSecret } from './src/server/cryptoVault.js';
 import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
 import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
-type Environment = { GEMINI_API_KEY?: string; ENCRYPTION_SECRET?: string };
-const json = (data: unknown, status = 200) => Response.json(data, { status });
+type Environment = { GEMINI_API_KEY?: string; GROQ_API_KEY?: string; ENCRYPTION_SECRET?: string };
+const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 
 export default {
   async fetch(request: Request, env: Environment) {
     const pathname = new URL(request.url).pathname;
+    if (pathname === '/api/keys/capabilities') return json({ configured: false, storage: 'browser-vault', maxKeys: 100 });
     if (pathname === '/api/health' && request.method === 'GET') {
-      const hasApiKey = Boolean(env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+      const providers = (['gemini','groq'] as const).filter(provider => { const key = provider === 'groq' ? env.GROQ_API_KEY : env.GEMINI_API_KEY; return key && !key.startsWith('MY_'); });
+      const hasApiKey = providers.length > 0;
       return json({
         status: 'ok',
         version: '1.0.0',
         model: DEFAULT_MODEL,
         models: AI_MODELS.map(model => model.id),
         features: { deepThinking: true, googleSearchGrounding: true, serverSideProxy: true, aes256GcmVault: true },
-        security: { hasApiKey, maskedKey: hasApiKey ? maskSecret(env.GEMINI_API_KEY) : 'Belum dikonfigurasi di server', gitProtected: true },
+        security: { hasApiKey, providers, maskedKey: hasApiKey ? 'Key server tersedia' : 'Belum dikonfigurasi di server', gitProtected: true },
         timestamp: new Date().toISOString()
       });
     }
     if (pathname.startsWith('/api/')) {
-      if (request.method !== 'POST' || !['/api/generate-quiz', '/api/vault/encrypt', '/api/vault/decrypt'].includes(pathname)) {
+      if (request.method !== 'POST' || pathname !== '/api/generate-quiz') {
         return json({ success: false, error: 'Endpoint API tidak ditemukan.' }, 404);
       }
       const declaredSize = Number(request.headers.get('content-length') || 0);
@@ -40,30 +43,23 @@ export default {
       try {
         if (pathname === '/api/generate-quiz') {
           const config = normalizeQuizConfig(body);
-          if (!env.GEMINI_API_KEY || env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY') {
-            return json({ success: false, error: 'GEMINI_API_KEY belum dikonfigurasi di server. Pemilik aplikasi perlu memasangnya pada pengaturan hosting.' }, 503);
+          const key = config.provider === 'groq' ? env.GROQ_API_KEY : env.GEMINI_API_KEY;
+          if (!key || key.startsWith('MY_')) {
+            return json({ success: false, error: 'API key penyedia pilihan belum dikonfigurasi. Tambahkan key di Koneksi AI atau pengaturan hosting.' }, 503);
           }
-          const quiz = await generateQuizWithGemini(config, env.GEMINI_API_KEY);
+          const pool = new KeyPool({ keys: [{ id: 'worker-key', provider: config.provider, name: 'Key server', key, project: '', priority: 1, enabled: true }], settings: { ...defaultSettings } });
+          let quiz;
+          try { quiz = await generateQuiz(config, undefined, { pool, signal: request.signal }); } finally { pool.lock(); }
           return json({
             success: true,
             quiz,
-            integrityToken: encryptData(JSON.stringify({ quizId: quiz.id, createdAt: quiz.createdAt }), env.ENCRYPTION_SECRET || env.GEMINI_API_KEY)
           });
-        }
-        const secret = typeof body.secret === 'string' && body.secret ? body.secret : env.ENCRYPTION_SECRET || env.GEMINI_API_KEY;
-        if (pathname.endsWith('/encrypt')) {
-          if (typeof body.text !== 'string' || !body.text) return json({ error: 'Field "text" wajib diisi.' }, 400);
-          return json({ success: true, encrypted: encryptData(body.text, secret) });
-        }
-        if (pathname.endsWith('/decrypt')) {
-          if (typeof body.encrypted !== 'string' || !body.encrypted) return json({ error: 'Field "encrypted" wajib diisi.' }, 400);
-          return json({ success: true, decrypted: decryptData(body.encrypted, secret) });
         }
       } catch (error: any) {
         if (error instanceof QuizConfigError) return json({ success: false, error: error.message }, 400);
         if (pathname.endsWith('/decrypt')) return json({ success: false, error: 'Dekripsi gagal atau kunci salah.' }, 400);
         const status = typeof error?.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = error?.code ? String(error.message).replace(/AIza[\w-]+|gsk_[\w-]+/g,'[key disamarkan]') : 'Layanan AI belum berhasil membuat kuis. Periksa koneksi dan konfigurasi.';
         return json({ success: false, error: message }, status);
       }
     }
@@ -76,6 +72,9 @@ export default {
     return new Response(request.method === 'HEAD' ? null : content, {
       headers: {
         'content-type': mime + '; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+        'x-frame-options': 'DENY',
+        'referrer-policy': 'no-referrer',
         'cache-control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache'
       }
     });

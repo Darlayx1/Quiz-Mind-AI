@@ -9,6 +9,12 @@ dist-pages/
 .worker-assets.json
 *.tar.gz
 coverage/
+.private-vault/
+.qa/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.vault.json
 .DS_Store
 *.log
 .env*

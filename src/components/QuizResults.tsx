@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { QuizResult } from "../types/quiz.js";
-import { modelName, difficultyName } from "../models.js";
+import { modelName, difficultyName, providerName } from "../models.js";
 import { durationLabel, quizTimerSeconds } from "../quizConfig.js";
 import { Button } from "./Button.js";
 import {
@@ -145,8 +145,9 @@ export const QuizResults: React.FC<QuizResultsProps> = ({
         <div className="result-footer">
           <div className="text-xs text-slate-500 flex flex-col gap-1">
             <span className="flex items-center gap-1.5">
-              <Sparkles size={14} /> {modelName(quiz.model)}
+              <Sparkles size={14} /> {quiz.provider ? providerName(quiz.provider) + ' · ' : ''}{modelName(quiz.model)}
             </span>
+            {quiz.requestedProvider && quiz.provider !== quiz.requestedProvider && <span>Penyedia cadangan digunakan. Pilihan awal: {providerName(quiz.requestedProvider)}.</span>}
             {quiz.requestedModel && quiz.model !== quiz.requestedModel && (
               <span>
                 Model cadangan digunakan. Pilihan awal:{" "}

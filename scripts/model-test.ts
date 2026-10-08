@@ -70,7 +70,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 try {
-  for (const { id: model } of AI_MODELS) {
+  for (const { id: model } of AI_MODELS.filter(model => model.provider === 'gemini')) {
     calls.length = 0;
     const quiz = await generateQuizWithGemini({ ...config, model }, "test-key");
     assert.equal(calls[0].model, model);

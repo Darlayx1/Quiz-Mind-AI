@@ -2,8 +2,10 @@ import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { generateQuizWithGemini } from './src/server/geminiService.js';
-import { encryptData, decryptData, maskSecret } from './src/server/cryptoVault.js';
+import { generateQuiz } from './src/server/aiService.js';
+import { KeyPool, defaultSettings } from './src/keyPool.js';
+import { maskSecret } from './src/server/cryptoVault.js';
+import { ServerKeyStore } from './src/server/keyStore.js';
 import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
 import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
@@ -13,8 +15,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.disable('x-powered-by');
+app.use((_req,res,next) => { res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('X-Frame-Options','DENY'); res.setHeader('Referrer-Policy','no-referrer'); next(); });
+if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === 'production' || __dirname.endsWith('dist-server');
+if (isProduction) process.env.NODE_ENV = 'production';
 const staticDir = path.resolve(__dirname, __dirname.endsWith('dist-server') ? '../dist' : 'dist');
 
 app.use('/api', (req, res, next) => {
@@ -25,13 +31,21 @@ app.use('/api', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Vault-CSRF');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') return res.status(204).end();
   }
   next();
 });
 
 app.use(express.json({ limit: '15mb' }));
+app.use('/api', (_req,res,next) => { res.setHeader('Cache-Control','no-store'); next(); });
+const keyStore = new ServerKeyStore();
+keyStore.install(app);
+const runtimePool = new KeyPool({ settings: { ...defaultSettings }, keys: (['gemini','groq'] as const).flatMap(provider => {
+  const key = process.env[provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY'];
+  return key && !key.startsWith('MY_') ? [{ id: 'runtime-' + provider, provider, name: provider + ' server', project: '', key, enabled: true, priority: 1 }] : [];
+}) });
 
 // =========================================================================
 // API ROUTES
@@ -41,8 +55,9 @@ app.use(express.json({ limit: '15mb' }));
  * Health Check & Status Keamanan API Key
  */
 app.get('/api/health', (_req: Request, res: Response) => {
-  const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
-  const masked = maskSecret(process.env.GEMINI_API_KEY);
+  const providers = !keyStore.configured ? runtimePool.collection.keys.map(key => key.provider!) : [];
+  const hasKey = providers.length > 0;
+  const masked = providers.length ? 'Key server tersedia · ' + providers.join(', ') : 'Belum tersedia';
 
   res.json({
     status: 'ok',
@@ -57,7 +72,8 @@ app.get('/api/health', (_req: Request, res: Response) => {
     },
     security: {
       hasApiKey: hasKey,
-      maskedKey: hasKey ? masked : 'Belum diisi di .env',
+      providers,
+      maskedKey: keyStore.configured ? 'Masuk ke vault server untuk memakai key' : hasKey ? masked : 'Belum diisi di .env',
       gitProtected: true, // .env terproteksi di .gitignore
     },
     timestamp: new Date().toISOString(),
@@ -68,66 +84,50 @@ app.get('/api/health', (_req: Request, res: Response) => {
  * Endpoint Utama: Buat Kuis dengan Gemini atau Gemma 4 31B
  */
 app.post('/api/generate-quiz', async (req: Request, res: Response) => {
+  const disconnected = new AbortController();
+  const onClose = () => { if (!res.writableEnded) disconnected.abort(); };
+  res.on('close', onClose);
+  const streaming = keyStore.configured && req.headers.accept === 'application/x-ndjson';
   try {
     const config = normalizeQuizConfig(req.body);
 
-    const quiz = await generateQuizWithGemini(config);
-
-    // Enkripsi hash checksum verifikasi integritas kuis
-    const integrityToken = encryptData(JSON.stringify({ quizId: quiz.id, createdAt: quiz.createdAt }));
+    const notices: string[] = [];
+    const quiz = keyStore.configured
+      ? await keyStore.generation(req, res, (pool, signal) => {
+          if (streaming) { res.setHeader('Content-Type','application/x-ndjson'); res.setHeader('X-Accel-Buffering','no'); res.flushHeaders(); }
+          return generateQuiz(config, undefined, { pool, signal, onNotice: message => { notices.push(message); if (streaming && !res.destroyed) res.write(JSON.stringify({notice:message}) + '\n'); } });
+        })
+      : await generateQuiz(config, undefined, { pool: runtimePool, signal: disconnected.signal, onNotice: message => notices.push(message) });
+    if (!quiz || res.destroyed) return;
+    if (streaming) return res.end(JSON.stringify({success:true,quiz,notices}) + '\n');
+    if (res.headersSent) return;
 
     return res.json({
       success: true,
       quiz,
-      integrityToken,
+      notices,
     });
   } catch (error: any) {
+    if (res.destroyed) return;
     if (error instanceof QuizConfigError) return res.status(400).json({ success: false, error: error.message });
-    console.error('Error saat membuat kuis:', error);
     const status = typeof error?.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
-    const errorMessage = error?.message || 'Terjadi kesalahan sistem saat menghubungi model AI.';
+    const errorMessage = error?.name === 'AbortError' ? 'Pembuatan kuis dibatalkan.' : error?.name === 'TimeoutError' ? 'Batas waktu pembuatan kuis tercapai.' :
+      error?.code ? String(error.message).replace(/AIza[\w-]+|gsk_[\w-]+/g,'[key disamarkan]') : 'Terjadi kesalahan sistem saat menghubungi layanan AI.';
+    if (streaming && res.headersSent) return res.end(JSON.stringify({success:false,error:errorMessage,status}) + '\n');
+    if (res.headersSent) return;
     return res.status(status).json({
       success: false,
       error: errorMessage,
     });
-  }
-});
-
-/**
- * Endpoint Keamanan Vault: Enkripsi teks dengan AES-256-GCM
- */
-app.post('/api/vault/encrypt', (req: Request, res: Response) => {
-  try {
-    const { text, secret } = req.body;
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Field "text" wajib diisi.' });
-    }
-    const encrypted = encryptData(text, secret);
-    return res.json({ success: true, encrypted });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-/**
- * Endpoint Keamanan Vault: Dekripsi teks dengan AES-256-GCM
- */
-app.post('/api/vault/decrypt', (req: Request, res: Response) => {
-  try {
-    const { encrypted, secret } = req.body;
-    if (!encrypted || typeof encrypted !== 'string') {
-      return res.status(400).json({ error: 'Field "encrypted" wajib diisi.' });
-    }
-    const decrypted = decryptData(encrypted, secret);
-    return res.json({ success: true, decrypted });
-  } catch (err: any) {
-    return res.status(400).json({ success: false, error: 'Dekripsi gagal atau kunci salah.' });
-  }
+  } finally { res.off('close', onClose); }
 });
 
 // Pastikan semua rute /api/* yang tidak cocok selalu mengembalikan format JSON, bukan HTML Vite
 app.all('/api/*', (_req: Request, res: Response) => {
   res.status(404).json({ success: false, error: 'Endpoint API tidak ditemukan.' });
+});
+app.use((error: any, _req: Request, res: Response, _next: express.NextFunction) => {
+  res.status(error?.type === 'entity.too.large' ? 413 : error instanceof SyntaxError ? 400 : 503).json({ success: false, error: 'Permintaan tidak dapat diproses. Periksa format, ukuran data, dan konfigurasi server.' });
 });
 
 // =========================================================================

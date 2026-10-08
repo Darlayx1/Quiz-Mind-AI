@@ -1,4 +1,4 @@
-import type { AIModel } from "../models.js";
+import type { AIModel, AIProvider } from "../models.js";
 export type DifficultyLevel =
   (typeof import("../models.js").DIFFICULTIES)[number]["id"];
 export type QuizDisplayMode = "non_sequential" | "sequential";
@@ -34,11 +34,14 @@ export interface Quiz {
   questions: Question[];
   groundingQueriesUsed?: string[];
   requestedModel?: AIModel;
+  requestedProvider?: AIProvider;
+  provider?: AIProvider;
   model?: string;
   usedGrounding?: boolean;
 }
 
 export interface QuizConfig {
+  provider?: AIProvider;
   model?: AIModel;
   topic: string;
   studyMaterial?: string;
