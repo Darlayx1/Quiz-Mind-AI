@@ -65,7 +65,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 /**
- * Endpoint Utama: Buat Kuis dengan Gemini 3.8 Flash + Deep Thinking + Google Grounding
+ * Endpoint Utama: Buat Kuis dengan Gemini atau Gemma 4 31B
  */
 app.post('/api/generate-quiz', async (req: Request, res: Response) => {
   try {
@@ -84,13 +84,9 @@ app.post('/api/generate-quiz', async (req: Request, res: Response) => {
   } catch (error: any) {
     if (error instanceof QuizConfigError) return res.status(400).json({ success: false, error: error.message });
     console.error('Error saat membuat kuis:', error);
-    let errorMessage = error?.message || 'Terjadi kesalahan sistem saat menghubungi model Gemini.';
-    if (errorMessage.includes('503') || errorMessage.includes('high demand') || errorMessage.includes('UNAVAILABLE')) {
-      errorMessage = 'Server Gemini sedang mengalami lonjakan permintaan sementara (503 High Demand). Silakan klik "Buat Kuis" kembali dalam beberapa saat.';
-    } else if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
-      errorMessage = 'Batas kuota permintaan tercapai sementara waktu. Silakan coba kembali dalam beberapa detik.';
-    }
-    return res.status(500).json({
+    const status = typeof error?.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
+    const errorMessage = error?.message || 'Terjadi kesalahan sistem saat menghubungi model AI.';
+    return res.status(status).json({
       success: false,
       error: errorMessage,
     });

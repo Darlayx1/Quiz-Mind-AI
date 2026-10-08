@@ -3,12 +3,15 @@ import { generateQuizWithGemini } from "../src/server/geminiService.js";
 import { AI_MODELS, DEFAULT_MODEL, DIFFICULTIES } from "../src/models.js";
 import { normalizeQuizConfig, quizTimerSeconds } from "../src/quizConfig.js";
 import type { QuizConfig } from "../src/types/quiz.js";
+
 const modelFromRequest = (url: string) => decodeURIComponent(url.match(/models\/([^:]+):/)?.[1] || "");
 const originalFetch = globalThis.fetch;
 const calls: Array<{ model: string; grounded: boolean }> = [];
 let failFirst = false;
+let failAlways = false;
 let lastPrompt = "";
 let responseCount = 1;
+
 const config: QuizConfig = {
   topic: "Aljabar",
   difficulty: "intermediate",
@@ -17,6 +20,7 @@ const config: QuizConfig = {
   language: "id",
   enableGrounding: false,
 };
+
 globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
@@ -24,18 +28,19 @@ globalThis.fetch = async (input, init) => {
   if (modelFromRequest(request.url) === "gemma-4-31b-it") {
     assert.equal(body.systemInstruction, undefined);
     assert.equal(body.tools, undefined);
-    assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+    assert.equal(body.generationConfig?.thinkingConfig, undefined);
     assert.ok(lastPrompt.includes("Academic Assessment Engine"));
   }
   const model = decodeURIComponent(
     request.url.match(/models\/([^:]+):/)?.[1] || "",
   );
   calls.push({ model, grounded: Boolean(body.tools?.length) });
-  if (failFirst && calls.length === 1)
+  if (failAlways || (failFirst && calls.length === 1)) {
     return Response.json(
       { error: { code: 503, message: "Unavailable", status: "UNAVAILABLE" } },
       { status: 503 },
     );
+  }
   return Response.json({
     candidates: [
       {
@@ -46,8 +51,8 @@ globalThis.fetch = async (input, init) => {
               text: JSON.stringify({
                 title: "Aljabar",
                 summary: "Latihan konsep dasar.",
-                questions: Array.from({ length: responseCount }, () => ({
-                  question: "2 + 2 = ?",
+                questions: Array.from({ length: responseCount }, (_, idx) => ({
+                  question: `Pertanyaan nomor ${idx + 1}: berapa 2 + ${idx}?`,
                   options: ["4", "3", "5", "6"],
                   correctAnswerIndex: 0,
                   explanation: "Dua ditambah dua sama dengan empat.",
@@ -63,6 +68,7 @@ globalThis.fetch = async (input, init) => {
     ],
   });
 };
+
 try {
   for (const { id: model } of AI_MODELS) {
     calls.length = 0;
@@ -81,11 +87,13 @@ try {
     assert.equal(calls[0].grounded, model !== "gemma-4-31b-it");
     assert.equal(grounded.usedGrounding, model !== "gemma-4-31b-it");
   }
+
   calls.length = 0;
   assert.equal(
     (await generateQuizWithGemini(config, "test-key")).model,
     DEFAULT_MODEL,
   );
+
   calls.length = 0;
   failFirst = true;
   const fallback = await generateQuizWithGemini(
@@ -98,16 +106,26 @@ try {
   );
   assert.equal(fallback.requestedModel, "gemini-3.5-flash-lite");
   assert.equal(fallback.model, DEFAULT_MODEL);
+  failFirst = false;
+
   calls.length = 0;
   await assert.rejects(
     generateQuizWithGemini({ ...config, model: "invalid" as any }, "test-key"),
     /tidak didukung/,
   );
   assert.equal(calls.length, 0);
+
   calls.length = 0;
-  await assert.rejects(generateQuizWithGemini({ ...config, model: "gemma-4-31b-it" }, "test-key"), /Unavailable/);
-  assert.deepEqual(calls.map(c => c.model), ["gemma-4-31b-it"]);
-  failFirst = false;
+  failAlways = true;
+  await assert.rejects(
+    generateQuizWithGemini({ ...config, model: "gemma-4-31b-it" }, "test-key"),
+    /lonjakan permintaan|503|UNAVAILABLE/i,
+  );
+  // Pastikan Gemma tidak fallback ke model lain
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(c => c.model === "gemma-4-31b-it"));
+  failAlways = false;
+
   for (const difficulty of DIFFICULTIES) {
     const quiz = await generateQuizWithGemini(
       {
@@ -131,6 +149,7 @@ try {
     assert.ok(lastPrompt.includes("Gunakan studi kasus"));
     assert.ok(lastPrompt.includes("45 detik per soal"));
   }
+
   responseCount = 25;
   const custom = await generateQuizWithGemini(
     { ...config, questionCount: 25, timeLimitMinutes: 0 },
@@ -139,6 +158,7 @@ try {
   assert.equal(custom.questions.length, 25);
   assert.equal(quizTimerSeconds(custom), 0);
   assert.ok(lastPrompt.includes("Tanpa batas"));
+
   assert.equal(
     quizTimerSeconds(
       normalizeQuizConfig({
@@ -165,10 +185,11 @@ try {
     normalizeQuizConfig({ ...config, difficulty: "expert" }).difficulty,
     "master",
   );
+
   responseCount = 1;
   await assert.rejects(
     generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key"),
-    /1 soal dari 5/,
+    /1 soal valid dari 5/,
   );
   console.log(
     "PASS: enam model, sembilan level, grounding, fallback, prompt personal, custom 25 soal, timer per mode, tanpa batas, konfigurasi lama, validasi jumlah hasil. Tidak ada panggilan API eksternal.",

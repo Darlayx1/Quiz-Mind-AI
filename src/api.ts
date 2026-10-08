@@ -27,44 +27,34 @@ export async function fetchApi(
           {
             success: false,
             error:
-              "Isi API key Gemini Anda pada kolom API Key Pribadi sebelum membuat kuis.",
+              "Isi API key Anda pada kolom API Key Pribadi sebelum membuat kuis.",
           },
           { status: 400 },
         );
       try {
-        const { generateQuizWithGemini } = await import(
+        const { generateQuizWithGemini, QuizGenerationError } = await import(
           "./server/geminiService.js"
         );
         const config = JSON.parse(String(options?.body));
         const quiz = await generateQuizWithGemini(config, key);
         return Response.json({ success: true, quiz });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (error instanceof QuizConfigError)
+      } catch (error: any) {
+        if (error instanceof QuizConfigError) {
           return Response.json(
-            { success: false, error: message },
+            { success: false, error: error.message },
             { status: 400 },
           );
-        if (/Model menghasilkan/.test(message))
-          return Response.json(
-            { success: false, error: message },
-            { status: 502 },
-          );
-        const quota = /429|quota|RESOURCE_EXHAUSTED/i.test(message);
-        const unauthorized =
-          /400|401|403|API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(
-            message,
-          );
+        }
+
+        const status = typeof error?.status === "number" ? error.status : 502;
+        const message = error instanceof Error ? error.message : String(error);
+
         return Response.json(
           {
             success: false,
-            error: quota
-              ? "Kuota Gemini untuk kunci Anda sudah habis. Periksa kuota proyek di Google AI Studio atau coba lagi setelah reset."
-              : unauthorized
-                ? "Kunci Gemini tidak diterima. Periksa kunci, izin API, dan pembatasan domain di Google AI Studio."
-                : "Gemini belum berhasil membuat kuis. Periksa koneksi dan kunci Anda, lalu coba kembali.",
+            error: message,
           },
-          { status: quota ? 429 : unauthorized ? 401 : 502 },
+          { status: status >= 400 && status < 600 ? status : 502 },
         );
       }
     }
