@@ -1,3 +1,4 @@
+import { evaluateQuiz } from './src/server/evaluationService.js';
 import assets from './.worker-assets.json';
 import { generateQuiz } from './src/server/aiService.js';
 import { KeyPool, defaultSettings } from './src/keyPool.js';
@@ -26,7 +27,7 @@ export default {
       });
     }
     if (pathname.startsWith('/api/')) {
-      if (request.method !== 'POST' || pathname !== '/api/generate-quiz') {
+      if (request.method !== 'POST' || !['/api/generate-quiz','/api/evaluate-quiz'].includes(pathname)) {
         return json({ success: false, error: 'Endpoint API tidak ditemukan.' }, 404);
       }
       const declaredSize = Number(request.headers.get('content-length') || 0);
@@ -41,6 +42,11 @@ export default {
         return json({ success: false, error: 'Isi permintaan harus berupa JSON yang valid.' }, 400);
       }
       try {
+        if(pathname==='/api/evaluate-quiz'){
+          const keys=(['gemini','groq'] as const).flatMap(provider=>{const key=provider==='groq'?env.GROQ_API_KEY:env.GEMINI_API_KEY;return key&&!key.startsWith('MY_')?[{id:'worker-'+provider,provider,name:'Key hosting',key,project:'',priority:1,enabled:true}]:[];});
+          const pool=new KeyPool({keys,settings:{...defaultSettings}});
+          try{return json({success:true,evaluations:await evaluateQuiz(body,{pool,signal:AbortSignal.any([request.signal,AbortSignal.timeout(120000)])})});}finally{pool.lock();}
+        }
         if (pathname === '/api/generate-quiz') {
           const config = normalizeQuizConfig(body);
           const key = config.provider === 'groq' ? env.GROQ_API_KEY : env.GEMINI_API_KEY;

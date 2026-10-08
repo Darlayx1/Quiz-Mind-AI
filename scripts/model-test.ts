@@ -53,7 +53,7 @@ globalThis.fetch = async (input, init) => {
                 summary: "Latihan konsep dasar.",
                 questions: Array.from({ length: responseCount }, (_, idx) => ({
                   question: `Pertanyaan nomor ${idx + 1}: berapa 2 + ${idx}?`,
-                  options: ["4", "3", "5", "6"],
+                  options: ["4", "3", "5", "6", "7"],
                   correctAnswerIndex: 0,
                   explanation: "Dua ditambah dua sama dengan empat.",
                 })),

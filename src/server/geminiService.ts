@@ -6,7 +6,7 @@ import { KeyPool, PoolError } from '../keyPool.js';
 
 import { QuizGenerationError } from './generationError.js';
 export { QuizGenerationError } from './generationError.js';
-import { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, quizJsonSchema } from './quizPipeline.js';
+import { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, quizSchemaFor } from './quizPipeline.js';
 export { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse } from './quizPipeline.js';
 
 /**
@@ -188,75 +188,12 @@ async function callWithRetry<T>(
  * format skema JSON murni tanpa triple backticks dalam prompt.
  * Format ini terbukti 100% kompatibel dan tidak memicu 500 INTERNAL pada serving engine Gemma.
  */
-function buildGemmaPrompt(
-  config: QuizConfig,
-  targetCount: number,
-  existingQuestions: string[] = []
-): string {
-  const isEn = config.language === 'en';
-  const level = DIFFICULTIES.find((item) => item.id === config.difficulty)!;
-  const difficultyDesc = `${level.name}: ${level.description}`;
-
-  const langInstruction = isEn
-    ? 'All questions, options, explanations, and summaries MUST be written in fluent, academic English.'
-    : 'All questions, options, explanations, and summaries MUST be written in fluent, grammatically correct Indonesian (Bahasa Indonesia).';
-
-  let prompt = `You are an Academic Assessment Engine.
-Create ${targetCount} high-quality multiple choice quiz question(s) about the topic: "${config.topic}".
-Language requirement: ${langInstruction}
-Difficulty level: ${difficultyDesc}.
-Language style: ${config.languageStyle || 'Clear, academic, and structured'}.
-
-Requirements:
-1. Provide exactly 4 distinct options per question.
-2. Provide a single correct answer with "correctAnswerIndex" (0, 1, 2, or 3). Vary the position of the correct answer.
-3. Provide a thorough scientific/conceptual explanation for "explanation", explaining why the correct option is right and others are incorrect.
-4. Do NOT generate fake internet links or URLs. If there is a real published academic textbook or paper, provide its title in "referenceTitle", otherwise leave it as "".
-`;
-
-  if (existingQuestions.length > 0) {
-    prompt += `\nCRITICAL: Do NOT generate questions similar or redundant to these previously generated questions:\n${existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`;
-  }
-
-  if (config.additionalInstructions) {
-    prompt += `\nAdditional user preferences (follow these while respecting topic, language, and JSON schema):\n${config.additionalInstructions}\n`;
-  }
-
-  if (config.studyMaterial && config.studyMaterial.trim().length > 0) {
-    prompt += `\nStudy Material Reference:\n"""\n${config.studyMaterial.trim().slice(0, 10000)}\n"""\nBase the assessment questions strictly on the study material provided above.\n`;
-  }
-
-  prompt += `
-Respond strictly with valid JSON conforming to this schema:
-{
-  "title": "${isEn ? 'Academic Quiz: ' + config.topic : 'Kuis: ' + config.topic}",
-  "topic": "${config.topic}",
-  "summary": "${isEn ? 'Brief concept summary of this quiz.' : 'Ringkasan singkat konsep materi kuis ini.'}",
-  "questions": [
-    {
-      "question": "${isEn ? 'Clear question sentence?' : 'Kalimat pertanyaan yang jelas dan terstruktur dalam bahasa Indonesia?'}",
-      "options": [
-        "Option A",
-        "Option B",
-        "Option C",
-        "Option D"
-      ],
-      "correctAnswerIndex": 0,
-      "explanation": "${isEn ? 'Detailed explanation of why this answer is correct.' : 'Penjelasan detail konsep mengapa opsi ini benar.'}",
-      "topicCategory": "${config.topic}",
-      "referenceTitle": ""
-    }
-  ]
-}
-Return only valid JSON without any markdown formatting or commentary outside the JSON block. Generate exactly ${targetCount} question(s) now.`;
-
-  return prompt;
-}
+function buildGemmaPrompt(config:QuizConfig,targetCount:number,existingQuestions:string[]=[]):string { const p=buildPrompt(config,targetCount,existingQuestions); return p.systemInstruction+'\n'+p.userPrompt; }
 
 /**
  * Eksekusi generasi kuis dengan Gemma 4 31B atau Gemini
  */
-export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string, options: { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void } = {}): Promise<Quiz> {
+export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string, options: { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void; attemptBudget?:{calls:number} } = {}): Promise<Quiz> {
   config = normalizeQuizConfig(config);
   const selectedModel = config.model ?? DEFAULT_MODEL;
   const isGemma = selectedModel === 'gemma-4-31b-it';
@@ -265,13 +202,15 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
   let totalCalls = 0, batchCalls = 0;
   const requestContent = async (params: Parameters<GoogleGenAI['models']['generateContent']>[0]) => {
     signal.throwIfAborted();
-    if (modelInfo(String(params.model))?.structured && !params.config?.tools?.length) params = { ...params, config: { ...params.config, responseMimeType: 'application/json', responseJsonSchema: quizJsonSchema } };
+    params={...params,config:{...params.config,maxOutputTokens:8192}};
+    if (modelInfo(String(params.model))?.structured && !params.config?.tools?.length) params = { ...params, config: { ...params.config, responseMimeType: 'application/json', responseJsonSchema: quizSchemaFor(config.questionType) } };
     if (!options.pool) {
+      if(options.attemptBudget&&++options.attemptBudget.calls>3)throw new PoolError('Batas percobaan pembuatan kuis tercapai.',503,'POOL_BUDGET');
       const callSignal = AbortSignal.any([signal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
       return ai!.models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
     }
     return options.pool.run(async (key, poolSignal) => {
-      if (++batchCalls > 5 || ++totalCalls > Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 5)
+      if (++batchCalls > 3 || ++totalCalls > Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget&&++options.attemptBudget.calls>3)
         throw new PoolError('Batas percobaan pembuatan kuis tercapai.', 503, 'POOL_BUDGET');
       const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
       try {
@@ -282,7 +221,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         // Retain structured provider errors for retry hints; never display raw credentials.
         throw error;
       }
-    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice });
+    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, maxAttempts:Math.max(1,3-(options.attemptBudget?.calls??0)) });
   };
   // A managed pool already bounds and cancels each attempt. Wrapping its entire retry sequence
   // in Promise.race would leave retries running after the outer timeout has returned.
@@ -472,7 +411,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         rawQ,
         validQuestions.length,
         config.topic,
-        extractedSources
+        extractedSources, config.questionType
       );
       if (validated) {
         // Cek duplikasi dengan soal yang sudah ada

@@ -12,9 +12,12 @@
     "lint": "tsc --noEmit",
     "vault:password": "node scripts/vault-password.mjs",
     "test:keys": "node --import tsx scripts/client-storage-test.ts && node --import tsx scripts/multi-key-test.ts && node --import tsx scripts/server-key-test.ts",
-    "test:providers": "node --import tsx scripts/provider-test.ts"
+    "test:providers": "node --import tsx scripts/provider-test.ts",
+    "test:quiz-types": "node --import tsx scripts/quiz-types-test.ts"
   },
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",

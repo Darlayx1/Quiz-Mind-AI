@@ -78,7 +78,7 @@ globalThis.fetch = async (input,init) => {
   if (requests.length===2) return Response.json({error:{code:401,message:'API key not valid',status:'UNAUTHENTICATED'}},{status:401});
   const count=batch===2?1:2, start=batch++ * 2;
   assert.ok(req.url.includes('gemma-4-31b-it'));
-  return Response.json({candidates:[{content:{role:'model',parts:[{text:JSON.stringify({title:'Aljabar',questions:Array.from({length:count},(_,i)=>({question:`Berapa hasil operasi nomor ${start+i+1}?`,options:['Satu','Dua','Tiga','Empat'],correctAnswerIndex:0,explanation:'Pembahasan operasi aritmatika yang tepat.'}))})}]}}]});
+  return Response.json({candidates:[{content:{role:'model',parts:[{text:JSON.stringify({title:'Aljabar',questions:Array.from({length:count},(_,i)=>({question:`Berapa hasil operasi nomor ${start+i+1}?`,options:['Satu','Dua','Tiga','Empat','Lima'],correctAnswerIndex:0,explanation:'Pembahasan operasi aritmatika yang tepat.'}))})}]}}]});
 };
 try {
   pool=new KeyPool({...collection,keys:[collection.keys[0],collection.keys[2]]});
@@ -86,7 +86,7 @@ try {
   assert.equal(quiz.questions.length,5); assert.equal(quiz.model,'gemma-4-31b-it');
   assert.deepEqual(requests,['fake-secret-one','fake-secret-one','fake-secret-three','fake-secret-three']);
   const config={topic:'Aljabar',difficulty:'moderate' as const,questionCount:1,timeLimitMinutes:5,language:'id' as const,enableGrounding:false,model:DEFAULT_MODEL};
-  const response=()=>Response.json({candidates:[{content:{role:'model',parts:[{text:JSON.stringify({title:'Latihan',questions:[{question:'Berapa hasil operasi penjumlahan dua dan dua?',options:['Empat','Dua','Tiga','Lima'],correctAnswerIndex:0,explanation:'Dua ditambah dua sama dengan empat.'}]})}]}}]});
+  const response=()=>Response.json({candidates:[{content:{role:'model',parts:[{text:JSON.stringify({title:'Latihan',questions:[{question:'Berapa hasil operasi penjumlahan dua dan dua?',options:['Empat','Dua','Tiga','Lima','Enam'],correctAnswerIndex:0,explanation:'Dua ditambah dua sama dengan empat.'}]})}]}}]});
   const modelCalls:string[]=[];
   globalThis.fetch=async(input,init)=>{const req=new Request(input,init),model=decodeURIComponent(req.url.match(/models\/([^:]+):/)?.[1]||'');modelCalls.push(model);return model===DEFAULT_MODEL?Response.json({error:{code:404,message:'Model not found',status:'NOT_FOUND'}},{status:404}):response();};
   pool=new KeyPool({...collection,keys:[collection.keys[0]]});await assert.rejects(generateQuizWithGemini(config,undefined,{pool}));assert.deepEqual(modelCalls,[DEFAULT_MODEL]);

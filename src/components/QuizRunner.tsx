@@ -1,7 +1,11 @@
+import { readData, writeData, exportJSON, type Draft } from '../quizStorage.js';
+import { validateAnswer } from '../questionState.js';
+import { QuestionInput } from './QuestionInput.js';
+import { answerProgress, questionLabels, questionType } from '../questionState.js';
 import React, { useState, useEffect, useRef } from "react";
 import { difficultyName, modelName } from "../models.js";
 import { quizTimerSeconds, durationLabel } from "../quizConfig.js";
-import type { Quiz, QuizSubmission, Question } from "../types/quiz.js";
+import type { Quiz, QuizSubmission, Question, StoredAnswer, AnswerValue } from "../types/quiz.js";
 import { Button } from "./Button.js";
 import { ConfirmModal } from "./ConfirmModal.js";
 import {
@@ -20,139 +24,68 @@ interface QuizRunnerProps {
   quiz: Quiz;
   onSubmit: (submission: QuizSubmission) => void;
   onQuit: () => void;
+  attemptKey?: string;
 }
 
-export const QuizRunner: React.FC<QuizRunnerProps> = ({
-  quiz,
-  onSubmit,
-  onQuit,
-}) => {
-  const sequential = quiz.displayMode === "sequential";
-  const limit = quizTimerSeconds(quiz);
-  const unlimited = limit === 0;
-  const total = quiz.questions.length;
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [userAnswers, setUserAnswers] = useState<Record<string, number>>({});
-  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
-  const [timeLeft, setTimeLeft] = useState(limit);
-  const [notice, setNotice] = useState("");
-  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
-  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
-  const submitted = useRef(false);
-  const startedAt = useRef(Date.now());
-  const deadline = useRef(startedAt.current + limit * 1000);
-  const indexRef = useRef(0);
-  const answersRef = useRef(userAnswers);
-  const bookmarksRef = useRef(bookmarks);
-  const submitRef = useRef(onSubmit);
-  submitRef.current = onSubmit;
-  const questionHeading = useRef<HTMLHeadingElement>(null);
-
-  const finish = (finishedAt = Date.now()) => {
-    if (submitted.current) return;
-    submitted.current = true;
-    submitRef.current({
-      quizId: quiz.id,
-      userAnswers: answersRef.current,
-      bookmarkedQuestions: Array.from(bookmarksRef.current),
-      completedAt: new Date().toISOString(),
-      timeTakenSeconds: Math.max(
-        0,
-        Math.round((finishedAt - startedAt.current) / 1000),
-      ),
-    });
+export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,attemptKey}) => {
+  const sequential=quiz.displayMode==='sequential',total=quiz.questions.length;
+  const questionLimit=(index:number)=>sequential?(quiz.timePerQuestionByType?.[questionType(quiz.questions[index])]??quizTimerSeconds(quiz)):quizTimerSeconds(quiz);
+  const [currentIndex,setCurrentIndex]=useState(0),[userAnswers,setUserAnswers]=useState<Record<string,StoredAnswer>>({}),[bookmarks,setBookmarks]=useState<Set<string>>(new Set());
+  const [timeLeft,setTimeLeft]=useState(questionLimit(0)),[notice,setNotice]=useState(''),[showSubmitConfirm,setShowSubmitConfirm]=useState(false),[showQuitConfirm,setShowQuitConfirm]=useState(false),[hydrated,setHydrated]=useState(false),[readOnly,setReadOnly]=useState(false);
+  const submitted=useRef(false),startedAt=useRef(Date.now()),deadline=useRef(0),indexRef=useRef(0),answersRef=useRef(userAnswers),bookmarksRef=useRef(bookmarks),submitRef=useRef(onSubmit),attempt=useRef(attemptKey??crypto.randomUUID()),ready=useRef(false),owner=useRef(false),questionHeading=useRef<HTMLHeadingElement>(null),saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  submitRef.current=onSubmit;
+  const active=useRef(true);
+  const limit=questionLimit(currentIndex),unlimited=limit===0;
+  const snapshot=():Draft=>({quizId:quiz.id,attemptId:attempt.current,answers:answersRef.current,bookmarks:Array.from(bookmarksRef.current),index:indexRef.current,startedAt:startedAt.current,deadline:deadline.current});
+  const save=()=>{if(!ready.current||!owner.current||submitted.current)return;clearTimeout(saveTimer.current);void writeData('draft:'+quiz.id,snapshot()).catch(()=>setNotice('Belum tersimpan pada perangkat. Ekspor jawaban sebelum menutup halaman.'));};
+  const schedule=()=>{clearTimeout(saveTimer.current);saveTimer.current=setTimeout(save,500);};
+  const finish=(finishedAt=Date.now(),reason:'manual'|'timer'='manual')=>{
+    if(submitted.current||!ready.current||!owner.current)return;submitted.current=true;clearTimeout(saveTimer.current);
+    const submission:QuizSubmission={schemaVersion:2,quizId:quiz.id,attemptId:attempt.current,submissionId:crypto.randomUUID(),userAnswers:{...answersRef.current},bookmarkedQuestions:Array.from(bookmarksRef.current),startedAt:new Date(startedAt.current).toISOString(),completedAt:new Date().toISOString(),timeTakenSeconds:Math.max(0,Math.round((finishedAt-startedAt.current)/1000)),submitReason:reason};
+    void writeData('draft:'+quiz.id,{...snapshot(),submitted:submission}).catch(()=>{}).finally(()=>{if(active.current)submitRef.current(submission);});
   };
-
-  // Absolute deadlines remain accurate after a background tab or a suspended device.
-  const tick = () => {
-    if (unlimited || submitted.current) return false;
-    const now = Date.now();
-    if (now < deadline.current) {
-      setTimeLeft(Math.ceil((deadline.current - now) / 1000));
-      return false;
+  const tick=()=>{
+    if(!ready.current||!owner.current||submitted.current)return false;
+    const now=Date.now();let changed=false;
+    while(questionLimit(indexRef.current)>0&&now>=deadline.current){
+      if(!sequential||indexRef.current>=total-1){finish(deadline.current,'timer');return true;}
+      indexRef.current++;const nextLimit=questionLimit(indexRef.current);deadline.current=nextLimit?deadline.current+nextLimit*1000:0;changed=true;
     }
-    if (!sequential) {
-      finish(deadline.current);
-      return true;
-    }
-    const expiredCount =
-      Math.floor((now - deadline.current) / (limit * 1000)) + 1;
-    const nextIndex = indexRef.current + expiredCount;
-    if (nextIndex >= total) {
-      finish(deadline.current + (total - 1 - indexRef.current) * limit * 1000);
-      return true;
-    }
-    indexRef.current = nextIndex;
-    deadline.current += expiredCount * limit * 1000;
-    setCurrentIndex(nextIndex);
-    setTimeLeft(Math.max(0, Math.ceil((deadline.current - now) / 1000)));
-    setShowSubmitConfirm(false);
-    setNotice(
-      `Waktu habis. Anda beralih otomatis ke soal ${nextIndex + 1}. Jawaban sebelumnya telah dikunci.`,
-    );
-    return true;
+    if(changed){setCurrentIndex(indexRef.current);setShowSubmitConfirm(false);setNotice('Waktu habis. Jawaban sebelumnya dikunci; lanjutkan soal berikutnya.');save();}
+    setTimeLeft(questionLimit(indexRef.current)?Math.max(0,Math.ceil((deadline.current-now)/1000)):0);return changed;
   };
-
-  useEffect(() => {
-    if (unlimited) return;
-    const timer = window.setInterval(tick, 250);
-    const onVisible = () => {
-      if (!document.hidden) tick();
+  useEffect(()=>{
+    active.current=true;
+    let mounted=true,release:()=>void=()=>{},heartbeat:ReturnType<typeof setInterval>|undefined;
+    const token=crypto.randomUUID(),lease='quizmind_attempt_owner_'+quiz.id;
+    const initialize=async()=>{
+      if(!mounted)return;owner.current=true;
+      try{
+        const draft=attemptKey?undefined:await readData<Draft>('draft:'+quiz.id);
+        if(!mounted)return;
+        if(draft){
+          if(draft.quizId!==quiz.id||typeof draft.attemptId!=='string'||!draft.answers||typeof draft.answers!=='object'||Array.isArray(draft.answers)||!Number.isInteger(draft.index)||draft.index<0||draft.index>=total||!Number.isFinite(draft.startedAt)||!Number.isFinite(draft.deadline)||!Array.isArray(draft.bookmarks)||Object.keys(draft.answers).some(id=>!quiz.questions.some(q=>q.id===id))||quiz.questions.some(q=>!validateAnswer(q,draft.answers[q.id])))throw Error('Draft tidak valid. Salinan asli tetap tersimpan.');
+          attempt.current=draft.attemptId;answersRef.current=draft.answers;bookmarksRef.current=new Set(draft.bookmarks.filter(id=>quiz.questions.some(q=>q.id===id)));indexRef.current=draft.index;startedAt.current=draft.startedAt;deadline.current=draft.deadline;setUserAnswers(draft.answers);setBookmarks(new Set(bookmarksRef.current));setCurrentIndex(draft.index);setNotice('Progres sebelumnya dipulihkan; waktu mengikuti deadline semula.');
+          if(draft.submitted){submitted.current=true;submitRef.current(draft.submitted);return;}
+        }else{startedAt.current=Date.now();deadline.current=questionLimit(0)?Date.now()+questionLimit(0)*1000:0;}
+      }catch(e){if(e instanceof Error&&e.message.startsWith('Draft tidak valid')){owner.current=false;setReadOnly(true);setHydrated(true);setNotice(e.message);return;}setNotice(e instanceof Error?e.message:'Draft belum berhasil dibaca.');startedAt.current=Date.now();deadline.current=questionLimit(0)?Date.now()+questionLimit(0)*1000:0;}
+      ready.current=true;setHydrated(true);tick();
     };
-    window.addEventListener("focus", tick);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", tick);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (sequential && currentIndex > 0) {
-      questionHeading.current?.focus({ preventScroll: true });
-      document
-        .getElementById(`question-${quiz.questions[currentIndex].id}`)
-        ?.scrollIntoView({ block: "start", behavior: "instant" });
+    if(navigator.locks){void navigator.locks.request(lease,{ifAvailable:true},async lock=>{if(!lock){if(mounted){setReadOnly(true);setHydrated(true);setNotice('Kuis ini sedang dikerjakan pada tab lain. Tutup sesi di tab itu lalu buka kembali.');}return;}await initialize();if(!mounted)return;await new Promise<void>(resolve=>{release=resolve;});});}
+    else{
+      try{const previous=JSON.parse(localStorage.getItem(lease)||'null');if(previous&&Date.now()-previous.time<30000){setReadOnly(true);setHydrated(true);setNotice('Kuis ini aktif pada tab lain.');}else{localStorage.setItem(lease,JSON.stringify({token,time:Date.now()}));void initialize();heartbeat=setInterval(()=>{const current=JSON.parse(localStorage.getItem(lease)||'null');if(current?.token!==token){owner.current=false;setReadOnly(true);setNotice('Sesi dipindahkan ke tab lain.');return;}localStorage.setItem(lease,JSON.stringify({token,time:Date.now()}));},10000);}}catch{void initialize();}
     }
-  }, [currentIndex]);
-
-  const choose = (id: string, answer: number) => {
-    if (submitted.current || tick()) return;
-    if (sequential && id !== quiz.questions[indexRef.current].id) return;
-    answersRef.current = { ...answersRef.current, [id]: answer };
-    setUserAnswers(answersRef.current);
-  };
-  const toggleBookmark = (id: string) => {
-    const next = new Set(bookmarksRef.current);
-    next.has(id) ? next.delete(id) : next.add(id);
-    bookmarksRef.current = next;
-    setBookmarks(next);
-  };
-  const advance = () => {
-    if (submitted.current || tick()) return;
-    if (indexRef.current >= total - 1) {
-      setShowSubmitConfirm(true);
-      return;
-    }
-    indexRef.current += 1;
-    setCurrentIndex(indexRef.current);
-    deadline.current = Date.now() + limit * 1000;
-    setTimeLeft(limit);
-    setNotice("");
-  };
-  const jumpTo = (index: number) => {
-    if (sequential) return;
-    setCurrentIndex(index);
-    document
-      .getElementById(`question-${quiz.questions[index].id}`)
-      ?.scrollIntoView({ block: "start", behavior: "smooth" });
-  };
-  const answered = Object.keys(userAnswers).length;
-  const unanswered = total - answered;
-  const critical =
-    !unlimited && timeLeft <= (sequential ? Math.min(15, limit / 4) : 60);
-  const clockText = `${String(Math.floor(timeLeft / 60)).padStart(2, "0")}:${String(timeLeft % 60).padStart(2, "0")}`;
+    const onHide=()=>{save();release();owner.current=false;};window.addEventListener('pagehide',onHide);
+    return()=>{save();mounted=false;active.current=false;ready.current=false;owner.current=false;clearInterval(heartbeat);clearTimeout(saveTimer.current);release();window.removeEventListener('pagehide',onHide);try{const current=JSON.parse(localStorage.getItem(lease)||'null');if(current?.token===token)localStorage.removeItem(lease);}catch{}};
+  },[]);
+  useEffect(()=>{const timer=window.setInterval(tick,250),onVisible=()=>{if(!document.hidden)tick();};window.addEventListener('focus',tick);document.addEventListener('visibilitychange',onVisible);return()=>{clearInterval(timer);window.removeEventListener('focus',tick);document.removeEventListener('visibilitychange',onVisible);};},[]);
+  useEffect(()=>{if(sequential&&currentIndex>0)questionHeading.current?.focus({preventScroll:true});},[currentIndex]);
+  const choose=(id:string,answer:AnswerValue)=>{if(!ready.current||!owner.current||submitted.current||tick())return;if(sequential&&id!==quiz.questions[indexRef.current].id)return;answersRef.current={...answersRef.current,[id]:answer};setUserAnswers(answersRef.current);schedule();};
+  const toggleBookmark=(id:string)=>{if(!ready.current||!owner.current||submitted.current)return;const next=new Set(bookmarksRef.current);next.has(id)?next.delete(id):next.add(id);bookmarksRef.current=next;setBookmarks(next);save();};
+  const advance=()=>{if(!ready.current||!owner.current||submitted.current||tick())return;if(indexRef.current>=total-1){setShowSubmitConfirm(true);return;}indexRef.current++;deadline.current=questionLimit(indexRef.current)?Date.now()+questionLimit(indexRef.current)*1000:0;setCurrentIndex(indexRef.current);setTimeLeft(questionLimit(indexRef.current));setNotice('');save();};
+  const jumpTo=(index:number)=>{if(sequential)return;setCurrentIndex(index);document.getElementById('question-'+quiz.questions[index].id)?.scrollIntoView({block:'start',behavior:'smooth'});};
+  const answered=quiz.questions.filter(q=>answerProgress(q,userAnswers[q.id])==='complete').length,partial=quiz.questions.filter(q=>answerProgress(q,userAnswers[q.id])==='partial').length,unanswered=total-answered-partial;
+  const critical=!unlimited&&timeLeft<=(sequential?Math.min(15,limit/4):60),clockText=String(Math.floor(timeLeft/60)).padStart(2,'0')+':'+String(timeLeft%60).padStart(2,'0');
   const renderQuestion = (question: Question, index: number) => (
     <article
       key={question.id}
@@ -185,33 +118,9 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
       >
         {question.question}
       </h2>
-      <fieldset className="question-options">
-        <legend className="field-help mb-5">
-          Pilih satu jawaban yang paling tepat.
-        </legend>
-        {question.options.map((option, optionIndex) => (
-          <label
-            key={optionIndex}
-            className={`answer-choice ${userAnswers[question.id] === optionIndex ? "is-selected" : ""}`}
-          >
-            <input
-              type="radio"
-              name={`answer-${question.id}`}
-              value={optionIndex}
-              checked={userAnswers[question.id] === optionIndex}
-              onChange={() => choose(question.id, optionIndex)}
-            />
-            <span className="option-letter">
-              {String.fromCharCode(65 + optionIndex)}
-            </span>
-            <span className="answer-text">{option}</span>
-            <span className="answer-check">
-              {userAnswers[question.id] === optionIndex && <Check size={16} />}
-            </span>
-          </label>
-        ))}
-      </fieldset>
-      {!sequential && userAnswers[question.id] !== undefined && (
+      <p className="field-help mb-4">{questionLabels[questionType(question)]} · {question.maxPoints??1} poin</p>
+      <fieldset disabled={!hydrated||readOnly}><QuestionInput seed={attempt.current} question={question} value={userAnswers[question.id]} onChange={answer=>choose(question.id,answer)}/></fieldset>
+      {!sequential && answerProgress(question,userAnswers[question.id]) !== 'unanswered' && (
         <div className="answer-saved">
           <Check size={13} /> Jawaban tercatat · Anda dapat mengubahnya sebelum
           mengumpulkan.
@@ -285,6 +194,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
       </div>
       <div className="session-notice" role="status" aria-live="polite">
         {notice}
+        <button type="button" className="topic-chip" onClick={()=>exportJSON('quizmind-draft.json',snapshot())}>Ekspor jawaban</button>
       </div>
       <div className="runner-layout">
         <div className="min-w-0 space-y-5">
@@ -300,7 +210,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
             {sequential && currentIndex < total - 1 ? (
               <Button
                 label={
-                  userAnswers[quiz.questions[currentIndex].id] === undefined
+                  answerProgress(quiz.questions[currentIndex],userAnswers[quiz.questions[currentIndex].id])==='unanswered'
                     ? "Lewati soal"
                     : "Simpan & lanjut"
                 }
@@ -333,15 +243,15 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
                   type="button"
                   disabled={sequential}
                   onClick={() => jumpTo(index)}
-                  aria-label={`Soal ${index + 1}, ${userAnswers[question.id] !== undefined ? "terjawab" : "belum dijawab"}${bookmarks.has(question.id) ? ", ditandai ragu" : ""}${sequential && index < currentIndex ? ", dikunci" : ""}`}
+                  aria-label={`Soal ${index + 1}, ${answerProgress(question,userAnswers[question.id])==='partial'?"sebagian terjawab":answerProgress(question,userAnswers[question.id])==='complete'?"terjawab":"belum dijawab"}${bookmarks.has(question.id) ? ", ditandai ragu" : ""}${sequential && index < currentIndex ? ", dikunci" : ""}`}
                   aria-current={index === currentIndex ? "step" : undefined}
-                  className={`palette-item ${userAnswers[question.id] !== undefined ? "answered" : ""} ${bookmarks.has(question.id) ? "bookmarked" : ""} ${index === currentIndex ? "current" : ""}`}
+                  className={`palette-item ${answerProgress(question,userAnswers[question.id])==='complete'?"answered":answerProgress(question,userAnswers[question.id])==='partial'?"partial":""} ${bookmarks.has(question.id) ? "bookmarked" : ""} ${index === currentIndex ? "current" : ""}`}
                 >
                   {index + 1}
                 </button>
               ))}
             </div>
-            <div className="palette-legend">
+            <div className="palette-legend"><span>Sebagian terjawab <strong>{partial}</strong></span>
               <span>
                 <i className="legend-answered" />
                 Terjawab <strong>{answered}</strong>
@@ -379,7 +289,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
       <ConfirmModal
         isOpen={showSubmitConfirm}
         title="Selesaikan sesi belajar?"
-        message={`Anda telah menjawab ${answered} dari ${total} soal. ${unanswered > 0 ? `${unanswered} soal belum dijawab dan akan dihitung tanpa jawaban.` : "Semua soal sudah terjawab."} Kumpulkan untuk melihat hasil dan pembahasan.`}
+        message={`Anda telah menjawab lengkap ${answered} dari ${total} soal; ${partial} jawaban parsial. ${unanswered > 0 ? `${unanswered} soal belum dijawab dan akan dihitung tanpa jawaban.` : "Semua soal sudah terjawab."} Kumpulkan untuk melihat hasil dan pembahasan.`}
         confirmLabel="Kumpulkan & lihat hasil"
         cancelLabel="Lanjut mengerjakan"
         onConfirm={() => {
@@ -391,11 +301,12 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({
       <ConfirmModal
         isOpen={showQuitConfirm}
         title="Keluar dari sesi?"
-        message="Progres jawaban sesi ini akan hilang. Kuis tetap tersedia di riwayat untuk dikerjakan ulang."
+        message="Progres yang tersimpan dapat dilanjutkan melalui riwayat. Ekspor jawaban bila penyimpanan perangkat bermasalah."
         confirmLabel="Keluar sesi"
         cancelLabel="Lanjut mengerjakan"
         isDestructive
         onConfirm={() => {
+          save();
           submitted.current = true;
           setShowQuitConfirm(false);
           onQuit();

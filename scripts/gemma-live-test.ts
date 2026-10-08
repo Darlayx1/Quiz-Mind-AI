@@ -122,9 +122,10 @@ async function runLiveTests() {
   assert.equal(quiz1.questions.length, 1, 'Harus tepat 1 soal');
 
   const q1 = quiz1.questions[0];
+  assert.ok(q1.type===undefined||q1.type==='single_choice');
   assert.ok(q1.question.trim().length >= 10, 'Pertanyaan harus berbobot');
-  assert.equal(q1.options.length, 4, 'Harus tepat 4 pilihan jawaban');
-  assert.ok(Number.isInteger(q1.correctAnswerIndex) && q1.correctAnswerIndex >= 0 && q1.correctAnswerIndex <= 3, 'Index benar harus 0-3');
+  assert.equal(q1.options.length, 5, 'Harus tepat 5 pilihan jawaban');
+  assert.ok(Number.isInteger(q1.correctAnswerIndex) && q1.correctAnswerIndex >= 0 && q1.correctAnswerIndex <= 4, 'Index benar harus 0-4');
   assert.ok(q1.explanation.trim().length >= 15, 'Pembahasan harus komprehensif');
   assert.ok(!q1.groundingSources.some(s => s.url.includes('google.com/search')), 'Tidak boleh ada tautan pencarian palsu');
 
@@ -158,8 +159,9 @@ async function runLiveTests() {
   assert.equal(quiz2.model, 'gemma-4-31b-it');
   assert.equal(quiz2.questions.length, 2, 'Harus tepat 2 butir soal');
   quiz2.questions.forEach((q, i) => {
+    assert.ok(q.type===undefined||q.type==='single_choice');
     assert.ok(q.question.length >= 10, `Soal ${i + 1} terlalu pendek`);
-    assert.equal(q.options.length, 4, `Soal ${i + 1} harus punya 4 opsi`);
+    assert.equal(q.options.length, 5, `Soal ${i + 1} harus punya 5 opsi`);
     assert.ok(Number.isInteger(q.correctAnswerIndex) && q.correctAnswerIndex >= 0 && q.correctAnswerIndex <= 3);
     assert.ok(q.explanation.length >= 10, `Pembahasan ${i + 1} terlalu pendek`);
   });

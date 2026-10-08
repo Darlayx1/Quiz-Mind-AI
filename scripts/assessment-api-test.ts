@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {fixtures} from './assessment-fixtures.js';
+import {validateQuestion} from '../src/questionValidation.js';
+import {defaultEvaluationSettings} from '../src/evaluationSettings.js';
+import {spawn} from 'node:child_process';
+const worker=(await import('../dist/server/index.js')).default;
+const quiz={id:'api-test',schemaVersion:2,title:'API',topic:'Konsep',summary:'Test',difficulty:'easy',timeLimitMinutes:0,createdAt:new Date().toISOString(),questions:[validateQuestion({...fixtures.short_answer,id:'short'},0,'Konsep',[],'short_answer')]};
+const body={quiz,submission:{quizId:quiz.id,attemptId:'api-test-attempt',userAnswers:{short:{type:'short_answer',text:'4'}},bookmarkedQuestions:[],timeTakenSeconds:0,completedAt:new Date().toISOString()},settings:defaultEvaluationSettings,targetQuestionIds:['short']};
+const callWorker=(data:unknown)=>worker.fetch(new Request('https://quiz.test/api/evaluate-quiz',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)}),{});
+assert.equal((await callWorker({})).status,400);
+let response=await callWorker(body);assert.equal(response.status,200);assert.equal((await response.json()).evaluations.short.earnedPoints,1);
+assert.equal((await callWorker({...body,targetQuestionIds:['missing']})).status,400);
+assert.equal((await callWorker({...body,settings:{...defaultEvaluationSettings,enabled:false}})).status,400);
+// Start an isolated production server with no provider credentials. Local alias grading must need no API.
+const child=spawn(process.execPath,['dist-server/server.js'],{env:{...process.env,PORT:'3012',NODE_ENV:'production',GEMINI_API_KEY:'',GROQ_API_KEY:'',VAULT_USERNAME:'',VAULT_PASSWORD_HASH:''},stdio:['ignore','pipe','pipe']});
+try{
+ await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Test server startup timed out')),10000);child.stdout.on('data',data=>{if(String(data).includes('3012')){clearTimeout(timeout);resolve();}});child.on('error',reject);child.on('exit',()=>{clearTimeout(timeout);reject(new Error('Test server exited'));});});
+ const callNode=(data:unknown)=>fetch('http://127.0.0.1:3012/api/evaluate-quiz',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data),signal:AbortSignal.timeout(5000)});
+ assert.equal((await callNode({})).status,400);
+ response=await callNode(body);assert.equal(response.status,200);assert.equal((await response.json()).evaluations.short.earnedPoints,1);
+ assert.equal((await callNode({...body,targetQuestionIds:['missing']})).status,400);
+ console.log('PASS API: Node/Worker evaluation endpoint, malformed submissions, unknown IDs, disabled evaluator, local aliases without credentials. No external calls.');
+}finally{child.kill();}

@@ -1,3 +1,5 @@
+import { questionLabels,questionType } from '../questionState.js';
+import { exportJSON } from '../quizStorage.js';
 import React, { useState } from 'react';
 import { Quiz, QuizResult } from '../types/quiz.js';
 import { Button } from './Button.js';
@@ -17,6 +19,7 @@ import {
 interface SavedHistoryItem {
   quiz: Quiz;
   lastResult?: QuizResult;
+  results?: QuizResult[];
   savedAt: string;
 }
 
@@ -86,10 +89,11 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
         />
       </div>
 
+      <button type="button" className="topic-chip mb-4" onClick={()=>exportJSON('quizmind-riwayat.json',historyItems)}>Ekspor riwayat & jawaban</button>
       {/* History List */}
       <div className="space-y-4">
         {historyItems.map((item) => {
-          const { quiz, lastResult, savedAt } = item;
+          const { quiz, lastResult, savedAt, results } = item;
           const formattedDate = new Date(savedAt).toLocaleDateString('id-ID', {
             day: 'numeric',
             month: 'short',
@@ -118,7 +122,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
                   {quiz.title}
                 </h3>
 
-                <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p>
+                <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p><p className="field-help">{[...new Set(quiz.questions.map(questionType))].map(t=>questionLabels[t]).join(' · ')}</p>{results&&results.length>1&&<select className="field-input" aria-label={'Pilih hasil sesi '+quiz.title} value={lastResult?.submission.attemptId??lastResult?.submission.completedAt} onChange={e=>{const r=results.find(r=>(r.submission.attemptId??r.submission.completedAt)===e.target.value);if(r)onViewResult?.(r);}}>{results.map((r,i)=><option key={r.submission.attemptId??r.submission.completedAt} value={r.submission.attemptId??r.submission.completedAt}>Sesi {i+1} · {new Date(r.submission.completedAt).toLocaleString('id-ID')} · {r.finalScore===null?'Belum final':r.score+'/100'}</option>)}</select>}
                 <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1"><Clock size={12} />{quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'} · {durationLabel(quizTimerSeconds(quiz))}{quizTimerSeconds(quiz) > 0 ? quiz.displayMode === 'sequential' ? ' / soal' : ' total' : ''}</p>
               </div>
 
@@ -128,19 +132,20 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
                   <div className="text-right px-3 py-1 bg-blue-50/80 rounded-lg border border-blue-100">
                     <span className="text-[10px] text-slate-500 uppercase block">Skor</span>
                     <span className="text-base font-bold text-blue-700 font-mono tabular-nums">
-                      {lastResult.score}/100
+                      {lastResult.finalScore===null?'Belum final':lastResult.score+'/100'}
                     </span>
                   </div>
                 )}
 
                 <Button
-                  label="Kerjakan"
+                  label={lastResult?'Lihat hasil':'Lanjutkan kuis'}
                   icon={<Play className="w-3.5 h-3.5" />}
                   iconPosition="leading"
                   variant="primary"
                   size="sm"
-                  onClick={() => onSelectQuiz(quiz)}
+                  onClick={() => lastResult&&onViewResult?onViewResult(lastResult):onSelectQuiz(quiz)}
                 />
+                {lastResult&&<button type="button" className="topic-chip" onClick={()=>onSelectQuiz(quiz)}>Lanjutkan kuis</button>}
 
                 <button
                   type="button"

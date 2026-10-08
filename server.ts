@@ -1,3 +1,4 @@
+import { evaluateQuiz } from './src/server/evaluationService.js';
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -120,6 +121,15 @@ app.post('/api/generate-quiz', async (req: Request, res: Response) => {
       error: errorMessage,
     });
   } finally { res.off('close', onClose); }
+});
+
+app.post('/api/evaluate-quiz',async(req:Request,res:Response)=>{
+ const disconnected=new AbortController();const close=()=>{if(!res.writableEnded)disconnected.abort();};res.on('close',close);
+ try{
+  const evaluations=keyStore.configured?await keyStore.generation(req,res,(pool,signal)=>evaluateQuiz(req.body,{pool,signal})):await evaluateQuiz(req.body,{pool:runtimePool,signal:disconnected.signal});
+  if(!evaluations||res.destroyed||res.headersSent)return;res.json({success:true,evaluations});
+ }catch(error:any){if(res.destroyed||res.headersSent)return;res.status(error?.status>=400&&error.status<600?error.status:502).json({success:false,error:error?.code?String(error.message).replace(/AIza[\w-]+|gsk_[\w-]+/g,'[key disamarkan]'):'Evaluasi AI belum berhasil. Jawaban tetap tersimpan.',code:error?.code});}
+ finally{res.off('close',close);}
 });
 
 // Pastikan semua rute /api/* yang tidak cocok selalu mengembalikan format JSON, bukan HTML Vite

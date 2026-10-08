@@ -1,3 +1,4 @@
+import { loadEvaluationPreferences } from './evaluationSettings.js';
 import { QuizConfigError } from "./quizConfig.js";
 import { KeyPool, defaultSettings, type KeyCollection } from './keyPool.js';
 import { readGenerationStream } from './generationStream.js';
@@ -62,7 +63,7 @@ export async function cloudApi(path: string, body?: unknown, method = body === u
 export function activateCloud(count = 0, providers: AIProvider[] = ['gemini'], settings = defaultSettings) { pool?.lock(); pool = undefined; personalApiKey = ''; cloud = true; cloudKeyCount = count; cloudProviders = providers; cloudSettings = settings; notify(); }
 export const isCloudActive = () => cloud;
 export const hasSessionKeys = (provider?: AIProvider) => Boolean(pool?.collection.keys.some(k => k.enabled && (!provider || k.provider === provider)) || (cloud && cloudKeyCount > 0 && (!provider || cloudProviders.includes(provider))));
-export const connectionSettings = () => cloud ? cloudSettings : pool?.collection.settings ?? defaultSettings;
+export const connectionSettings = () => cloud ? cloudSettings : pool?.collection.settings ?? { ...defaultSettings, evaluation: loadEvaluationPreferences() };
 export async function logoutCloud() { try { if (cloud) await cloudApi('logout',{}); } finally { lockKeys(); } }
 export function keyNotice(message: string) { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('key-notice', { detail: message })); }
 
@@ -86,6 +87,14 @@ export async function fetchApi(
           maskedKey: pool ? `${pool.collection.keys.filter(k => k.enabled).length} key aktif untuk sesi ini` : "Belum diisi",
         },
       });
+    if(pathname==='/api/evaluate-quiz'){
+      if(!pool)return Response.json({success:false,error:'Tambahkan atau buka key evaluator.'},{status:400});
+      if(activeGeneration)return Response.json({success:false,error:'Pekerjaan AI masih berjalan.'},{status:409});
+      activeGeneration=true;const requestPool=pool;
+      try{const {evaluateQuiz}=await import('./server/evaluationService.js');const evaluations=await evaluateQuiz(JSON.parse(String(options?.body)),{pool:requestPool,signal:options?.signal??undefined});return Response.json({success:true,evaluations});}
+      catch(error:any){return Response.json({success:false,error:error?.name==='AbortError'?'Evaluasi dibatalkan.':safeError(error),code:error?.code},{status:error?.status??502});}
+      finally{activeGeneration=false;}
+    }
     if (pathname === "/api/generate-quiz") {
       if (!pool && !key)
         return Response.json(

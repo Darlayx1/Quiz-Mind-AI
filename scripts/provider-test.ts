@@ -21,7 +21,7 @@ const config: QuizConfig = { provider: 'groq', model: 'openai/gpt-oss-20b', topi
 const originalFetch = globalThis.fetch;
 const calls: { provider: string; key: string; model?: string; body?: any }[] = [];
 let failGroq = 0, failGoogle = 0, malformed = false, invalidQuestion = false, truncate = false, searchEmpty = false, serial = 0, slow = false;
-const makeQuiz = (count: number) => ({ title: 'Aljabar', topic: 'Aljabar', summary: 'Konsep aljabar.', questions: Array.from({length: count},() => ({ question: `Pertanyaan ${++serial}: berapa dua tambah dua?`, options: invalidQuestion ? ['4','4','4','4'] : ['4','3','5','6'], correctAnswerIndex: invalidQuestion ? 8 : 0, explanation: 'Dua tambah dua adalah empat.', topicCategory: 'Penjumlahan', referenceTitle: '' })) });
+const makeQuiz = (count: number) => ({ title: 'Aljabar', topic: 'Aljabar', summary: 'Konsep aljabar.', questions: Array.from({length: count},() => ({ question: `Pertanyaan ${++serial}: berapa dua tambah dua?`, options: invalidQuestion ? ['4','4','4','4'] : ['4','3','5','6','7'], correctAnswerIndex: invalidQuestion ? 8 : 0, explanation: 'Dua tambah dua adalah empat.', topicCategory: 'Penjumlahan', referenceTitle: '' })) });
 globalThis.fetch = async (input, init) => {
   const request = new Request(input,init);
   if (!request.url.startsWith('https://api.groq.com/') && !request.url.startsWith('https://generativelanguage.googleapis.com/')) return originalFetch(input,init);
@@ -30,7 +30,11 @@ globalThis.fetch = async (input, init) => {
   const key = provider === 'groq' ? request.headers.get('authorization')!.slice(7) : request.headers.get('x-goog-api-key') ?? '';
   const model = body?.model ?? decodeURIComponent(request.url.match(/models\/([^:]+):/)?.[1] ?? '');
   calls.push({provider,key,model,body});
-  if (slow) { await new Promise((_resolve,reject) => { request.signal.addEventListener('abort',() => reject(request.signal.reason),{once:true}); }); }
+  if (slow) { request.signal.throwIfAborted(); await new Promise((_resolve,reject) => {
+    // Keep this mock request alive like a real network operation and fail rather than hang.
+    const watchdog=setTimeout(()=>reject(request.signal.aborted?request.signal.reason:new Error('Mock cancellation timed out')),1000);
+    request.signal.addEventListener('abort',()=>{clearTimeout(watchdog);reject(request.signal.reason);},{once:true});
+  }); }
   const failure = provider === 'groq' ? failGroq : failGoogle;
   if (failure) return Response.json({error:{ code: failure, message: 'Test provider error', status: failure === 401 ? 'UNAUTHENTICATED' : 'RESOURCE_EXHAUSTED' }},{status:failure,headers:{'retry-after':'120'}});
   if (request.method === 'GET') return provider === 'groq' ? Response.json({data:[{id:'openai/gpt-oss-20b'},{id:'custom/text-model'}]}) : Response.json({models:[{name:'models/gemini-3.8-flash',supportedGenerationMethods:['generateContent']}]});

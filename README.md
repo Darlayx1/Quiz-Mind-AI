@@ -260,3 +260,29 @@ Vault satu key dan vault/cadangan versi 2 tetap dapat dibuka; key tanpa identita
 Node dan Worker menerima `GEMINI_API_KEY` dan/atau `GROQ_API_KEY` dari secret hosting. Key tidak boleh memakai awalan variabel `VITE_`. Worker mendukung key hosting serta vault browser, tetapi vault lintas perangkat memerlukan Node dan disk persisten. CSP produksi mengizinkan koneksi ke API resmi Gemini/Groq. Jika akses langsung browser ditolak oleh jaringan/CORS, gunakan backend Node melalui `VITE_API_BASE_URL` dan vault server.
 
 Verifikasi: `npm run lint`, `npm run build`, `npm run test:keys`, `npm run test:providers`, `node --import tsx scripts/model-test.ts`, dan `node scripts/smoke-test.mjs`. Pengujian otomatis memakai respons tiruan tanpa panggilan API eksternal. Untuk memverifikasi akun nyata, tambahkan key lalu jalankan **Uji koneksi** dan **Uji pembuatan satu soal** di Koneksi AI.
+
+## Tipe soal dan Evaluasi AI
+
+Pembuat kuis menyediakan pilihan ganda, pilihan ganda kompleks, benar/salah, isian singkat, esai, menjodohkan, dan mengurutkan. Pilih satu tipe atau Campuran, tentukan jumlah tiap tipe (total 1–100), lalu gunakan Bagi merata bila diperlukan. Pilihan ganda baru memiliki lima opsi A–E; kompleks menggunakan checkbox dengan 2–4 kunci benar. Kuis lama dengan empat opsi tetap dapat dibuka.
+
+Penilaian & bobot mengatur poin per tipe (1–20) dan kredit parsial pilihan ganda kompleks/mengurutkan. Menjodohkan dinilai per pasangan. Pada mode satu per satu, Waktu per tipe soal dapat mengganti durasi umum; 0 berarti tanpa batas. Peserta memilih pasangan melalui dropdown dan menyusun urutan dengan tombol Naik/Turun, sehingga interaksi juga dapat dilakukan dengan keyboard. Urutan awal harus dikonfirmasi agar dianggap dijawab.
+
+Buka **Koneksi AI → Evaluasi AI**. Aktifkan/nonaktifkan evaluasi otomatis, ikuti model generator atau pilih penyedia/model tersendiri, pilih penilaian isian hybrid atau seluruhnya AI, dan atur cadangan evaluator. Hybrid menerima alias sah secara lokal; jawaban lain dinilai AI. Esai memakai rubrik 3–5 kriteria dengan bobot total 100. Model hanya memberi level kriteria dan bukti; aplikasi menghitung poin. Kuis menyimpan snapshot pengaturannya. Melanjutkan/menilai ulang dari hasil menggunakan profil evaluator terbaru.
+
+Evaluasi mengirim pertanyaan, jawaban acuan/rubrik, dan jawaban peserta ke penyedia yang dipilih. Evaluator tidak menggunakan pencarian web. Cadangan penyedia harus diaktifkan secara terpisah. Uji evaluator serta nilai ulang memakai kuota; jumlah token disimpan jika penyedia mengembalikannya, tanpa estimasi biaya yang tidak terverifikasi. Satu jawaban dievaluasi per permintaan aplikasi; service menerima maksimal lima isian atau dua esai. Timeout isian 60 detik dan esai 120 detik; maksimal tiga panggilan termasuk cadangan. Dua kegagalan transport identik memutus percobaan evaluator. Mengganti profil dapat membuka anggaran percobaan baru; penilaian yang sudah selesai dapat direvisi secara eksplisit.
+
+Jawaban dikumpulkan sebelum evaluasi. Jawaban kosong bernilai nol tanpa API; kegagalan AI mempertahankan status belum final, bukan dianggap salah. Halaman hasil menunjukkan poin terkonfirmasi, menunggu/gagal/perlu tinjauan, pembahasan tiap tipe, dan filter. Nilai manual wajib menyertakan alasan; nilai sebelumnya dan revisi disimpan. Pembatalan menghentikan permintaan lokal tetapi permintaan yang telah diterima penyedia dapat memakai kuota.
+
+Riwayat, draft, submission, beberapa attempt, dan checkpoint disimpan di IndexedDB pada browser ini. Draft disimpan otomatis dan dipulihkan dengan deadline asli. Satu tab memiliki sesi aktif untuk suatu kuis. Kerjakan ulang membuat attempt baru; Lanjutkan kuis membuka draft dan mempertahankan hasil attempt yang sudah dinilai. Ekspor jawaban/hasil tersedia jika penyimpanan bermasalah. Migrasi mempertahankan localStorage lama; riwayat rusak disalin ke `history-recovery` dan dapat diekspor. Penyimpanan ini tidak menyinkronkan jawaban lintas perangkat walaupun key menggunakan vault server.
+
+Browser pribadi, Node, dan Worker mendukung evaluator. Node dengan vault server menggunakan autentikasi, CSRF, concurrency, dan isolasi pool yang sama dengan generator. API utama adalah POST `/api/evaluate-quiz`; pembatalan menggunakan AbortSignal, dan progres/checkpoint disimpan klien. Tidak ada pekerjaan server yang terus berjalan setelah sesi browser berhenti. Endpoint status/cancel terpisah serta streaming evaluator tidak diperlukan untuk alur ini.
+
+Verifikasi tambahan:
+
+```bash
+npm run test:quiz-types
+# Sesudah npm run build:
+node --import tsx scripts/assessment-api-test.ts
+```
+
+Untuk smoke nyata yang memakai kuota: `node --import tsx scripts/assessment-live-test.ts`. Variabel `ASSESSMENT_TEST_MODEL` opsional memilih model pengujian tanpa mengubah pilihan aplikasi. Hasil dan batas pengujian implementasi tercatat di `docs/implementation/2026-10-09-assessment.md`.

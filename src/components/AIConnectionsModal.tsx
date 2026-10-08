@@ -3,7 +3,7 @@ import { KeyRound, X } from 'lucide-react';
 import { PersonalKeyManager } from './PersonalKeyManager.js';
 import type { AIProvider } from '../models.js';
 
-export function AIConnectionsModal({ open, onClose, apiKey, onApiKeyChange, serverProviders }: { open: boolean; onClose: () => void; apiKey: string; onApiKeyChange: (value: string) => void; serverProviders?: AIProvider[] }) {
+export function AIConnectionsModal({ open, onClose, apiKey, onApiKeyChange, serverProviders,initialSection }: { initialSection?:'overview'|'evaluation';open: boolean; onClose: () => void; apiKey: string; onApiKeyChange: (value: string) => void; serverProviders?: AIProvider[] }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [state,setState] = useState({ dirty: false, busy: false });
   const [confirmClose,setConfirmClose] = useState(false);
@@ -21,7 +21,7 @@ export function AIConnectionsModal({ open, onClose, apiKey, onApiKeyChange, serv
     <div className="connection-window-shell">
       <header className="connection-window-header"><span className="connection-window-icon"><KeyRound size={22}/></span><div><h2 id="connection-window-title">Koneksi AI</h2><p>Gemini & Groq · key, model, dan penyimpanan terpadu</p></div><button type="button" className="icon-button" disabled={state.busy} onClick={close} aria-label="Tutup Koneksi AI" autoFocus><X size={21}/></button></header>
       {confirmClose && <div className="connection-close-confirm" role="alert"><p>Perubahan belum disimpan. Menutup jendela tetap mempertahankan sesi, tetapi perubahan dapat hilang setelah reload.</p><div className="key-actions"><button type="button" className="topic-chip" onClick={() => setConfirmClose(false)}>Kembali untuk menyimpan</button><button type="button" className="topic-chip" onClick={onClose}>Tutup · pertahankan sesi</button></div></div>}
-      {mounted && <PersonalKeyManager apiKey={apiKey} onApiKeyChange={onApiKeyChange} onStateChange={handleState} serverProviders={serverProviders}/>}
+      {mounted && <PersonalKeyManager initialSection={initialSection} apiKey={apiKey} onApiKeyChange={onApiKeyChange} onStateChange={handleState} serverProviders={serverProviders}/>}
     </div>
   </dialog>;
 }

@@ -2,11 +2,11 @@ import { defaultProviderModel, modelInfo } from '../models.js';
 import { KeyPool, PoolError, defaultSettings } from '../keyPool.js';
 import { normalizeQuizConfig } from '../quizConfig.js';
 import type { Quiz, QuizConfig, Question } from '../types/quiz.js';
-import { buildPrompt, extractJsonFromResponse, validateAndSanitizeQuestion, quizJsonSchema } from './quizPipeline.js';
+import { buildPrompt, extractJsonFromResponse, validateAndSanitizeQuestion, quizSchemaFor } from './quizPipeline.js';
 import { QuizGenerationError } from './generationError.js';
 import { groqRequest } from './providerClient.js';
 
-export type GenerationOptions = { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void };
+export type GenerationOptions = { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void; research?:{text?:string}; attemptBudget?:{calls:number} };
 
 export async function generateQuizWithGroq(input: QuizConfig, apiKey?: string, options: GenerationOptions = {}): Promise<Quiz> {
   const config = normalizeQuizConfig({ ...input, provider: 'groq', model: input.model ?? defaultProviderModel('groq') });
@@ -24,7 +24,7 @@ export async function generateQuizWithGroq(input: QuizConfig, apiKey?: string, o
   let totalCalls = 0;
   try {
     options.onNotice?.('Groq mencari informasi terbaru di web.');
-    const research = await pool.run(async (key, poolSignal) => {
+    const research = options.research?.text ? {choices:[{message:{content:options.research.text},finish_reason:'stop'}]} : await pool.run(async (key, poolSignal) => {
       const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(180_000)]);
       try {
         return await groqRequest('chat/completions', key, callSignal, {
@@ -39,6 +39,7 @@ export async function generateQuizWithGroq(input: QuizConfig, apiKey?: string, o
       }
     }, { provider: 'groq', model: 'openai/gpt-oss-20b', signal, onNotice: options.onNotice });
     const researchText = research.choices?.[0]?.message?.content;
+    if(options.research && typeof researchText==='string') options.research.text=researchText;
     if (research.choices?.[0]?.finish_reason === 'length' || typeof researchText !== 'string' || !researchText.trim())
       throw new QuizGenerationError('Pencarian web Groq tidak menghasilkan informasi yang dapat digunakan.', 502, 'WEB_SEARCH_EMPTY');
     options.onNotice?.('Informasi web terbaru ditemukan. Groq menyusun kuis.');
@@ -51,17 +52,17 @@ export async function generateQuizWithGroq(input: QuizConfig, apiKey?: string, o
       for (const model of candidates) {
         try {
           data = await pool.run(async (key, poolSignal) => {
-            if (++batchCalls > 5 || ++totalCalls > Math.ceil(config.questionCount / 5) * 5) throw new PoolError('Batas percobaan kuis tercapai.', 503, 'POOL_BUDGET');
+            if (++batchCalls > 3 || ++totalCalls > Math.ceil(config.questionCount / 5) * 3 || options.attemptBudget && ++options.attemptBudget.calls > 3) throw new PoolError('Batas percobaan kuis tercapai.', 503, 'POOL_BUDGET');
             const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(90_000)]);
             try {
               return await groqRequest('chat/completions', key, callSignal, { model, messages: [{ role: 'system', content: prompt.systemInstruction }, { role: 'user', content: groundedPrompt }], max_completion_tokens: 16384, stream: false, reasoning_effort: 'high', ...(model.startsWith('qwen/') ? { reasoning_format: 'hidden' } : { include_reasoning: false }),
-                response_format: modelInfo(model)?.structured ? { type: 'json_schema', json_schema: { name: 'quiz', strict: true, schema: quizJsonSchema } } : { type: 'json_object' } });
+                response_format: modelInfo(model)?.structured ? { type: 'json_schema', json_schema: { name: 'quiz', strict: true, schema: quizSchemaFor(config.questionType) } } : { type: 'json_object' } });
             } catch (error) {
               poolSignal.throwIfAborted();
               if (callSignal.aborted) throw new QuizGenerationError('Groq melewati batas waktu.', 504, 'TIMEOUT');
               throw error;
             }
-          }, { provider: 'groq', model, signal, onNotice: options.onNotice });
+          }, { provider: 'groq', model, signal, onNotice: options.onNotice, maxAttempts:Math.max(1,3-(options.attemptBudget?.calls??0)) });
           usedModel = model; lastError = null; break;
         } catch (error: any) {
           signal.throwIfAborted(); lastError = error;
@@ -77,7 +78,7 @@ export async function generateQuizWithGroq(input: QuizConfig, apiKey?: string, o
       summary = typeof parsed.summary === 'string' ? parsed.summary : summary;
       const startCount = questions.length;
       for (const raw of Array.isArray(parsed.questions) ? parsed.questions : []) {
-        const question = validateAndSanitizeQuestion(raw, questions.length, config.topic, []);
+        const question = validateAndSanitizeQuestion(raw, questions.length, config.topic, [], config.questionType);
         if (question && !questions.some(item => item.question.toLowerCase().trim() === question.question.toLowerCase().trim())) questions.push(question);
         if (questions.length >= startCount + count) break;
       }

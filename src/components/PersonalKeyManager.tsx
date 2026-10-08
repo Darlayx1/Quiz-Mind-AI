@@ -1,3 +1,5 @@
+import { AIEvaluationSettings } from './AIEvaluationSettings.js';
+import { loadEvaluationPreferences, normalizeEvaluationSettings } from '../evaluationSettings.js';
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Eye, EyeOff, KeyRound, CheckCircle2, ArrowRight, ShieldCheck } from 'lucide-react';
 import { activateCloud, activateCollection, cloudApi, getKeyPool, isCloudActive, keyRevision, lockKeys, subscribeKeys, safeError, refreshKeyStatus } from '../api.js';
@@ -10,11 +12,12 @@ import { hasStoredClientKeys, CLIENT_STORAGE_KEY, deleteStoredClientKeys } from 
 type Row = Omit<KeyEntry,'key'> & { masked: string; health: KeyHealth };
 type CloudData = { revision: number; settings: PoolSettings; keys: Row[] };
 const statuses = { untested: 'Belum diuji', ready: 'Siap digunakan', waiting: 'Menunggu', invalid: 'Perlu mengganti key', restricted: 'Perlu memperbaiki akses' };
-export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serverProviders = [] }: { apiKey: string; onApiKeyChange: (value: string) => void; onStateChange?: (state: { dirty: boolean; busy: boolean }) => void; serverProviders?: AIProvider[] }) {
+export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serverProviders = [],initialSection='overview' }: { initialSection?:'overview'|'evaluation';apiKey: string; onApiKeyChange: (value: string) => void; onStateChange?: (state: { dirty: boolean; busy: boolean }) => void; serverProviders?: AIProvider[] }) {
   const revision = useSyncExternalStore(subscribeKeys, keyRevision);
   const pool = getKeyPool();
   const [mode,setMode] = useState<'local'|'server'>(isCloudActive() ? 'server' : 'local');
-  const [tab,setTab] = useState<'overview'|'keys'|'models'|'storage'>('overview');
+  const [tab,setTab] = useState<'overview'|'keys'|'models'|'evaluation'|'storage'>(initialSection);
+  useEffect(()=>setTab(initialSection),[initialSection]);
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [tab]);
   const [provider,setProvider] = useState<AIProvider>('gemini');
@@ -164,11 +167,12 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
   const modelOptions = (value: AIProvider) => [...new Set([...AI_MODELS.filter(model => model.provider === value).map(model => model.id), ...(discovered[value] || [])])];
   return <div className="key-manager" aria-busy={busy}>
     <nav className="connection-tabs" aria-label="Bagian Koneksi AI">
-      {([['overview','Ringkasan'],['keys','API Key'],['models','Model & Cadangan'],['storage','Penyimpanan']] as const).map(([id,label]) => <button type="button" key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}
+      {([['overview','Ringkasan'],['keys','API Key'],['models','Model & Cadangan'],['evaluation','Evaluasi AI'],['storage','Penyimpanan']] as const).map(([id,label]) => <button type="button" key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}
     </nav>
     <div className="connection-content" ref={contentRef}>
       {error && <div className="connection-feedback error" role="alert">{error}</div>}
       {message && <div className="connection-feedback" role="status"><CheckCircle2 size={18}/><span>{message}</span></div>}
+      {tab==='evaluation'&&<AIEvaluationSettings value={normalizeEvaluationSettings(settings.evaluation??loadEvaluationPreferences())} onSave={async evaluation=>{if(remoteActive)await mutate('settings',{settings:{...settings,evaluation}});else if(pool)activate({...pool.collection,settings:{...settings,evaluation}});}}/>}
       <section hidden={tab !== 'overview'}>
         <div className="connection-section-heading"><div><h3>Satu tempat untuk koneksi AI Anda</h3><p>Hubungkan Gemini atau Groq, lalu pilih model untuk membuat kuis.</p></div><ShieldCheck size={24}/></div>
         <div className="connection-provider-grid">{(['gemini','groq'] as const).map(id => {

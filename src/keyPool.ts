@@ -1,6 +1,8 @@
 import { isProvider, modelInfo, validModelId, type AIProvider, DEFAULT_MODEL, normalizeModelId } from './models.js';
+import { normalizeEvaluationSettings } from './evaluationSettings.js';
+import type { EvaluationSettings } from './types/quiz.js';
 export type KeyEntry = { id: string; name: string; project: string; key: string; enabled: boolean; priority: number; provider?: AIProvider };
-export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: boolean; allowGroundingFallback: boolean; allowKeyFallback?: boolean; allowProviderFallback?: boolean; preferredProvider?: AIProvider; preferredModel?: string; fallbackProvider?: AIProvider; fallbackModel?: string; modelFallbacks?: Partial<Record<AIProvider, string>> };
+export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: boolean; allowGroundingFallback: boolean; allowKeyFallback?: boolean; allowProviderFallback?: boolean; preferredProvider?: AIProvider; preferredModel?: string; fallbackProvider?: AIProvider; fallbackModel?: string; modelFallbacks?: Partial<Record<AIProvider, string>>; evaluation?:EvaluationSettings };
 export type KeyCollection = { schemaVersion?: 3; keys: KeyEntry[]; settings: PoolSettings };
 export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: true, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'groq', fallbackModel: 'qwen/qwen3.8-27b', modelFallbacks: { gemini: 'gemini-3.5-flash-lite', groq: 'openai/gpt-oss-120b' } };
 export type KeyHealth = { state: 'untested' | 'ready' | 'waiting' | 'invalid' | 'restricted'; until?: number; scope?: string; lastSuccess?: number; reason?: string; successes: number; failures: number };
@@ -15,6 +17,7 @@ export function validateCollection(value: unknown): KeyCollection {
       typeof data.settings.allowGroundingFallback !== 'boolean') throw new Error('Format koleksi key tidak valid (maksimal 100 key).');
   const ids = new Set<string>(), secrets = new Set<string>();
   const settings = { ...defaultSettings, ...data.settings, modelFallbacks: { ...defaultSettings.modelFallbacks, ...data.settings.modelFallbacks } };
+  if (data.settings.evaluation !== undefined) settings.evaluation = normalizeEvaluationSettings(data.settings.evaluation);
   if (![settings.allowKeyFallback, settings.allowProviderFallback].every(value => typeof value === 'boolean') || !isProvider(settings.preferredProvider) || !isProvider(settings.fallbackProvider)) throw new Error('Pengaturan penyedia tidak valid.');
   for (const [provider, model] of [[settings.preferredProvider,settings.preferredModel], [settings.fallbackProvider,settings.fallbackModel], ...Object.entries(settings.modelFallbacks)] as [AIProvider,string][]) {
     const norm = normalizeModelId(model);
@@ -78,7 +81,9 @@ export class KeyPool {
   constructor(collection: KeyCollection, private changed: () => void = () => {}) { this.collection = validateCollection(collection); }
   update(collection: KeyCollection) {
     const next = validateCollection(collection);
-    this.controller.abort(); this.controller = new AbortController();
+    const {evaluation:oldEvaluation,...oldSettings}=this.collection.settings;
+    const {evaluation:nextEvaluation,...nextSettings}=next.settings;
+    if(JSON.stringify(this.collection.keys)!==JSON.stringify(next.keys)||JSON.stringify(oldSettings)!==JSON.stringify(nextSettings)){this.controller.abort();this.controller=new AbortController();}
     for (const previous of this.collection.keys) {
       const replacement = next.keys.find(k => k.id === previous.id);
       if (!replacement || replacement.key !== previous.key || replacement.project !== previous.project || replacement.provider !== previous.provider) {
@@ -96,7 +101,7 @@ export class KeyPool {
     return { ...base, state: until > Date.now() && !['invalid','restricted'].includes(base.state) ? 'waiting' : base.state === 'waiting' && until <= Date.now() ? 'untested' : base.state, until };
   }
   reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) this.cooldown.delete(this.group(key)); this.changed(); }
-  async run<T>(fn: (key: string, signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; onNotice?: (message: string) => void; maxAttempts?: number; model?: string; provider?: AIProvider } = {}): Promise<T> {
+  async run<T>(fn: (key: string, signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; onNotice?: (message: string) => void; maxAttempts?: number; allowKeyFallback?: boolean; model?: string; provider?: AIProvider } = {}): Promise<T> {
     const signal = AbortSignal.any([this.controller.signal, ...(options.signal ? [options.signal] : [])]);
     const seen = new Set<string>();
     let attempts = 0, transientRetries = 0;
@@ -146,7 +151,7 @@ export class KeyPool {
           health.state = 'waiting'; health.until = Date.now() + 30_000; seen.add(entry.id);
         } else { this.health.set(entry.id, health); this.changed(); throw error; }
         this.health.set(entry.id, health); this.changed();
-        if (!this.collection.settings.allowKeyFallback) throw error;
+        if (!(options.allowKeyFallback ?? this.collection.settings.allowKeyFallback)) throw error;
         options.onNotice?.(`${entry.name}: ${health.reason}. Mencoba key cadangan yang tersedia.`);
       } finally { this.busy.delete(group); }
     }

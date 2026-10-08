@@ -1,5 +1,7 @@
 import { DEFAULT_MODEL, DIFFICULTIES, isProvider, modelInfo, validModelId, defaultProviderModel, normalizeModelId } from "./models.js";
 import type { DifficultyLevel, QuizConfig } from "./types/quiz.js";
+import { QUESTION_TYPES, type QuestionType } from './types/quiz.js';
+import { normalizeEvaluationSettings } from './evaluationSettings.js';
 
 export class QuizConfigError extends Error {}
 
@@ -30,6 +32,18 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
     throw new QuizConfigError(
       "Jumlah soal harus bilangan bulat antara 1 dan 100.",
     );
+  const type = body.questionType ?? 'single_choice';
+  if (!QUESTION_TYPES.includes(type as QuestionType)) throw new QuizConfigError('Tipe soal tidak didukung.');
+  const distribution = body.questionDistribution ?? { [String(type)]: count };
+  if (!distribution || typeof distribution !== 'object' || Array.isArray(distribution) || Object.entries(distribution).some(([key,value]) => !QUESTION_TYPES.includes(key as QuestionType) || !Number.isInteger(value) || Number(value)<0) || Object.values(distribution).reduce<number>((sum,value)=>sum+Number(value),0)!==count) throw new QuizConfigError('Jumlah per tipe harus bilangan bulat dan totalnya sesuai jumlah soal.');
+  const validateMap = (raw: unknown,min:number,max:number) => {
+    if(raw===undefined)return undefined;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.entries(raw).some(([key,value])=>!QUESTION_TYPES.includes(key as QuestionType)||!Number.isInteger(value)||Number(value)<min||Number(value)>max))throw new QuizConfigError('Bobot atau waktu per tipe tidak valid.');
+    return raw as Partial<Record<QuestionType,number>>;
+  };
+  if(body.partialCredit!==undefined&&typeof body.partialCredit!=='boolean')throw new QuizConfigError('Pengaturan kredit parsial tidak valid.');
+  let evaluationSettings;
+  try { evaluationSettings=normalizeEvaluationSettings(body.evaluationSettings); } catch { throw new QuizConfigError('Pengaturan evaluator tidak valid.'); }
   const displayMode = body.displayMode ?? "non_sequential";
   if (displayMode !== "non_sequential" && displayMode !== "sequential")
     throw new QuizConfigError("Tampilan soal tidak didukung.");
@@ -46,6 +60,12 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
       ? value.trim().slice(0, max) || undefined
       : undefined;
   return {
+    questionType: type as QuestionType,
+    questionDistribution: distribution as Partial<Record<QuestionType,number>>,
+    pointsByType: validateMap(body.pointsByType,1,20),
+    timePerQuestionByType: validateMap(body.timePerQuestionByType,0,600),
+    partialCredit:body.partialCredit===true,
+    evaluationSettings,
     model,
     provider,
     topic: body.topic.trim().slice(0, 300),

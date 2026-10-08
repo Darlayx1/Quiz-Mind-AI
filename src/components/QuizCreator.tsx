@@ -1,3 +1,6 @@
+import { QuestionComposition, defaultComposition } from './QuestionComposition.js';
+import { questionLabels } from '../questionState.js';
+import { loadEvaluationPreferences, normalizeEvaluationSettings } from '../evaluationSettings.js';
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { hasSessionKeys, keyRevision, subscribeKeys, connectionSettings } from '../api.js';
 import { Button } from "./Button.js";
@@ -14,12 +17,13 @@ interface QuizCreatorProps {
   onApiKeyChange: (value: string) => void;
   requiresApiKey: boolean;
   onOpenConnections?: () => void;
+  onOpenEvaluation?:()=>void;
   serverProviders?: AIProvider[];
 }
 const PRESETS = ["Kecerdasan Buatan", "Biologi Molekuler", "Sejarah Dunia", "Algoritma & Struktur Data"];
 const STYLES = ["Baku & akademis", "Santai & komunikatif", "Sederhana & mudah dipahami", "Profesional & ringkas"];
 
-export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, apiKey, requiresApiKey, onOpenConnections, serverProviders = [] }) => {
+export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, apiKey, requiresApiKey, onOpenConnections, onOpenEvaluation, serverProviders = [] }) => {
   useSyncExternalStore(subscribeKeys, keyRevision);
   const [inputMode, setInputMode] = useState<"topic" | "material">("topic");
   const [topic, setTopic] = useState("");
@@ -43,8 +47,11 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   useEffect(() => { if (!hasSessionKeys() && !apiKey && serverProviders.length) { const value = serverProviders.includes('gemini') ? 'gemini' : serverProviders[0]; setProvider(value); setModel(defaultProviderModel(value)); setCustomModel(false); } }, [serverProviders.join(',')]);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const questionCount = countChoice === "custom" ? Number(customCount) : countChoice;
-  const validCount = Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 100;
+  const [composition,setComposition]=useState(defaultComposition);
+  const evaluator=normalizeEvaluationSettings(settings.evaluation??loadEvaluationPreferences());
+  const selectedCount=countChoice==='custom'?Number(customCount):countChoice;
+  const questionCount=composition.mode==='mixed'?Object.values(composition.distribution).reduce((n,v)=>n+(v??0),0):selectedCount;
+  const validCount = Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 100 && (composition.mode==='single'||Object.values(composition.distribution).every(v=>Number.isInteger(v)&&v!>=0));
   const sequential = displayMode === "sequential";
   const timerValue = sequential ? perQuestionSeconds : totalMinutes;
   const timerNumber = Number(timerValue);
@@ -90,7 +97,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     onGenerate({
       provider, model, topic: topic.trim(),
       studyMaterial: inputMode === "material" ? studyMaterial.trim() : undefined,
-      difficulty, questionCount, displayMode,
+      difficulty, questionCount, displayMode, questionType:composition.type, questionDistribution:composition.mode==='mixed'?composition.distribution:{[composition.type]:questionCount},pointsByType:composition.points,timePerQuestionByType:sequential&&!unlimited?composition.times:undefined,partialCredit:composition.partialCredit,evaluationSettings:evaluator,
       timeLimitMinutes: unlimited ? 0 : sequential
         ? (Number.isInteger(Number(totalMinutes)) && Number(totalMinutes) >= 1 && Number(totalMinutes) <= 120 ? Number(totalMinutes) : 15)
         : Number(totalMinutes),
@@ -112,7 +119,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
       </div>
       {errorMessage && <div role="alert" className="form-alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
       <form onSubmit={submit} className="menu-layout">
-        <fieldset disabled={isLoading} className="menu-fields">
+        <fieldset disabled={isLoading} className="menu-fields"><QuestionComposition value={composition} onChange={setComposition} count={selectedCount} sequential={sequential&&!unlimited} evaluator={evaluator} onOpen={onOpenEvaluation??onOpenConnections}/>
           <section className="surface menu-section">
             <div className="menu-section-title"><BookOpen size={19} /><h2>Materi kuis</h2></div>
             <fieldset className="source-options">
@@ -226,6 +233,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             {additionalInstructions.trim() && <div><dt>Instruksi tambahan</dt><dd><Check size={14} /> Ditambahkan</dd></div>}
           </dl>
           <div className="menu-summary-model"><BrainCircuit size={17} /><span>{modelName(model)}</span></div>
+          <p className="field-help">{composition.mode==='mixed'?'Campuran':questionLabels[composition.type]} · {questionCount} soal</p>
           <Button type="submit" label={isLoading ? "Menyiapkan kuis…" : "Buat kuis"} icon={<ArrowRight size={17} />} iconPosition="trailing" className="w-full" size="lg" disabled={!canGenerate} aria-describedby="generate-help" />
           <p id="generate-help" className="menu-submit-help" aria-live="polite">{missingReason || "Setiap soal dilengkapi pembahasan."}</p>
           <p className="menu-privacy-note"><ShieldCheck size={14} /> Riwayat tersimpan di perangkat Anda</p>

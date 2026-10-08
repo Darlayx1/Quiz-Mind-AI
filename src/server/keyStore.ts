@@ -84,7 +84,7 @@ export class ServerKeyStore {
   }
   async generation<T>(req: Request, res: Response, fn: (pool: KeyPool, signal: AbortSignal) => Promise<T>) {
     const session = this.authorize(req, res, true); if (!session) return;
-    const fingerprint = createHash('sha256').update(JSON.stringify(req.body)).digest('hex');
+    const fingerprint = createHash('sha256').update(req.path+JSON.stringify(req.body)).digest('hex');
     if (this.generating.has(fingerprint) || this.generating.size >= 3) { res.status(409).json({ error: 'Permintaan yang sama sedang berjalan atau tiga pekerjaan sudah aktif.' }); return; }
     this.generating.add(fingerprint);
     const disconnected = new AbortController();
