@@ -30,6 +30,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: node --import tsx scripts/model-test.ts
+      - run: npm run build
+      - run: node --import tsx scripts/assessment-api-test.ts
       - run: npm run build:pages
         env:
           VITE_BASE_PATH: /Quiz-Mind-AI/
