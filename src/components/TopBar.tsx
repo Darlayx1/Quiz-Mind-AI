@@ -36,7 +36,6 @@ export const TopBar: React.FC<TopBarProps> = ({
         </span>
         <span>
           QuizMind<span className="brand-ai">AI</span>
-          <small>MAKE LEARNING MEANINGFUL</small>
         </span>
       </button>
       <nav aria-label="Navigasi utama" className="header-nav">
@@ -65,11 +64,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           <ShieldCheck size={19} />
         </button>
         {activeView === "creator" ? (
-          <span className="key-status hidden lg:flex">
+          <span className="key-status hidden lg:flex" role="status">
             <span
               className={`status-dot ${isKeyConfigured ? "" : "inactive"}`}
             />
-            {isKeyConfigured ? "AI siap digunakan" : "Konfigurasi API key"}
+            {isKeyConfigured ? "API key tersedia" : "API key belum tersedia"}
           </span>
         ) : (
           activeView !== "runner" && (

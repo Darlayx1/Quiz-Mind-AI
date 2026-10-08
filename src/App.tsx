@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { fetchApi, setPersonalApiKey, standalonePages } from './api.js';
 import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
@@ -14,6 +14,7 @@ import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
 import { SecurityGuideModal } from './components/SecurityGuideModal.js';
 import { DEFAULT_MODEL, AIModel } from './models.js';
+import { VAULT_STORAGE_KEY } from './personalKeyVault.js';
 
 const STORAGE_KEY = 'quizmind_ai_history_v1';
 
@@ -30,11 +31,49 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState('');
   const personalMode = standalonePages || Boolean(apiKey.trim());
-  const handleApiKeyChange = (value: string) => {
+  const handleApiKeyChange = useCallback((value: string) => {
     setPersonalApiKey(value);
     setApiKey(value);
     setErrorMessage(null);
-  };
+  }, []);
+
+  // Changes in another tab invalidate the active key on every application view.
+  useEffect(() => {
+    const syncVault = (event: StorageEvent) => {
+      if (event.key === VAULT_STORAGE_KEY || event.key === null) handleApiKeyChange('');
+    };
+    window.addEventListener('storage', syncVault);
+    return () => window.removeEventListener('storage', syncVault);
+  }, [handleApiKeyChange]);
+
+  // Expire plaintext using a deadline, including when background timers are delayed.
+  useEffect(() => {
+    if (!apiKey) return;
+    let timer: ReturnType<typeof setTimeout>;
+    let deadline = 0;
+    const lock = () => handleApiKeyChange('');
+    const reset = () => {
+      if (deadline && Date.now() >= deadline) { lock(); return; }
+      clearTimeout(timer);
+      deadline = Date.now() + 15 * 60 * 1000;
+      timer = setTimeout(lock, 15 * 60 * 1000);
+    };
+    const check = () => { if (Date.now() >= deadline) lock(); };
+    reset();
+    window.addEventListener('pointerdown', reset);
+    window.addEventListener('keydown', reset);
+    window.addEventListener('focus', check);
+    window.addEventListener('pagehide', lock);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointerdown', reset);
+      window.removeEventListener('keydown', reset);
+      window.removeEventListener('focus', check);
+      window.removeEventListener('pagehide', lock);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [apiKey, handleApiKeyChange]);
 
   const [historyItems, setHistoryItems] = useState<
     Array<{ quiz: Quiz; lastResult?: QuizResult; savedAt: string }>
@@ -249,7 +288,7 @@ export default function App() {
         isBusy={isLoading}
         onNavigate={(view) => setActiveView(view)}
         onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
-        isKeyConfigured={serverSecurity.hasApiKey}
+        isKeyConfigured={Boolean(apiKey.trim()) || (!standalonePages && serverSecurity.hasApiKey)}
         onNewQuizClick={handleNewQuiz}
       />
 
@@ -322,7 +361,7 @@ export default function App() {
               Privasi API Key
             </button>
             <span>·</span>
-            <span>{personalMode ? 'Kunci hanya untuk sesi ini' : 'Privasi terjaga'}</span>
+            <span>{personalMode ? 'Vault pribadi · key aktif di memori' : 'Privasi terjaga'}</span>
           </div>
         </div>
       </footer>

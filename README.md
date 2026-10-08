@@ -9,7 +9,7 @@ Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpi
 - **Model Gemini 3.8 Flash**: Penalaran mendalam (*deep thinking*) dalam menyusun opsi jawaban, distractor realistis, dan pembahasan analitis.
 - **Google Search Grounding Terintegrasi**: Memvalidasi fakta ilmiah, peristiwa sejarah, dan konsep terkini secara langsung via mesin pencari Google, lengkap dengan tautan sumber web yang dapat diverifikasi.
 - **API Key Pribadi & Backend Opsional**:
-  - Pengguna GitHub Pages memasukkan kunci Gemini sendiri. Kunci berada dalam memori halaman dan dikirim langsung ke Google, tanpa disimpan di riwayat atau `localStorage`.
+  - Pengguna GitHub Pages memasukkan kunci Gemini sendiri. Key aktif berada dalam memori halaman dan dikirim langsung ke Google. Vault opsional menyimpan hanya ciphertext di `localStorage`, terpisah dari riwayat kuis.
   - Hosting Node.js/Express juga mendukung kunci milik server (`process.env.GEMINI_API_KEY`), yang tidak dimasukkan ke bundle browser.
   - File `.env` diproteksi secara otomatis melalui `.gitignore` sehingga aman saat di-push ke GitHub.
   - Modul vault kriptografi AES-256-GCM terotentikasi untuk perlindungan token dan integritas kuis.
@@ -33,7 +33,7 @@ melalui workflow `.github/workflows/pages.yml` setiap push ke `main`.
 Pengguna mengisi kolom **API Key Pribadi**, memilih materi, lalu membuat kuis.
 Browser menghubungi Google Gemini secara langsung sehingga tidak memerlukan backend
 Render atau konfigurasi `VITE_API_BASE_URL`. Kunci disamarkan secara bawaan,
-dapat ditampilkan atau dihapus, dan perlu diisi kembali setelah halaman dimuat ulang.
+dapat disimpan terenkripsi, dibuka dengan kata sandi setelah reload, diganti tanpa build ulang, dikunci, atau dihapus.
 Kuota dan akses model mengikuti proyek Google milik masing-masing pengguna.
 
 Sebagai pilihan untuk menggunakan kunci milik server, backend dapat dibuat dari `render.yaml` menggunakan
@@ -181,3 +181,15 @@ Validasi bersama berada di `src/quizConfig.ts`. Kuis lama tetap dapat dibuka; ko
 Verifikasi lokal: `npm run lint`, `npm run build`, `node --import tsx scripts/model-test.ts`, dan `node scripts/smoke-test.mjs`. Tes model menggunakan respons tiruan sehingga tidak memakai kuota Gemini.
 
 Untuk memeriksa alur pengerjaan tanpa API atau penyimpanan riwayat, jalankan `npm run dev`, lalu buka `/scripts/quiz-session-preview.html`. Fixture lokal menyediakan kedua mode dengan dan tanpa timer singkat untuk menguji navigasi, penguncian jawaban, dan pengumpulan otomatis. Halaman fixture tidak disertakan dalam build produksi.
+
+## Vault API key pribadi
+
+Pada menu **API key pribadi**, masukkan key dan kata sandi unik minimal 12 karakter, ulangi kata sandi, lalu pilih **Simpan terenkripsi**. Untuk memakai key kembali setelah reload, masukkan kata sandi dan pilih **Buka vault**. Penggantian memakai kolom key pengganti dan kata sandi untuk salinan baru; key lama hanya ditimpa setelah enkripsi dan penyimpanan berhasil. Status aktif berarti key telah dipasang untuk permintaan berikutnya, bukan validasi kredensial Google.
+
+- AES-256-GCM melalui Web Crypto, salt acak 16 byte, IV acak 12 byte pada setiap penyimpanan, dan PBKDF2-SHA-256 sebanyak 600.000 iterasi. Kunci enkripsi tidak dapat diekspor. Tidak ada API key atau kata sandi yang ditanam dalam kode/bundle.
+- Kata sandi dan key enkripsi tidak disimpan. Vault tersimpan hanya pada profil browser dan origin situs tersebut, tanpa sinkronisasi akun. Vault memerlukan HTTPS atau localhost. Jika penyimpanan ditolak, gunakan **Gunakan tanpa menyimpan** untuk sesi ini.
+- Reload dan **Kunci / kosongkan sesi** membersihkan key aktif. Setelah 15 menit tanpa aktivitas keyboard/klik, aplikasi juga mengosongkan key aktif. Permintaan Google yang sudah berjalan dapat tetap selesai.
+- Perubahan vault dari tab lain mengosongkan key aktif pada semua tampilan agar pengguna membuka key terbaru. Penghapusan permanen memerlukan konfirmasi di menu dan tidak mencabut key di Google; pencabutan dilakukan di AI Studio.
+- Kata sandi tidak dapat dipulihkan. Jika lupa, hapus vault lalu simpan API key kembali. Enkripsi melindungi salinan tersimpan; skrip berbahaya pada origin yang sama atau perangkat terkompromi dapat membaca key ketika aktif. Jangan gunakan vault pada perangkat bersama.
+
+Implementasi: src/personalKeyVault.ts dan src/components/PersonalKeyManager.tsx. Verifikasi vault: node --import tsx scripts/key-vault-test.ts.

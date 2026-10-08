@@ -116,7 +116,7 @@ export const SecurityGuideModal: React.FC<SecurityGuideModalProps> = ({
               <span>Privasi API Key</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed mb-3">
-              {personalMode ? 'Kunci pribadi hanya berada dalam memori halaman dan dikirim langsung ke Google Gemini. Kunci tidak disimpan dalam localStorage, riwayat kuis, atau kode GitHub. Muat ulang halaman atau pilih Hapus kunci untuk mengosongkannya. Gunakan perangkat yang Anda percayai.' : 'Kunci server disimpan dalam variabel GEMINI_API_KEY di hosting. Kunci pribadi yang Anda masukkan digunakan langsung dari browser ke Google Gemini selama sesi halaman ini.'}
+              {personalMode ? 'Key pribadi dikirim langsung ke Google Gemini. Vault opsional menyimpan salinan terenkripsi AES-256-GCM di browser, dilindungi kata sandi melalui PBKDF2-SHA-256. Kata sandi tidak disimpan. Key aktif hanya berada di memori; reload, tombol Kunci, atau 15 menit tanpa aktivitas mengosongkannya. Enkripsi melindungi data tersimpan, tetapi tidak melindungi key aktif dari skrip berbahaya atau perangkat yang terkompromi. Gunakan perangkat tepercaya.' : 'Kunci server disimpan dalam variabel GEMINI_API_KEY di hosting. Key pribadi dikirim langsung ke Google Gemini dan dapat disimpan dalam vault browser terenkripsi dengan kata sandi yang tidak disimpan.'}
             </p>
             <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200 font-mono">
               <span className="text-slate-500">{personalMode ? 'Status kunci pribadi:' : 'Status kunci server:'}</span>
