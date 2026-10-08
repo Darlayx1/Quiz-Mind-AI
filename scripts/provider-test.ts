@@ -42,6 +42,8 @@ globalThis.fetch = async (input, init) => {
 const reset = () => { calls.length=0; failGroq=failGoogle=0; malformed=invalidQuestion=truncate=slow=false; };
 try {
   assert.equal(normalizeQuizConfig({...config,model:'custom/text-model'}).provider,'groq');
+  assert.equal(normalizeQuizConfig({topic:'Aljabar',provider:'groq'}).model,'qwen/qwen3.8-27b');
+  assert.equal(normalizeQuizConfig({topic:'Aljabar',provider:'groq',model:'qwen/qwen3.8-27'}).model,'qwen/qwen3.8-27b');
   assert.throws(() => normalizeQuizConfig({...config,model:'gemini-3.8-flash'}),/tidak sesuai/);
   assert.throws(() => normalizeQuizConfig({...config,model:'https://untrusted.invalid'}),/tidak didukung/);
   const legacy = validateCollection({keys:[{...keys[0],provider:undefined}],settings:{mode:'priority',allowModelFallback:false,allowGroundingFallback:false}});
@@ -103,7 +105,7 @@ try {
   reset(); slow=true;
   const controller=new AbortController();
   const pending=generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection),signal:controller.signal});
-  setTimeout(()=>controller.abort(),20); await assert.rejects(pending,error=>(error as Error).name==='AbortError');
+  setTimeout(()=>controller.abort(),50); await assert.rejects(pending,error=>(error as Error).name==='AbortError');
   reset();
 
   const dir=mkdtempSync(path.join(tmpdir(),'quizmind-provider-test-'));

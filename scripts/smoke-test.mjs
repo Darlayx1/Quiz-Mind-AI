@@ -11,7 +11,7 @@ for (const match of html.matchAll(/(?:src|href)="(\/assets\/[^\"]+)"/g)) assert.
 assert.equal((await call('/history')).status, 200);
 assert.equal((await call('/assets/missing.js')).status, 404);
 assert.equal((await call('/api/health')).status, 200);
-assert.deepEqual((await (await call('/api/health')).json()).models, ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemma-4-31b-it', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b']);
+assert.deepEqual((await (await call('/api/health')).json()).models, ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemma-4-31b-it', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b']);
 assert.equal((await call('/api/generate-quiz', { topic: 'Aljabar', provider: 'groq' })).status, 503);
 assert.equal((await call('/api/generate-quiz', { topic: 'Aljabar', provider: 'groq', model: 'gemini-3.8-flash' })).status, 400);
 assert.ok(html.includes('https://api.groq.com'));

@@ -41,19 +41,30 @@ const GEMINI_MODELS = [
 ] as const;
 export const AI_MODELS = [
   ...GEMINI_MODELS.map(model => ({ ...model, provider: 'gemini' as const, grounding: model.id !== 'gemma-4-31b-it', structured: model.id !== 'gemma-4-31b-it' })),
+  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B', provider: 'groq' as const, tag: 'Model utama · 27B', description: 'Model utama Groq untuk latihan, penalaran, dan analisis konsep.', grounding: false, structured: true },
   { id: 'openai/gpt-oss-20b', name: 'GPT-OSS 20B', provider: 'groq' as const, tag: 'Cepat & efisien', description: 'Latihan harian melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
   { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'groq' as const, tag: 'Penalaran mendalam', description: 'Materi kompleks melalui Groq dengan keluaran terstruktur.', grounding: false, structured: true },
-  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 27B', provider: 'groq' as const, tag: 'Serbaguna', description: 'Alternatif model Groq untuk latihan dan analisis konsep.', grounding: false, structured: true },
 ];
 export type AIModel = string;
 export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
+export const normalizeModelId = (id?: string): string => {
+  if (!id) return '';
+  const trimmed = id.trim();
+  if (trimmed === 'qwen/qwen3.8-27' || trimmed === 'qwen3.8-27') return 'qwen/qwen3.8-27b';
+  return trimmed;
+};
 export const isAIModel = (value: unknown): value is AIModel =>
-  AI_MODELS.some((model) => model.id === value);
+  typeof value === 'string' && AI_MODELS.some((model) => model.id === value || model.id === normalizeModelId(value));
 export const validModelId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$/.test(value);
-export const modelInfo = (id?: string) => AI_MODELS.find(model => model.id === id);
-export const defaultProviderModel = (provider: AIProvider) => provider === 'groq' ? 'openai/gpt-oss-20b' : DEFAULT_MODEL;
-export const modelName = (id?: string) =>
-  AI_MODELS.find((model) => model.id === id)?.name ?? id ?? "Gemini";
+export const modelInfo = (id?: string) => {
+  const norm = normalizeModelId(id);
+  return AI_MODELS.find(model => model.id === norm || model.id === id);
+};
+export const defaultProviderModel = (provider: AIProvider) => provider === 'groq' ? 'qwen/qwen3.8-27b' : DEFAULT_MODEL;
+export const modelName = (id?: string) => {
+  const norm = normalizeModelId(id);
+  return AI_MODELS.find((model) => model.id === norm || model.id === id)?.name ?? norm ?? id ?? "Gemini";
+};
 export const DIFFICULTIES = [
   {
     id: "primitive",

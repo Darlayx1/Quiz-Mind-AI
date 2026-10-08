@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, DIFFICULTIES, isProvider, modelInfo, validModelId, defaultProviderModel } from "./models.js";
+import { DEFAULT_MODEL, DIFFICULTIES, isProvider, modelInfo, validModelId, defaultProviderModel, normalizeModelId } from "./models.js";
 import type { DifficultyLevel, QuizConfig } from "./types/quiz.js";
 
 export class QuizConfigError extends Error {}
@@ -11,7 +11,8 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
   if (typeof body.topic !== "string" || !body.topic.trim())
     throw new QuizConfigError("Topik kuis tidak boleh kosong.");
   if (body.provider !== undefined && !isProvider(body.provider)) throw new QuizConfigError('Penyedia AI tidak didukung.');
-  const model = body.model ?? (isProvider(body.provider) ? defaultProviderModel(body.provider) : DEFAULT_MODEL);
+  const rawModel = body.model ?? (isProvider(body.provider) ? defaultProviderModel(body.provider) : DEFAULT_MODEL);
+  const model = typeof rawModel === 'string' ? normalizeModelId(rawModel) : rawModel;
   const known = modelInfo(String(model));
   if (!validModelId(model) || (!known && !isProvider(body.provider))) throw new QuizConfigError('Model AI tidak didukung. Pilih penyedia untuk menggunakan ID model kustom.');
   const provider = body.provider ?? known!.provider;
