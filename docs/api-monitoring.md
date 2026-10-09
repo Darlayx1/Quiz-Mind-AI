@@ -4,7 +4,7 @@ Buka **Koneksi AI → Pemantauan**. Tab ini menampilkan panggilan penyedia, resp
 
 Untuk cadangan, tambahkan key dan isi identitas proyek Google yang sebenarnya di setiap koneksi. Key dalam proyek yang sama harus menggunakan nilai proyek yang sama. Key tanpa identitas proyek dianggap berada dalam satu kelompok bersama. Aktifkan **Model & Cadangan → Gunakan key cadangan**.
 
-Key invalid dikarantina otomatis di pool, sehingga tidak dipilih lagi sampai status direset atau kredensial diganti. Error izin membatasi key pada model terkait; masalah billing membatasi seluruh akses key. Error kuota menjeda kelompok proyek. Error permintaan dan jaringan menghentikan rotasi. Pool membatasi percobaan hingga tiga, termasuk bila pemanggil meminta lebih banyak. Permintaan grounded mengikuti batas dan pengaturan khusus layanan yang sudah ada.
+Key invalid dikarantina otomatis di pool, sehingga tidak dipilih lagi sampai status direset atau kredensial diganti. Error izin membatasi key pada model terkait; masalah billing membatasi seluruh akses key. Error 429 menjeda kelompok proyek untuk model terkait; batas biaya proyek menjeda semua model. Model cadangan hanya dicoba otomatis bila **Izinkan model cadangan** aktif. Error permintaan dan jaringan menghentikan rotasi. Pool membatasi percobaan hingga tiga, termasuk bila pemanggil meminta lebih banyak. Permintaan grounded mengikuti batas dan pengaturan khusus layanan yang sudah ada.
 
 Statistik dan karantina runtime berada dalam memori: refresh sesi lokal atau restart server menghapusnya. Mengunci vault lokal menghapus catatan sesi. Reset status tidak menghapus statistik, tetapi membuka kembali pembatasan key dan jeda kelompok proyek. Jangan gunakan reset untuk mengatasi kuota yang masih habis.
 

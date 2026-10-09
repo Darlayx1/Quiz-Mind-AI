@@ -72,7 +72,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   // 429 Rate Limit / Quota
   if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg)) {
     return new QuizGenerationError(
-      `Batas kuota atau rate limit untuk model ${modelLabel} telah tercapai (429 Too Many Requests). Tunggu sejenak sebelum mencoba lagi.`,
+      `Batas kuota model ${modelLabel} pada proyek Google tercapai (429). Periksa jeda di Koneksi AI → Pemantauan dan aktifkan model cadangan di Model & Cadangan, atau tunggu sampai kuota pulih. Key lain dalam proyek yang sama berbagi kuota.`,
       429,
       'RATE_LIMIT_EXCEEDED'
     );
@@ -224,7 +224,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         // Retain structured provider errors for retry hints; never display raw credentials.
         throw error;
       }
-    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : undefined, maxAttempts:Math.max(1,Math.min(params.config?.tools?.length ? 2 : 3,3-(options.attemptBudget?.calls??0))) });
+    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : undefined, maxAttempts:Math.max(1,Math.min(params.config?.tools?.length ? 2 : modelCandidates.length > 1 && String(params.model) === selectedModel ? 2 : 3,3-(options.attemptBudget?.calls??0))) });
   };
   // A managed pool already bounds and cancels each attempt. Wrapping its entire retry sequence
   // in Promise.race would leave retries running after the outer timeout has returned.
@@ -272,8 +272,9 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
           signal.throwIfAborted(); lastError = error;
           if (grounded) throw classifyApiError(error, model);
           const modelTransient = lastError?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + (grounded ? ':grounding' : '') && h.reason === 'Layanan sementara bermasalah');
-          if (!options.pool.collection.settings.allowModelFallback || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient)) throw classifyApiError(lastError,model);
-          options.onNotice?.('Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.');
+          const quotaLimited = lastError?.code === 'POOL_QUOTA' || lastError?.status === 429;
+          if (!options.pool.collection.settings.allowModelFallback || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient && !quotaLimited)) throw classifyApiError(lastError,model);
+          options.onNotice?.(quotaLimited ? 'Kuota model pilihan sedang dibatasi. Mencoba model cadangan sesuai pengaturan Anda.' : 'Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.');
         }
       }
       if (!rawResponse) throw lastError || new PoolError('Model pilihan belum tersedia.');

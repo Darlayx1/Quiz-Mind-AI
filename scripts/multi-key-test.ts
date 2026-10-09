@@ -43,7 +43,7 @@ const newer = await encryptCollection(collection,password); assert.notEqual(JSON
 
 let pool = new KeyPool(collection); const used:string[] = [];
 assert.equal(await pool.run(async key => { used.push(key); if (key === 'fake-secret-one') throw Object.assign(new Error('quota per minute'),{status:429,retryAfterMs:120000}); return 'ok'; }), 'ok');
-assert.deepEqual(used,['fake-secret-one','fake-secret-three']); assert.equal(pool.status('b').state,'waiting');
+assert.deepEqual(used,['fake-secret-one','fake-secret-three']); assert.equal(pool.status('b','gemini-3.8-flash').state,'waiting');
 pool.reset('a'); used.length=0;
 assert.equal(await pool.run(async key => { used.push(key); if (key === 'fake-secret-one') throw Object.assign(new Error('API key not valid'),{status:400}); return true; }),true);
 assert.deepEqual(used,['fake-secret-one','fake-secret-two']); assert.equal(pool.status('a').state,'invalid');
@@ -92,6 +92,15 @@ try {
   pool=new KeyPool({...collection,keys:[collection.keys[0]]});await assert.rejects(generateQuizWithGemini(config,undefined,{pool}));assert.deepEqual(modelCalls,[DEFAULT_MODEL]);
   modelCalls.length=0;pool=new KeyPool({...collection,settings:{...defaultSettings,allowModelFallback:true},keys:[collection.keys[0]]});
   const alternate=await generateQuizWithGemini(config,undefined,{pool});assert.notEqual(alternate.model,DEFAULT_MODEL);assert.equal(modelCalls.length,2);
+  modelCalls.length=0;
+  globalThis.fetch=async(input,init)=>{const req=new Request(input,init),model=decodeURIComponent(req.url.match(/models\/([^:]+):/)?.[1]||'');modelCalls.push(model);return model===DEFAULT_MODEL?Response.json({error:{code:429,message:'Quota exceeded for model',status:'RESOURCE_EXHAUSTED'}},{status:429}):response();};
+  pool=new KeyPool({...collection,settings:{...defaultSettings,allowModelFallback:true},keys:collection.keys.slice(0,2)});
+  const quotaAlternate=await generateQuizWithGemini(config,undefined,{pool,attemptBudget:{calls:0}});
+  assert.equal(quotaAlternate.model,'gemini-3.5-flash-lite');assert.deepEqual(modelCalls,[DEFAULT_MODEL,'gemini-3.5-flash-lite']);
+  assert.equal(pool.status('b',DEFAULT_MODEL).state,'waiting');assert.equal(pool.status('a','gemini-3.5-flash-lite').state,'ready');
+  modelCalls.length=0;pool=new KeyPool({...collection,keys:[collection.keys[0]]});
+  await assert.rejects(generateQuizWithGemini(config,undefined,{pool,attemptBudget:{calls:0}}),(error:any)=>error.status===429&&error.code==='POOL_QUOTA');
+  assert.deepEqual(modelCalls,[DEFAULT_MODEL]);
   const toolCalls:boolean[]=[];
   globalThis.fetch=async(input,init)=>{const req=new Request(input,init),body=await req.json(),tools=Boolean(body.tools?.length);toolCalls.push(tools);return tools?Response.json({error:{code:400,message:'googleSearch tool is unsupported',status:'INVALID_ARGUMENT'}},{status:400}):response();};
   pool=new KeyPool({...collection,keys:[collection.keys[0]]});await assert.rejects(generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool}));assert.deepEqual(toolCalls,[true]);

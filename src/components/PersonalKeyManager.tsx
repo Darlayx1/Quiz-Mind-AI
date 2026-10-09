@@ -13,7 +13,7 @@ import { hasStoredClientKeys, CLIENT_STORAGE_KEY, deleteStoredClientKeys } from 
 type Row = Omit<KeyEntry,'key'> & { masked: string; health: KeyHealth };
 type CloudData = { revision: number; settings: PoolSettings; keys: Row[]; monitoring?: PoolMonitoring };
 const statuses = { untested: 'Belum diuji', ready: 'Siap digunakan', waiting: 'Menunggu', invalid: 'Perlu mengganti key', restricted: 'Perlu memperbaiki akses' };
-export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serverProviders = [],initialSection='overview', visible=true }: { visible?: boolean; initialSection?:'overview'|'evaluation';apiKey: string; onApiKeyChange: (value: string) => void; onStateChange?: (state: { dirty: boolean; busy: boolean }) => void; serverProviders?: AIProvider[] }) {
+export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serverProviders = [],initialSection='overview', visible=true }: { visible?: boolean; initialSection?:'overview'|'models'|'evaluation';apiKey: string; onApiKeyChange: (value: string) => void; onStateChange?: (state: { dirty: boolean; busy: boolean }) => void; serverProviders?: AIProvider[] }) {
   const revision = useSyncExternalStore(subscribeKeys, keyRevision);
   const pool = getKeyPool();
   const [mode,setMode] = useState<'local'|'server'>(isCloudActive() ? 'server' : 'local');
@@ -52,7 +52,7 @@ export function PersonalKeyManager({ apiKey, onApiKeyChange, onStateChange, serv
     return () => { stopped = true; clearInterval(timer); };
   }, [tab, remoteActive, visible]);
   const settings = remoteActive ? remote!.settings : pool?.collection.settings || defaultSettings;
-  const rows: Row[] = remoteActive ? remote!.keys : (pool?.collection.keys || []).map(({ key,...item }) => ({ ...item, masked: '••••' + key.slice(-4), health: pool!.status(item.id) }));
+  const rows: Row[] = remoteActive ? remote!.keys : (pool?.collection.keys || []).map(({ key,...item }) => ({ ...item, masked: '••••' + key.slice(-4), health: pool!.status(item.id, settings.preferredModel) }));
   const unlocked = mode === 'local' ? Boolean(pool) : remoteActive;
   const hasUnsaved = dirty || Boolean(draft || edit || (modelDraft && modelDraft !== settings.preferredModel));
   useEffect(() => { setModelDraft(settings.preferredModel ?? ''); }, [settings.preferredModel]);

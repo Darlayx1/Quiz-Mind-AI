@@ -14,7 +14,7 @@ await pool.run(async key => {
   return { usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 5, thoughtsTokenCount: 3, totalTokenCount: 20 } };
 }, { model: 'model' });
 assert.deepEqual(calls, [keys[0].key, keys[2].key]);
-assert.equal(pool.status('b').state, 'waiting');
+assert.equal(pool.status('b', 'model').state, 'waiting');
 let snapshot = pool.monitoring();
 assert.deepEqual(snapshot.activeKeyIds, []);
 assert.equal(snapshot.usage.a.failures, 1);

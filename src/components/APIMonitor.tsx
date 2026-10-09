@@ -13,7 +13,7 @@ export function APIMonitor({ rows, monitoring, server, refresh, error }: { rows:
     <div className="api-monitor-stats">{[['Panggilan', sum('calls')], ['Berhasil', sum('successes')], ['Gagal / dibatalkan', sum('failures')], ['Token tercatat', sum('totalTokens')]].map(([title, value]) => <article key={title} className="connection-summary"><div><span>{title}</span><strong>{Number(value).toLocaleString('id-ID')}</strong></div></article>)}</div>
     <p className="field-help">Jumlah panggilan mencakup percobaan ulang. Berhasil berarti penyedia merespons, bukan jaminan hasil kuis valid. Token hanya berasal dari metadata respons yang diterima. Sisa kuota dan tagihan resmi Google belum terhubung; penggunaan di luar aplikasi tidak tercatat.</p>
     {!rows.length && <div className="connection-empty"><p>Buka koleksi atau tambahkan API key untuk memantau koneksi.</p></div>}
-    <div className="api-monitor-table"><table><caption>Kesehatan dan penggunaan per koneksi</caption><thead><tr><th>Koneksi / proyek</th><th>Status</th><th>Panggilan</th><th>Token input / output / penalaran</th><th>Respons rata-rata</th></tr></thead><tbody>{rows.map(row => {
+    <div className="api-monitor-table"><table><caption>Kesehatan dan penggunaan per koneksi</caption><thead><tr><th>Koneksi / proyek</th><th>Status model utama</th><th>Panggilan</th><th>Token input / output / penalaran</th><th>Respons rata-rata</th></tr></thead><tbody>{rows.map(row => {
       const usage = monitoring?.usage[row.id];
       const active = monitoring?.activeKeyIds.includes(row.id);
       const states = { untested: 'Belum diuji', ready: 'Siap', waiting: 'Dijeda', invalid: 'Karantina otomatis', restricted: 'Akses dibatasi' };

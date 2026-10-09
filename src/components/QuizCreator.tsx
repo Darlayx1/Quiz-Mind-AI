@@ -16,7 +16,7 @@ interface QuizCreatorProps {
   apiKey: string;
   onApiKeyChange: (value: string) => void;
   requiresApiKey: boolean;
-  onOpenConnections?: () => void;
+  onOpenConnections?: (section?: 'overview' | 'models') => void;
   onOpenEvaluation?:()=>void;
   serverProviders?: AIProvider[];
 }
@@ -116,7 +116,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
         </div>
         <span className="menu-heading-note"><Sparkles size={16} /> Dibantu AI</span>
       </div>
-      {errorMessage && <div role="alert" className="form-alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
+      {errorMessage && <div role="alert" className="form-alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p>{/429|kuota|rate limit/i.test(errorMessage) && onOpenConnections && <button type="button" className="topic-chip" onClick={() => onOpenConnections('models')}>Atur key dan model cadangan</button>}</div>}
       <form onSubmit={submit} className="menu-layout">
         <fieldset disabled={isLoading} className="menu-fields"><QuestionComposition value={composition} onChange={setComposition} count={selectedCount} sequential={sequential&&!unlimited} evaluator={evaluator} onOpen={onOpenEvaluation??onOpenConnections}/>
           <section className="surface menu-section">
@@ -196,7 +196,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             <div className="menu-setting-grid"><div><label htmlFor="ai-model" className="field-label">Model Gemini</label><select id="ai-model" className="field-input" value={customModel ? '__custom__' : model} onChange={e => { if (e.target.value === '__custom__') { setCustomModel(true); setModel(''); } else { setCustomModel(false); setModel(e.target.value); } }}>{AI_MODELS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__custom__">ID model kustom…</option></select></div></div>
             {customModel && <><label htmlFor="quiz-custom-model" className="field-label">ID model kustom</label><input id="quiz-custom-model" className="field-input" value={model} maxLength={120} onChange={e => setModel(e.target.value.trim())} placeholder="ID persis dari konsol Google AI Studio"/></>}
             <p className="field-help">{selectedModel?.description ?? 'Model kustom harus tersedia untuk akun Google AI Studio Anda.'}</p>
-            <div className="connection-creator-status"><span className={'status-dot ' + (providerReady ? '' : 'inactive')}/><span>{providerReady ? 'API key Google AI Studio aktif' : 'API key Google AI Studio belum tersedia'}</span><button type="button" className="topic-chip" onClick={onOpenConnections}>Kelola Koneksi AI</button></div>
+            <div className="connection-creator-status"><span className={'status-dot ' + (providerReady ? '' : 'inactive')}/><span>{providerReady ? 'API key Google AI Studio aktif' : 'API key Google AI Studio belum tersedia'}</span><button type="button" className="topic-chip" onClick={() => onOpenConnections?.()}>Kelola Koneksi AI</button></div>
           </section>
 
           <details className="surface menu-advanced">

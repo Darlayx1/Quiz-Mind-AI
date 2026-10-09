@@ -3,7 +3,7 @@ import { KeyRound, X } from 'lucide-react';
 import { PersonalKeyManager } from './PersonalKeyManager.js';
 import type { AIProvider } from '../models.js';
 
-export function AIConnectionsModal({ open, onClose, apiKey, onApiKeyChange, serverProviders,initialSection }: { initialSection?:'overview'|'evaluation';open: boolean; onClose: () => void; apiKey: string; onApiKeyChange: (value: string) => void; serverProviders?: AIProvider[] }) {
+export function AIConnectionsModal({ open, onClose, apiKey, onApiKeyChange, serverProviders,initialSection }: { initialSection?:'overview'|'models'|'evaluation';open: boolean; onClose: () => void; apiKey: string; onApiKeyChange: (value: string) => void; serverProviders?: AIProvider[] }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [state,setState] = useState({ dirty: false, busy: false });
   const [confirmClose,setConfirmClose] = useState(false);

@@ -127,7 +127,7 @@ export default function App() {
 
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
   const [connectionsOpen,setConnectionsOpen] = useState(false);
-  const [connectionsSection,setConnectionsSection]=useState<'overview'|'evaluation'>('overview');
+  const [connectionsSection,setConnectionsSection]=useState<'overview'|'models'|'evaluation'>('overview');
   const openEvaluation=()=>{setConnectionsSection('evaluation');setConnectionsOpen(true);};
   const [historyRecovery,setHistoryRecovery]=useState(false);
   const [serverSecurity, setServerSecurity] = useState({
@@ -342,7 +342,7 @@ export default function App() {
             apiKey={apiKey}
             onApiKeyChange={handleApiKeyChange}
             requiresApiKey={standalonePages} onOpenEvaluation={openEvaluation}
-            onOpenConnections={() => {setConnectionsSection('overview');setConnectionsOpen(true);}}
+            onOpenConnections={(section='overview') => {setConnectionsSection(section);setConnectionsOpen(true);}}
             serverProviders={serverSecurity.providers}
           />
           </div>
