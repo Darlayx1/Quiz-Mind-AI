@@ -127,13 +127,15 @@ export class KeyPool {
   }
   private group(key: KeyEntry) { return `${key.provider ?? 'gemini'}:${key.project || '__unknown__'}`; }
   private quotaGroup(key: KeyEntry, model = '*') { return `${this.group(key)}\0${model}`; }
+  private quotaScopes(key: KeyEntry, model?: string) {
+    return [...new Set([this.quotaGroup(key), ...(model ? [this.quotaGroup(key, model), this.quotaGroup(key, model.replace(/:grounding$/, '')), ...(model.endsWith(':grounding') ? [this.quotaGroup(key, ':grounding')] : [])] : [])])];
+  }
   lock() { this.locked = true; this.controller.abort(); this.collection = { keys: [], settings: defaultSettings }; this.health.clear(); this.cooldown.clear(); this.quotaMessages.clear(); this.usage.clear(); this.events = []; this.active.clear(); this.changed(); }
   status(id: string, scope?: string): KeyHealth {
     const key = this.collection.keys.find(k => k.id === id);
     const base = this.health.get(id) || { state: 'untested', successes: 0, failures: 0 };
     const until = key ? Math.max(!scope || !base.scope || base.scope === scope ? base.until || 0 : 0,
-      this.cooldown.get(this.quotaGroup(key)) || 0,
-      scope ? this.cooldown.get(this.quotaGroup(key, scope)) || 0 : 0) : 0;
+      ...this.quotaScopes(key, scope).map(quotaScope => this.cooldown.get(quotaScope) || 0)) : 0;
     return { ...base, state: until > Date.now() && !['invalid','restricted'].includes(base.state) ? 'waiting' : base.state === 'waiting' && until <= Date.now() ? 'untested' : base.state, until };
   }
   reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) { for (const scope of this.cooldown.keys()) if (scope.startsWith(this.group(key) + '\0')) { this.cooldown.delete(scope); this.quotaMessages.delete(scope); } this.event({ keyId: id, type: 'reset', reason: 'Karantina dan jeda kelompok direset oleh pengguna' }); } this.changed(); }
@@ -153,10 +155,8 @@ export class KeyPool {
       let available = eligible.filter(k => !(this.busy.get(this.group(k)) || 0));
       if (!available.length && eligible.length && Date.now() - started < 30_000) { await pause(100, signal); continue; }
       if (!available.length) {
-        const quotaWait = ordered.some(k => (this.cooldown.get(this.quotaGroup(k)) || 0) > Date.now() || (this.cooldown.get(this.quotaGroup(k, options.model)) || 0) > Date.now());
-        if (quotaWait) {
-          const key = ordered.find(k => (this.cooldown.get(this.quotaGroup(k)) || 0) > Date.now() || (this.cooldown.get(this.quotaGroup(k, options.model)) || 0) > Date.now())!;
-          const scope = (this.cooldown.get(this.quotaGroup(key)) || 0) > Date.now() ? this.quotaGroup(key) : this.quotaGroup(key, options.model);
+        const scope = ordered.flatMap(key => this.quotaScopes(key, options.model)).find(quotaScope => (this.cooldown.get(quotaScope) || 0) > Date.now());
+        if (scope) {
           throw new PoolError(this.quotaMessages.get(scope) || 'Permintaan dijeda setelah Google merespons 429. Periksa Koneksi AI → Pemantauan.', 429, 'POOL_QUOTA');
         }
         throw new PoolError('Semua key yang sesuai sedang menunggu, perlu diperbaiki, atau batas percobaan tercapai. Pengaturan kuis tetap tersimpan.', 503,
@@ -194,11 +194,13 @@ export class KeyPool {
           this.restrictions.add(entry.id + ':' + (!billing && options.model ? options.model : '*'));
         }
         else if (kind === 'quota') {
-          const { daily, projectWide, reason } = geminiQuotaDetails(error);
+          const { daily, projectWide, grounding, groundingProjectWide, reason } = geminiQuotaDetails(error);
           health.state = 'waiting';
           health.until = entry.provider === 'gemini' && daily ? Math.max(nextPacificMidnight() + 1000, Date.now() + retryMs) : Date.now() + retryMs;
           health.reason = reason;
-          const scope = this.quotaGroup(entry, projectWide ? '*' : options.model);
+          // Model quotas also apply when the same model is called without Search.
+          // Only explicit Search quota evidence permits a separate tool cooldown.
+          const scope = this.quotaGroup(entry, projectWide ? '*' : groundingProjectWide ? ':grounding' : grounding ? options.model : options.model?.replace(/:grounding$/, ''));
           this.cooldown.set(scope, health.until);
           this.quotaMessages.set(scope, geminiQuotaMessage(error, options.model || 'pilihan'));
           seen.add(entry.id);

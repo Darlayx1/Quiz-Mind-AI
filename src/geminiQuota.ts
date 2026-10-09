@@ -20,17 +20,20 @@ export function geminiQuotaDetails(error: any) {
     /(?:spend(?:ing)?|cost|billing|account|project)[ _-]*(?:cap|limit)\s+(?:exceeded|reached)/i.test(message);
   const daily = !zero && /per.?day|daily/i.test(ids + ' ' + metrics.join(' ') + ' ' + message);
   const minute = /per.?minute|per.?second/i.test(ids + ' ' + metrics.join(' ') + ' ' + message);
+  const grounding = !projectWide && /grounding|search/i.test(ids + ' ' + metrics.join(' '));
+  const groundingProjectWide = grounding && /per.?project/i.test(ids) && !/per.?model/i.test(ids);
   const retryDelay = details.find(detail => String(detail?.['@type'] ?? '').endsWith('google.rpc.RetryInfo'))?.retryDelay;
   const seconds = /^(\d+(?:\.\d+)?)s$/.exec(String(retryDelay ?? ''))?.[1] ??
     /"retryDelay"\s*:\s*"([\d.]+)s"/.exec(message)?.[1];
   const retryMs = seconds ? Number(seconds) * 1000 : undefined;
   const reason = zero ? 'Google melaporkan batas kuota 0 untuk permintaan ini; penggunaan belum diperlukan untuk mencapai batas tersebut.' :
     projectWide ? 'Google melaporkan pembatasan biaya atau kuota proyek.' :
+    grounding ? 'Google melaporkan batas pencarian atau grounding.' :
     daily ? 'Google melaporkan batas harian model.' :
     minute ? 'Google melaporkan batas permintaan atau token per menit/detik.' :
     'Google menolak permintaan dengan 429; jenis batas belum dapat dipastikan dari detail respons.';
   const evidence = metrics.length ? ` Metrik: ${metrics.join(', ')}.` : '';
-  return { zero, projectWide, daily, retryMs, reason: reason + evidence };
+  return { zero, projectWide, daily, grounding, groundingProjectWide, retryMs, reason: reason + evidence };
 }
 
 export function geminiQuotaMessage(error: any, model: string) {

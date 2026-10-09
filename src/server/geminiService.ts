@@ -48,6 +48,10 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
     return new QuizGenerationError(geminiQuotaMessage(err, modelId), 429, 'RATE_LIMIT_EXCEEDED');
   }
 
+  if (Number(err?.status ?? err?.error?.code) === 400 || /INVALID_ARGUMENT/.test(msg)) {
+    return new QuizGenerationError(`Permintaan ke ${modelLabel} tidak valid. Periksa materi dan pengaturan kuis.`, 400, 'INVALID_ARGUMENT');
+  }
+
   // 401 Unauthorized
   if (/401|API_KEY_INVALID|API key not valid|UNAUTHENTICATED/i.test(msg)) {
     return new QuizGenerationError(
@@ -253,25 +257,36 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
 
     let rawResponse: any = null;
     let lastError: any = null;
+    let batchGrounded = false;
     const extractedSources: GroundingSource[] = [];
 
     if (options.pool) {
       const grounded = config.enableGrounding && !isGemma;
       const prompt = buildPrompt(config, currentBatchCount, validQuestions.map(q => q.question));
       const contents = isGemma ? buildGemmaPrompt(config, currentBatchCount, validQuestions.map(q => q.question)) : prompt.userPrompt;
-      const send = (model: string, tools: boolean) => requestContent({ model, contents,
-        config: isGemma ? {} : { systemInstruction: prompt.systemInstruction, ...(tools ? { tools: [{ googleSearch: {} }] } : {}) } });
-      for (const model of modelCandidates) {
+      const allowWithoutWeb = options.pool.collection.settings.allowGroundingFallback;
+      const candidates = modelCandidates.flatMap(model => !grounded || modelInfo(model)?.grounding === true
+        ? [{ model, tools: grounded }]
+        : allowWithoutWeb ? [{ model, tools: false }] : []);
+      if (grounded && allowWithoutWeb) {
+        for (const model of modelCandidates) if (!candidates.some(candidate => candidate.model === model && !candidate.tools)) candidates.push({ model, tools: false });
+      }
+      const send = (model: string, tools: boolean) => requestContent({ model,
+        contents: model.startsWith('gemma') ? buildGemmaPrompt(config, currentBatchCount, validQuestions.map(q => q.question)) : contents,
+        config: model.startsWith('gemma') ? {} : { systemInstruction: prompt.systemInstruction, ...(tools ? { tools: [{ googleSearch: {} }] } : {}) } });
+      for (const [index, { model, tools }] of candidates.entries()) {
         try {
-          rawResponse = await send(model, grounded);
-          usedModelName = model; lastError = null; break;
+          rawResponse = await send(model, tools);
+          usedModelName = model; batchGrounded = tools; lastError = null; break;
         } catch (error: any) {
           signal.throwIfAborted(); lastError = error;
-          if (grounded) throw classifyApiError(error, model);
-          const modelTransient = lastError?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + (grounded ? ':grounding' : '') && h.reason === 'Layanan sementara bermasalah');
+          const modelTransient = errorKind(lastError).kind === 'temporary' || (lastError?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + (tools ? ':grounding' : '') && h.reason === 'Layanan sementara bermasalah'));
           const quotaLimited = lastError?.code === 'POOL_QUOTA' || lastError?.status === 429;
-          if (!options.pool.collection.settings.allowModelFallback || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient && !quotaLimited)) throw classifyApiError(lastError,model);
-          options.onNotice?.(quotaLimited ? 'Kuota model pilihan sedang dibatasi. Mencoba model cadangan sesuai pengaturan Anda.' : 'Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.');
+          const next = candidates[index + 1];
+          if (!next || batchCalls >= 3 || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient && !quotaLimited)) throw classifyApiError(lastError,model);
+          options.onNotice?.(next.tools || !grounded
+            ? quotaLimited ? 'Kuota model pilihan sedang dibatasi. Mencoba model cadangan sesuai pengaturan Anda.' : 'Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.'
+            : 'Referensi web belum tersedia. Mencoba melanjutkan tanpa referensi web sesuai pengaturan Anda.');
         }
       }
       if (!rawResponse) throw lastError || new PoolError('Model pilihan belum tersedia.');
@@ -300,6 +315,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
           selectedModel
         );
         usedGrounding = true;
+        batchGrounded = true;
         usedModelName = selectedModel;
       } catch (err: any) {
         signal.throwIfAborted();
@@ -366,7 +382,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       throw classifyApiError(lastError || new Error('Respons model AI kosong.'), usedModelName);
     }
 
-    if (rawResponse.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new QuizGenerationError('Respons Gemini terpotong sebelum selesai.', 502, config.enableGrounding ? 'WEB_SEARCH_TRUNCATED' : 'INCOMPLETE_RESPONSE');
+    if (rawResponse.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new QuizGenerationError('Respons Gemini terpotong sebelum selesai.', 502, batchGrounded ? 'WEB_SEARCH_TRUNCATED' : 'INCOMPLETE_RESPONSE');
     const rawText = rawResponse.text || '';
 
     // Ekstrak metadata grounding Google Search (jika ada pada Gemini)
@@ -387,7 +403,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       }
     }
 
-    if (config.enableGrounding) {
+    if (batchGrounded) {
       if (!Array.isArray(groundingMetadata?.webSearchQueries) || !groundingMetadata.webSearchQueries.length || !extractedSources.length) throw new QuizGenerationError('Pencarian web Gemini tidak menghasilkan referensi yang dapat diverifikasi.', 502, 'WEB_SEARCH_EMPTY');
       usedGrounding = true;
     }
