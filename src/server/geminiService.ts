@@ -2,7 +2,8 @@ import { GoogleGenAI } from '@google/genai';
 import { DEFAULT_MODEL, DIFFICULTIES, modelInfo } from '../models.js';
 import { normalizeQuizConfig, quizTimerSeconds, durationLabel } from '../quizConfig.js';
 import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
-import { KeyPool, PoolError } from '../keyPool.js';
+import { KeyPool, PoolError, errorKind } from '../keyPool.js';
+import { geminiQuotaMessage } from '../geminiQuota.js';
 
 import { QuizGenerationError } from './generationError.js';
 export { QuizGenerationError } from './generationError.js';
@@ -42,6 +43,11 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   const isGemma = modelId === 'gemma-4-31b-it';
   const modelLabel = isGemma ? 'Gemma 4 31B' : 'Gemini';
 
+  // Use the HTTP status first: numbers inside quota values are not status codes.
+  if (errorKind(err).kind === 'quota') {
+    return new QuizGenerationError(geminiQuotaMessage(err, modelId), 429, 'RATE_LIMIT_EXCEEDED');
+  }
+
   // 401 Unauthorized
   if (/401|API_KEY_INVALID|API key not valid|UNAUTHENTICATED/i.test(msg)) {
     return new QuizGenerationError(
@@ -66,15 +72,6 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
       `Model ${modelLabel} (${modelId}) tidak ditemukan atau tidak tersedia untuk akun/wilayah proyek Anda (404 Not Found).`,
       404,
       'MODEL_NOT_FOUND'
-    );
-  }
-
-  // 429 Rate Limit / Quota
-  if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg)) {
-    return new QuizGenerationError(
-      `Batas kuota model ${modelLabel} pada proyek Google tercapai (429). Periksa jeda di Koneksi AI → Pemantauan dan aktifkan model cadangan di Model & Cadangan, atau tunggu sampai kuota pulih. Key lain dalam proyek yang sama berbagi kuota.`,
-      429,
-      'RATE_LIMIT_EXCEEDED'
     );
   }
 

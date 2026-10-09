@@ -1,5 +1,6 @@
 import { isProvider, modelInfo, validModelId, type AIProvider, DEFAULT_MODEL, normalizeModelId } from './models.js';
 import { normalizeEvaluationSettings } from './evaluationSettings.js';
+import { geminiQuotaDetails, geminiQuotaMessage } from './geminiQuota.js';
 import type { EvaluationSettings } from './types/quiz.js';
 export type KeyEntry = { id: string; name: string; project: string; key: string; enabled: boolean; priority: number; provider?: AIProvider };
 export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: boolean; allowGroundingFallback: boolean; allowKeyFallback?: boolean; allowProviderFallback?: boolean; preferredProvider?: AIProvider; preferredModel?: string; fallbackProvider?: AIProvider; fallbackModel?: string; modelFallbacks?: Partial<Record<AIProvider, string>>; evaluation?:EvaluationSettings };
@@ -53,9 +54,9 @@ export function errorKind(error: any): { kind: 'invalid' | 'restricted' | 'quota
   const status = Number(error?.status || error?.error?.code || /\b(400|401|402|403|404|408|429|500|502|503|504)\b/.exec(msg)?.[1]);
   let retry = Number(error?.retryAfterMs);
   if (!Number.isFinite(retry)) {
-    const delay = /"retryDelay"\s*:\s*"([\d.]+)s"/.exec(msg)?.[1];
+    const delay = geminiQuotaDetails(error).retryMs;
     const header = error?.headers?.get?.('retry-after');
-    retry = delay ? Number(delay) * 1000 : header ? (Number.isFinite(Number(header)) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : NaN;
+    retry = delay ?? (header ? (Number.isFinite(Number(header)) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : NaN);
   }
   const retryMs = Number.isFinite(retry) && retry > 0 ? Math.min(retry, 86_400_000) : 60_000;
   if (['WEB_SEARCH_EMPTY','WEB_SEARCH_TRUNCATED','WEB_SEARCH_UNAVAILABLE'].includes(code)) return { kind: 'stop', retryMs };
@@ -88,6 +89,7 @@ export class KeyPool {
   health = new Map<string, KeyHealth>();
   private busy = new Map<string, number>();
   private cooldown = new Map<string, number>();
+  private quotaMessages = new Map<string, string>();
   private restrictions = new Set<string>();
   private cursor = 0;
   private locked = false;
@@ -125,7 +127,7 @@ export class KeyPool {
   }
   private group(key: KeyEntry) { return `${key.provider ?? 'gemini'}:${key.project || '__unknown__'}`; }
   private quotaGroup(key: KeyEntry, model = '*') { return `${this.group(key)}\0${model}`; }
-  lock() { this.locked = true; this.controller.abort(); this.collection = { keys: [], settings: defaultSettings }; this.health.clear(); this.usage.clear(); this.events = []; this.active.clear(); this.changed(); }
+  lock() { this.locked = true; this.controller.abort(); this.collection = { keys: [], settings: defaultSettings }; this.health.clear(); this.cooldown.clear(); this.quotaMessages.clear(); this.usage.clear(); this.events = []; this.active.clear(); this.changed(); }
   status(id: string, scope?: string): KeyHealth {
     const key = this.collection.keys.find(k => k.id === id);
     const base = this.health.get(id) || { state: 'untested', successes: 0, failures: 0 };
@@ -134,7 +136,7 @@ export class KeyPool {
       scope ? this.cooldown.get(this.quotaGroup(key, scope)) || 0 : 0) : 0;
     return { ...base, state: until > Date.now() && !['invalid','restricted'].includes(base.state) ? 'waiting' : base.state === 'waiting' && until <= Date.now() ? 'untested' : base.state, until };
   }
-  reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) { for (const scope of this.cooldown.keys()) if (scope.startsWith(this.group(key) + '\0')) this.cooldown.delete(scope); this.event({ keyId: id, type: 'reset', reason: 'Karantina dan jeda kelompok direset oleh pengguna' }); } this.changed(); }
+  reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) { for (const scope of this.cooldown.keys()) if (scope.startsWith(this.group(key) + '\0')) { this.cooldown.delete(scope); this.quotaMessages.delete(scope); } this.event({ keyId: id, type: 'reset', reason: 'Karantina dan jeda kelompok direset oleh pengguna' }); } this.changed(); }
   async run<T>(fn: (key: string, signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; onNotice?: (message: string) => void; maxAttempts?: number; allowKeyFallback?: boolean; model?: string; provider?: AIProvider } = {}): Promise<T> {
     const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
     const seen = new Set<string>();
@@ -152,7 +154,11 @@ export class KeyPool {
       if (!available.length && eligible.length && Date.now() - started < 30_000) { await pause(100, signal); continue; }
       if (!available.length) {
         const quotaWait = ordered.some(k => (this.cooldown.get(this.quotaGroup(k)) || 0) > Date.now() || (this.cooldown.get(this.quotaGroup(k, options.model)) || 0) > Date.now());
-        if (quotaWait) throw new PoolError(`Kuota model ${options.model || 'pilihan'} pada proyek Google sedang dibatasi. Aktifkan model cadangan di Koneksi AI → Model & Cadangan, atau tunggu sampai kuota pulih. Key lain dalam proyek yang sama memakai kuota yang sama.`, 429, 'POOL_QUOTA');
+        if (quotaWait) {
+          const key = ordered.find(k => (this.cooldown.get(this.quotaGroup(k)) || 0) > Date.now() || (this.cooldown.get(this.quotaGroup(k, options.model)) || 0) > Date.now())!;
+          const scope = (this.cooldown.get(this.quotaGroup(key)) || 0) > Date.now() ? this.quotaGroup(key) : this.quotaGroup(key, options.model);
+          throw new PoolError(this.quotaMessages.get(scope) || 'Permintaan dijeda setelah Google merespons 429. Periksa Koneksi AI → Pemantauan.', 429, 'POOL_QUOTA');
+        }
         throw new PoolError('Semua key yang sesuai sedang menunggu, perlu diperbaiki, atau batas percobaan tercapai. Pengaturan kuis tetap tersimpan.', 503,
           ordered.some(k => this.restrictions.has(k.id + ':' + options.model)) ? 'POOL_MODEL_ACCESS' : 'POOL_UNAVAILABLE');
       }
@@ -179,7 +185,7 @@ export class KeyPool {
         signal.throwIfAborted();
         const { kind, retryMs } = errorKind(error);
         const reasons = { invalid: 'Key tidak valid atau dicabut; dikarantina otomatis', restricted: 'Akses model atau billing perlu diperiksa', quota: 'Kuota model pada proyek tercapai; kelompok dijeda', temporary: 'Gangguan sementara pada layanan', network: 'Koneksi jaringan gagal; rotasi dihentikan', stop: 'Permintaan gagal; rotasi dihentikan' };
-        this.event({ keyId: entry.id, model: options.model, type: 'failure', reason: reasons[kind] });
+        this.event({ keyId: entry.id, model: options.model, type: 'failure', reason: kind === 'quota' ? geminiQuotaDetails(error).reason : reasons[kind] });
         const health: KeyHealth = { ...old, scope: options.model, failures: old.failures + 1 };
         if (kind === 'invalid') { health.state = 'invalid'; health.reason = 'Key tidak valid atau dicabut'; seen.add(entry.id); }
         else if (kind === 'restricted') {
@@ -188,12 +194,14 @@ export class KeyPool {
           this.restrictions.add(entry.id + ':' + (!billing && options.model ? options.model : '*'));
         }
         else if (kind === 'quota') {
-          const daily = /per.?day|daily|requestsperday/i.test(String(error?.message));
-          const projectWide = /spend|spending|cost|billing|account.?limit|project.?limit/i.test(String(error?.message));
+          const { daily, projectWide, reason } = geminiQuotaDetails(error);
           health.state = 'waiting';
           health.until = entry.provider === 'gemini' && daily ? Math.max(nextPacificMidnight() + 1000, Date.now() + retryMs) : Date.now() + retryMs;
-          health.reason = projectWide ? 'Batas biaya proyek tercapai' : daily ? 'Kuota harian model tercapai' : 'Batas kuota model pada proyek tercapai';
-          this.cooldown.set(this.quotaGroup(entry, projectWide ? '*' : options.model), health.until); seen.add(entry.id);
+          health.reason = reason;
+          const scope = this.quotaGroup(entry, projectWide ? '*' : options.model);
+          this.cooldown.set(scope, health.until);
+          this.quotaMessages.set(scope, geminiQuotaMessage(error, options.model || 'pilihan'));
+          seen.add(entry.id);
         } else if (kind === 'temporary') {
           health.reason = 'Layanan sementara bermasalah';
           if (transientRetries++ < 1 && attempts < maxAttempts) {
