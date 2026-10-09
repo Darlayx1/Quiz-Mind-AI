@@ -148,7 +148,7 @@ export class ServerKeyStore {
       const data = this.read();
       if (!Array.isArray(body.keys)) throw new Error();
       const provider = body.keys[0]?.provider ?? 'gemini';
-      this.write({ ...data.collection, keys: [...data.collection.keys, ...body.keys], settings: data.collection.keys.length ? data.collection.settings : { ...data.collection.settings, preferredProvider: provider, preferredModel: defaultProviderModel(provider), fallbackProvider: provider === 'groq' ? 'gemini' : 'groq', fallbackModel: defaultProviderModel(provider === 'groq' ? 'gemini' : 'groq') } }, body.revision);
+      this.write({ ...data.collection, keys: [...data.collection.keys, ...body.keys], settings: data.collection.keys.length ? data.collection.settings : { ...data.collection.settings, preferredProvider: 'gemini', preferredModel: defaultProviderModel('gemini'), fallbackProvider: 'gemini', fallbackModel: 'gemini-3.5-flash-lite' } }, body.revision);
     });
     mutation('update', body => {
       const data = this.read(), entry = data.collection.keys.find(k => k.id === body.id); if (!entry) throw new Error();

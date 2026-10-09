@@ -43,10 +43,10 @@ app.use(express.json({ limit: '15mb' }));
 app.use('/api', (_req,res,next) => { res.setHeader('Cache-Control','no-store'); next(); });
 const keyStore = new ServerKeyStore();
 keyStore.install(app);
-const runtimePool = new KeyPool({ settings: { ...defaultSettings }, keys: (['gemini','groq'] as const).flatMap(provider => {
-  const key = process.env[provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY'];
-  return key && !key.startsWith('MY_') ? [{ id: 'runtime-' + provider, provider, name: provider + ' server', project: '', key, enabled: true, priority: 1 }] : [];
-}) });
+const runtimePool = new KeyPool({ settings: { ...defaultSettings }, keys: (() => {
+  const key = process.env.GEMINI_API_KEY;
+  return key && !key.startsWith('MY_') ? [{ id: 'runtime-gemini', provider: 'gemini' as const, name: 'Gemini server', project: '', key, enabled: true, priority: 1 }] : [];
+})() });
 
 // =========================================================================
 // API ROUTES

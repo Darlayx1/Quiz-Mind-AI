@@ -1,6 +1,6 @@
-# QuizMind AI: Generator Kuis Gemini & Groq
+# QuizMind AI: Generator Kuis Google Gemini
 
-Aplikasi kuis interaktif dengan pilihan **Google Gemini** dan **Groq**, pengelolaan API key terpadu, serta Google Search Grounding pada model Gemini yang mendukung. Soal dilengkapi pembahasan; akurasi dan referensi keluaran AI tetap perlu ditinjau.
+Aplikasi kuis interaktif bertenaga **Google Gemini** (Google AI Studio), pengelolaan API key terpadu, serta Google Search Grounding pada model Gemini yang mendukung. Soal dilengkapi pembahasan; akurasi dan referensi keluaran AI tetap perlu ditinjau.
 
 ---
 
@@ -9,8 +9,8 @@ Aplikasi kuis interaktif dengan pilihan **Google Gemini** dan **Groq**, pengelol
 - **Model Gemini 3.8 Flash**: Penalaran mendalam (*deep thinking*) dalam menyusun opsi jawaban, distractor realistis, dan pembahasan analitis.
 - **Google Search Grounding Terintegrasi**: Memvalidasi fakta ilmiah, peristiwa sejarah, dan konsep terkini secara langsung via mesin pencari Google, lengkap dengan tautan sumber web yang dapat diverifikasi.
 - **API Key Pribadi & Backend Opsional**:
-  - Pengguna GitHub Pages memasukkan kunci Gemini atau Groq sendiri. Key aktif berada dalam memori halaman dan dikirim langsung ke penyedia yang dipilih. Vault opsional menyimpan hanya ciphertext di `localStorage`, terpisah dari riwayat kuis.
-  - Hosting Node.js/Express juga mendukung kunci milik server (`process.env.GEMINI_API_KEY` / `process.env.GROQ_API_KEY`), yang tidak dimasukkan ke bundle browser.
+  - Pengguna GitHub Pages memasukkan kunci Google AI Studio sendiri. Key aktif berada dalam memori halaman dan dikirim langsung ke API Google Gemini. Vault opsional menyimpan hanya ciphertext di `localStorage`, terpisah dari riwayat kuis.
+  - Hosting Node.js/Express juga mendukung kunci milik server (`process.env.GEMINI_API_KEY`), yang tidak dimasukkan ke bundle browser.
   - File `.env` diproteksi secara otomatis melalui `.gitignore` sehingga aman saat di-push ke GitHub.
   - Vault multi-key AES-256-GCM, fallback berbasis proyek, cadangan terenkripsi, dan vault server dengan login pemilik.
 - **Pengerjaan Kuis Interaktif**:
@@ -31,14 +31,14 @@ Aplikasi kuis interaktif dengan pilihan **Google Gemini** dan **Groq**, pengelol
 Halaman aplikasi diterbitkan di `https://darlayx1.github.io/Quiz-Mind-AI/`
 melalui workflow `.github/workflows/pages.yml` setiap push ke `main`.
 Pengguna menambahkan key melalui **Koneksi AI**, memilih materi, lalu membuat kuis.
-Browser menghubungi Gemini atau Groq secara langsung sehingga tidak memerlukan backend
+Browser menghubungi Google Gemini secara langsung sehingga tidak memerlukan backend
 Render atau konfigurasi `VITE_API_BASE_URL`. Kunci disamarkan secara bawaan,
 dapat disimpan terenkripsi, dibuka dengan kata sandi setelah reload, diganti tanpa build ulang, dikunci, atau dihapus.
 Kuota dan akses model mengikuti proyek Google milik masing-masing pengguna.
 
 Sebagai pilihan untuk menggunakan kunci milik server, backend dapat dibuat dari `render.yaml` menggunakan
 [Deploy to Render](https://render.com/deploy?repo=https://github.com/Darlayx1/Quiz-Mind-AI).
-Pasang `GEMINI_API_KEY` dan/atau `GROQ_API_KEY` sebagai secret di Render. Setelah backend aktif, atur
+Pasang `GEMINI_API_KEY` sebagai secret di Render. Setelah backend aktif, atur
 repository variable `VITE_API_BASE_URL` di GitHub ke URL HTTPS layanan Render
 (tanpa `/api`), lalu jalankan ulang workflow **Deploy GitHub Pages**.
 `VITE_API_BASE_URL` hanya alamat backend, bukan API key.
@@ -186,7 +186,7 @@ Untuk memeriksa alur pengerjaan tanpa API atau penyimpanan riwayat, jalankan `np
 
 ## Koneksi AI multi-key
 
-Buka **Koneksi AI → API Key**, pilih Gemini atau Groq, lalu tempel key dan beri nama opsional. ID kelompok kuota, urutan 1–100, dan penambahan beberapa key (satu per baris) tersedia di pengaturan lanjutan. Maksimal 100 key; duplikat ditolak. Key baru aktif di memori sesi. Buka **Penyimpanan → Simpan terenkripsi** dengan kata sandi minimal 12 karakter untuk mempertahankan seluruh koleksi setelah reload.
+Buka **Koneksi AI → API Key**, tempel Google AI Studio key dan beri nama opsional. ID kelompok kuota, urutan 1–100, dan penambahan beberapa key (satu per baris) tersedia di pengaturan lanjutan. Maksimal 100 key; duplikat ditolak. Key baru aktif di memori sesi. Buka **Penyimpanan → Simpan terenkripsi** dengan kata sandi minimal 12 karakter untuk mempertahankan seluruh koleksi setelah reload.
 
 - **Prioritas + cadangan otomatis** memakai key dengan prioritas terkecil yang siap digunakan. **Distribusi seimbang** membagi pekerjaan berbeda antar-key yang tersedia. Satu panggilan menggunakan satu key; tidak ada pengiriman serentak untuk kuis yang sama.
 - **ID proyek Google diisi manual**, bukan dideteksi dari nilai API key. Key dalam proyek yang sama berbagi kuota dan satu izin permintaan serentak. Semua key tanpa ID proyek dikelompokkan bersama secara konservatif. Banyak key dari satu proyek tidak meningkatkan kuota Gemini.
@@ -220,9 +220,9 @@ Backend **Node.js 22.12+** menyediakan satu akun pemilik untuk pengelolaan key p
 
 Login menggunakan hash scrypt, pembatasan percobaan, cookie HttpOnly/Secure, sesi 15 menit, dan token CSRF untuk setiap operasi perubahan/generasi. Origin yang tidak sesuai ditolak. Backend mendukung maksimal tiga pekerjaan berbeda per akun, mencegah permintaan identik yang berjalan bersamaan, dan mempertahankan batas satu panggilan per proyek. Mutasi vault ditolak selama generasi berjalan. Sesi hilang ketika server restart; ciphertext tetap tersimpan pada disk persisten.
 
-Build produksi memasang Content Security Policy untuk membatasi skrip pada origin sendiri dan koneksi pada Google, Groq, serta backend yang dikonfigurasi. Header Node/Worker mencegah MIME sniffing, embedding dalam frame, dan pengiriman referrer. Notifikasi fallback server dikirim bertahap selama generasi, sehingga pengguna dapat melihat perpindahan key sebelum kuis selesai.
+Build produksi memasang Content Security Policy untuk membatasi skrip pada origin sendiri dan koneksi pada Google AI Studio serta backend yang dikonfigurasi. Header Node/Worker mencegah MIME sniffing, embedding dalam frame, dan pengiriman referrer. Notifikasi fallback server dikirim bertahap selama generasi, sehingga pengguna dapat melihat perpindahan key sebelum kuis selesai.
 
-Saat vault server dikonfigurasi, endpoint generasi membutuhkan login dan CSRF; key server lama tidak menjadi jalan pintas tanpa autentikasi. Tanpa konfigurasi login, jalur `GEMINI_API_KEY` dan `GROQ_API_KEY` hosting tetap tersedia untuk deployment lama. Endpoint enkripsi/dekripsi publik telah dihapus pada Node dan Worker; demo keamanan berjalan lokal di browser.
+Saat vault server dikonfigurasi, endpoint generasi membutuhkan login dan CSRF; key server lama tidak menjadi jalan pintas tanpa autentikasi. Tanpa konfigurasi login, jalur `GEMINI_API_KEY` hosting tetap tersedia untuk deployment lama. Endpoint enkripsi/dekripsi publik telah dihapus pada Node dan Worker; demo keamanan berjalan lokal di browser.
 
 Rotasi API key melalui **Edit / ganti**; cabut key lama di Google setelah penggantian berhasil. Untuk mengganti kata sandi akun server, buat hash baru dan restart server. Untuk mengganti master secret enkripsi, ekspor cadangan terenkripsi terlebih dahulu, hentikan server, simpan salinan aman database dan master secret lama, pasang master secret baru dengan `DATA_DIR` baru/kosong, lalu login dan impor cadangan. Jangan mengganti master secret langsung pada database lama karena data tidak lagi dapat didekripsi. Backup master secret di secret manager terpisah dari database.
 
@@ -240,24 +240,22 @@ node scripts/smoke-test.mjs
 
 Pengujian mencakup migrasi, salah kata sandi, perubahan ciphertext, penulisan gagal, konflik versi, duplikat, kuota bersama, retry budget, pembatalan, concurrency, reset Pacific/DST, kelanjutan batch Gemma, login/CSRF, ciphertext pada disk, dan persistensi setelah restart. Tes tiruan tidak membuktikan ketersediaan layanan Google atau validitas key pengguna.
 
-## Koneksi AI terpadu: Gemini dan Groq
+## Koneksi AI: Google AI Studio (Gemini)
 
 Buka **Koneksi AI** pada top bar atau **Kelola Koneksi AI** pada pembuat kuis. Desktop menggunakan jendela pengaturan di dalam aplikasi; ponsel menggunakan layar penuh. Menutup jendela mempertahankan sesi. Perubahan yang belum disimpan ditandai dan diperingatkan sebelum penutupan/reload.
 
-- **Ringkasan**: penyedia utama, status key hosting atau koleksi pribadi, serta akses cepat untuk menambahkan key.
-- **API Key**: pilih Gemini/Groq → tempel key → beri nama opsional → uji koneksi → tambahkan. Key pertama otomatis menetapkan penyedia utama. Uji koneksi hanya membaca daftar model. Key server diuji melalui backend setelah ditambahkan; key tidak dikirim kembali ke browser. Filter penyedia, edit/ganti, aktif/nonaktif, dan hapus tersedia per koneksi. Urutan, kelompok kuota, penambahan massal, reset status, dan uji pembuatan satu soal tersedia di pengaturan lanjutan. Uji pembuatan soal menggunakan kuota model.
-- **Model & Cadangan**: pilih penyedia/model utama atau terapkan ID model kustom. Key cadangan, model cadangan pada penyedia yang sama, dan penyedia cadangan merupakan pengaturan terpisah. Cadangan key aktif secara bawaan; cadangan model/penyedia dan melanjutkan tanpa web nonaktif secara bawaan. Mengaktifkan cadangan penyedia berarti materi dapat dikirim ke penyedia cadangan; perpindahan diberitahukan saat generasi.
-- **Penyimpanan**: key lokal aktif untuk sesi hingga disimpan dengan kata sandi minimal 12 karakter. Vault server menyimpan perubahan otomatis. Cadangan terenkripsi mencakup kedua penyedia. Mengimpor ke koleksi kosong memulihkan pengaturannya; mengimpor ke koleksi terisi mempertahankan pengaturan saat ini.
+- **Ringkasan**: status key hosting atau koleksi pribadi Google AI Studio, serta akses cepat untuk menambahkan key.
+- **API Key**: tempel key Google AI Studio → beri nama opsional → uji koneksi → tambahkan. Key baru otomatis aktif di memori sesi. Uji koneksi membaca daftar model yang dapat diakses (`gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-3.5-flash-lite`, Gemma, dll.). Key server diuji melalui backend setelah ditambahkan; key tidak dikirim kembali ke browser. Edit/ganti, aktif/nonaktif, dan hapus tersedia per koneksi. Urutan, kelompok kuota (Google Project ID), penambahan massal, reset status, dan uji pembuatan satu soal tersedia di pengaturan lanjutan. Uji pembuatan soal menggunakan kuota model.
+- **Model & Cadangan**: pilih model utama Gemini atau terapkan ID model kustom. Key cadangan dan model cadangan pada akun/proyek merupakan pengaturan terpisah. Cadangan key aktif secara bawaan; cadangan model dan melanjutkan tanpa web nonaktif secara bawaan.
+- **Penyimpanan**: key lokal aktif untuk sesi hingga disimpan dengan kata sandi minimal 12 karakter. Vault server menyimpan perubahan otomatis. Cadangan terenkripsi mencakup seluruh konfigurasi dan kunci Google AI Studio. Mengimpor ke koleksi kosong memulihkan pengaturannya; mengimpor ke koleksi terisi mempertahankan pengaturan saat ini.
 
-Adapter Groq memakai endpoint resmi `https://api.groq.com/openai/v1`. Pilihan bawaannya adalah `qwen/qwen3.8-27b` (default, juga menerima alias `qwen/qwen3.8-27`), `openai/gpt-oss-20b`, dan `openai/gpt-oss-120b`. Ketiganya memakai `reasoning_effort: high` dan JSON Schema strict. Model kustom belum dapat dipakai untuk generasi kuis karena kemampuan thinking tertingginya tidak dapat dipastikan. Gemini yang dikenali menggunakan skema JSON saat tanpa tools. Prompt, skema soal, parsing, dan validasi dibagikan melalui `src/server/quizPipeline.ts`. Groq menghasilkan maksimal lima soal per batch agar respons tetap terkendali.
+Generasi kuis memanfaatkan Google AI Studio API dengan model pilihan. Google Search Grounding diaktifkan otomatis pada model yang mendukung pencarian web (seperti `gemini-2.5-flash` dan `gemini-2.5-pro`) untuk memperkaya materi dan soal dengan referensi dan sitasi web resmi terkini. Prompt, skema soal, parsing, dan validasi distandarisasi melalui `src/server/quizPipeline.ts`.
 
-Pencarian web wajib untuk generasi Groq. Sebelum membuat kuis, GPT-OSS 20B memakai `browser_search` Groq untuk mencari informasi terbaru; hasilnya diberikan kepada model Groq yang dipilih, termasuk Qwen. Tahap pencarian dipisah dari generasi JSON karena browser search tidak kompatibel dengan structured outputs pada permintaan yang sama. Jika pencarian gagal, generasi Groq berhenti. Referensi berupa tautan tidak ditampilkan apabila URL sumber belum terverifikasi. Pencarian Google tetap tersedia pada model Gemini yang mendukungnya. Hasil menyimpan `requestedProvider`, `provider`, `requestedModel`, `model`, dan `usedGrounding`.
+Kuota Gemini dikelompokkan berdasarkan Google Project ID. Menambah key pada proyek yang sama tidak menambah kuota per menit. Reset tengah malam Pacific (PT) berlaku otomatis pada kuota harian Gemini yang teridentifikasi. Retry, pembatalan, dan batas percobaan dibatasi. Error/log metadata tidak menyertakan key lengkap.
 
-Kuota Gemini dikelompokkan berdasarkan proyek; Groq berdasarkan organisasi. Kelompok selalu dipisahkan menurut penyedia, termasuk ID kosong. Menambah key pada kelompok yang sama tidak menambah kuota. Groq menghormati `Retry-After`; reset tengah malam Pacific hanya berlaku pada kuota harian Gemini yang teridentifikasi. Retry, pembatalan, dan batas percobaan dibatasi. Error/log metadata tidak menyertakan key lengkap.
+Vault satu key dan vault/cadangan versi lama tetap dapat dibuka; semua data legacy dimigrasikan secara otomatis ke format Google AI Studio (Gemini). Penyimpanan/ekspor baru menggunakan format versi 3. Salinan lama baru diganti setelah enkripsi dan penyimpanan berhasil.
 
-Vault satu key dan vault/cadangan versi 2 tetap dapat dibuka; key tanpa identitas penyedia dimigrasikan sebagai Gemini. Penyimpanan/ekspor baru menggunakan format versi 3. Lokasi storage dan AAD lama dipertahankan untuk kompatibilitas. Salinan lama baru diganti setelah enkripsi dan penyimpanan berhasil.
-
-Node dan Worker menerima `GEMINI_API_KEY` dan/atau `GROQ_API_KEY` dari secret hosting. Key tidak boleh memakai awalan variabel `VITE_`. Worker mendukung key hosting serta vault browser, tetapi vault lintas perangkat memerlukan Node dan disk persisten. CSP produksi mengizinkan koneksi ke API resmi Gemini/Groq. Jika akses langsung browser ditolak oleh jaringan/CORS, gunakan backend Node melalui `VITE_API_BASE_URL` dan vault server.
+Node dan Worker menerima `GEMINI_API_KEY` dari secret hosting. Key tidak boleh memakai awalan variabel `VITE_`. Worker mendukung key hosting serta vault browser, tetapi vault lintas perangkat memerlukan Node dan disk persisten. CSP produksi mengizinkan koneksi ke API resmi Google (`https://generativelanguage.googleapis.com`). Jika akses langsung browser ditolak oleh jaringan/CORS, gunakan backend Node melalui `VITE_API_BASE_URL` dan vault server.
 
 Verifikasi: `npm run lint`, `npm run build`, `npm run test:keys`, `npm run test:providers`, `node --import tsx scripts/model-test.ts`, dan `node scripts/smoke-test.mjs`. Pengujian otomatis memakai respons tiruan tanpa panggilan API eksternal. Untuk memverifikasi akun nyata, tambahkan key lalu jalankan **Uji koneksi** dan **Uji pembuatan satu soal** di Koneksi AI.
 

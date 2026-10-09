@@ -4,7 +4,7 @@ import type { EvaluationSettings } from './types/quiz.js';
 export type KeyEntry = { id: string; name: string; project: string; key: string; enabled: boolean; priority: number; provider?: AIProvider };
 export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: boolean; allowGroundingFallback: boolean; allowKeyFallback?: boolean; allowProviderFallback?: boolean; preferredProvider?: AIProvider; preferredModel?: string; fallbackProvider?: AIProvider; fallbackModel?: string; modelFallbacks?: Partial<Record<AIProvider, string>>; evaluation?:EvaluationSettings };
 export type KeyCollection = { schemaVersion?: 3; keys: KeyEntry[]; settings: PoolSettings };
-export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: true, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'groq', fallbackModel: 'qwen/qwen3.8-27b', modelFallbacks: { gemini: 'gemini-3.5-flash-lite', groq: 'openai/gpt-oss-120b' } };
+export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: true, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'gemini', fallbackModel: 'gemini-3.5-flash-lite', modelFallbacks: { gemini: 'gemini-3.5-flash-lite' } };
 export type KeyHealth = { state: 'untested' | 'ready' | 'waiting' | 'invalid' | 'restricted'; until?: number; scope?: string; lastSuccess?: number; reason?: string; successes: number; failures: number };
 export class PoolError extends Error {
   constructor(message: string, public status = 503, public code = 'POOL_UNAVAILABLE') { super(message); }
@@ -16,14 +16,24 @@ export function validateCollection(value: unknown): KeyCollection {
       !['priority', 'balanced'].includes(data.settings.mode) || typeof data.settings.allowModelFallback !== 'boolean' ||
       typeof data.settings.allowGroundingFallback !== 'boolean') throw new Error('Format koleksi key tidak valid (maksimal 100 key).');
   const ids = new Set<string>(), secrets = new Set<string>();
-  const settings = { ...defaultSettings, ...data.settings, modelFallbacks: { ...defaultSettings.modelFallbacks, ...data.settings.modelFallbacks } };
+  const rawSettings = data.settings as any;
+  const settings: PoolSettings = {
+    ...defaultSettings,
+    ...data.settings,
+    preferredProvider: 'gemini',
+    preferredModel: modelInfo(rawSettings?.preferredModel)?.provider === 'gemini' ? rawSettings.preferredModel : DEFAULT_MODEL,
+    fallbackProvider: 'gemini',
+    fallbackModel: modelInfo(rawSettings?.fallbackModel)?.provider === 'gemini' ? rawSettings.fallbackModel : 'gemini-3.5-flash-lite',
+    modelFallbacks: { gemini: rawSettings?.modelFallbacks?.gemini || 'gemini-3.5-flash-lite' }
+  };
   if (data.settings.evaluation !== undefined) settings.evaluation = normalizeEvaluationSettings(data.settings.evaluation);
   if (![settings.allowKeyFallback, settings.allowProviderFallback].every(value => typeof value === 'boolean') || !isProvider(settings.preferredProvider) || !isProvider(settings.fallbackProvider)) throw new Error('Pengaturan penyedia tidak valid.');
-  for (const [provider, model] of [[settings.preferredProvider,settings.preferredModel], [settings.fallbackProvider,settings.fallbackModel], ...Object.entries(settings.modelFallbacks)] as [AIProvider,string][]) {
+  for (const [provider, model] of [[settings.preferredProvider,settings.preferredModel], [settings.fallbackProvider,settings.fallbackModel], ...Object.entries(settings.modelFallbacks || {})] as [AIProvider,string][]) {
     const norm = normalizeModelId(model);
     if (!isProvider(provider) || !validModelId(norm) || (modelInfo(norm) && modelInfo(norm)!.provider !== provider)) throw new Error('Model tidak sesuai dengan penyedia.');
   }
-  const keys = data.keys.map(item => {
+  const rawList = data.keys.filter(item => item && (item as any).provider !== 'groq');
+  const keys = rawList.map(item => {
     if (!item || (item.provider !== undefined && !isProvider(item.provider)) || typeof item.id !== 'string' || !/^[\w-]{1,80}$/.test(item.id) || ids.has(item.id) ||
         typeof item.name !== 'string' || !item.name.trim() || item.name.length > 80 ||
         typeof item.project !== 'string' || item.project.length > 100 ||
@@ -31,7 +41,7 @@ export function validateCollection(value: unknown): KeyCollection {
         typeof item.enabled !== 'boolean' || !Number.isInteger(item.priority) || item.priority < 1 || item.priority > 100)
       throw new Error('Data key tidak valid atau terdapat duplikat. Isi nama, key tanpa spasi, dan prioritas 1–100.');
     ids.add(item.id); secrets.add(item.key);
-    return { id: item.id, provider: item.provider ?? 'gemini', name: item.name.trim(), project: item.project.trim(), key: item.key, enabled: item.enabled, priority: item.priority };
+    return { id: item.id, provider: 'gemini' as const, name: item.name.trim(), project: item.project.trim(), key: item.key, enabled: item.enabled, priority: item.priority };
   });
   return { schemaVersion: 3, keys, settings };
 }

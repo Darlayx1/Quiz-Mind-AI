@@ -6,7 +6,6 @@ import { validateQuestion } from '../questionValidation.js';
 import { questionType,normalizedAnswer,validateAnswer } from '../questionState.js';
 import { buildResult,maxPoints } from '../scoring.js';
 import { sanitizeAndParseJson } from './jsonParser.js';
-import { groqRequest } from './providerClient.js';
 import type { AIProvider } from '../models.js';
 import type { EvaluationSettings,Question,QuestionEvaluation,Quiz,QuizSubmission,RubricCriterion } from '../types/quiz.js';
 export class EvaluationError extends Error {constructor(message:string,public code:string,public status=400){super(message);}}
@@ -69,7 +68,6 @@ export async function evaluateQuiz(raw:unknown,options:{pool:KeyPool;signal?:Abo
    const text=await options.pool.run(async(key,poolSignal)=>{
     if(calls>=remaining)throw new PoolError('Batas percobaan evaluator tercapai.',409,'POOL_BUDGET');calls++;
     try{
-     if(candidate.provider==='groq'){const r=await groqRequest('chat/completions',key,poolSignal,{model:candidate.model,messages:[{role:'system',content:system},{role:'user',content:prompt}],stream:false,max_completion_tokens:8192,response_format:modelInfo(candidate.model)?.structured?{type:'json_schema',json_schema:{name:'evaluation',strict:true,schema:evaluationSchema}}:{type:'json_object'}});if(r.usage)usage={inputTokens:Number(r.usage.prompt_tokens)||0,outputTokens:Number(r.usage.completion_tokens)||0};if(r.choices?.[0]?.finish_reason==='length')throw new EvaluationError('Respons evaluator terpotong.','INVALID_EVALUATION_OUTPUT',502);return r.choices?.[0]?.message?.content??'';}
      const ai=new GoogleGenAI({apiKey:key,httpOptions:{timeout:120000,retryOptions:{attempts:1}}});const gemma=candidate.model.startsWith('gemma');const r=await ai.models.generateContent({model:candidate.model,contents:gemma?system+'\n'+prompt:prompt,config:{abortSignal:poolSignal,...(!gemma?{systemInstruction:system}:{}),...(modelInfo(candidate.model)?.structured?{responseMimeType:'application/json',responseJsonSchema:evaluationSchema}:{}),maxOutputTokens:8192}});if(r.usageMetadata)usage={inputTokens:r.usageMetadata.promptTokenCount??0,outputTokens:r.usageMetadata.candidatesTokenCount??0};if(r.candidates?.[0]?.finishReason==='MAX_TOKENS')throw new EvaluationError('Respons evaluator terpotong.','INVALID_EVALUATION_OUTPUT',502);return r.text??'';
     }catch(error:any){const failure=String(error?.status)+':'+String(error?.code);sameFailure=failure===lastFailure?sameFailure+1:1;lastFailure=failure;if(sameFailure>=2)throw new PoolError('Dua kegagalan evaluator identik. Periksa koneksi/model sebelum melanjutkan.',503,'POOL_CIRCUIT');throw error;}
    },{signal,provider:candidate.provider,model:candidate.model,maxAttempts:remaining-calls,allowKeyFallback:settings.allowKeyFallback});

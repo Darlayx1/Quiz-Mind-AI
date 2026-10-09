@@ -58,17 +58,16 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
   const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
   const selectedDifficulty = DIFFICULTIES.find(level => level.id === difficulty)!;
-  const supportsGrounding = provider === 'groq' || modelInfo(model)?.grounding === true;
+  const supportsGrounding = modelInfo(model)?.grounding === true;
   const selectedModel = modelInfo(model);
   const providerReady = hasSessionKeys(provider) || (!apiKey && !requiresApiKey && serverProviders.includes(provider));
-  const backupReady = settings.allowProviderFallback && settings.fallbackProvider !== provider && hasSessionKeys(settings.fallbackProvider) && (!enableGrounding || !supportsGrounding || settings.allowGroundingFallback);
+  const backupReady = false;
   const missingReason = !topic.trim() ? "Isi topik kuis untuk melanjutkan."
     : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."
     : !validCount ? "Masukkan jumlah soal antara 1–100."
     : !validTimer ? `Masukkan durasi ${sequential ? "15–600 detik" : "1–120 menit"}.`
     : !validModelId(model) ? 'Isi ID model yang valid.'
-    : provider === 'groq' && !modelInfo(model)?.structured ? 'Pilih Qwen 3.8 atau GPT-OSS agar thinking tertinggi tersedia.'
-    : !providerReady && !backupReady ? `Tambahkan atau buka API key ${providerName(provider)} di Koneksi AI.` : "";
+    : !providerReady ? `Tambahkan atau buka API key Google AI Studio di Koneksi AI.` : "";
   const canGenerate = !isLoading && !missingReason;
   const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -194,10 +193,10 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
 
           <section className="surface menu-section">
             <div className="menu-section-title"><BrainCircuit size={19}/><h2>Koneksi & Model AI</h2></div>
-            <div className="menu-setting-grid"><div><label htmlFor="ai-provider" className="field-label">Penyedia AI</label><select id="ai-provider" className="field-input" value={provider} onChange={e => { const value = e.target.value as AIProvider; setProvider(value); setModel(defaultProviderModel(value)); setCustomModel(false); }}><option value="gemini">Google Gemini</option><option value="groq">Groq</option></select></div><div><label htmlFor="ai-model" className="field-label">Model AI</label><select id="ai-model" className="field-input" value={customModel ? '__custom__' : model} onChange={e => { if (e.target.value === '__custom__') { setCustomModel(true); setModel(''); } else { setCustomModel(false); setModel(e.target.value); } }}>{AI_MODELS.filter(item => item.provider === provider).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__custom__">ID model kustom…</option></select></div></div>
-            {customModel && <><label htmlFor="quiz-custom-model" className="field-label">ID model kustom</label><input id="quiz-custom-model" className="field-input" value={model} maxLength={120} onChange={e => setModel(e.target.value.trim())} placeholder="ID persis dari konsol penyedia"/></>}
-            <p className="field-help">{selectedModel?.description ?? 'Model kustom harus tersedia untuk akun dan penyedia Anda.'}</p>
-            <div className="connection-creator-status"><span className={'status-dot ' + (providerReady ? '' : 'inactive')}/><span>{providerReady ? 'Key penyedia ini tersedia' : backupReady ? 'Menggunakan penyedia cadangan jika koneksi utama tidak tersedia' : 'Key penyedia ini belum tersedia'}</span><button type="button" className="topic-chip" onClick={onOpenConnections}>Kelola Koneksi AI</button></div>
+            <div className="menu-setting-grid"><div><label htmlFor="ai-model" className="field-label">Model Gemini</label><select id="ai-model" className="field-input" value={customModel ? '__custom__' : model} onChange={e => { if (e.target.value === '__custom__') { setCustomModel(true); setModel(''); } else { setCustomModel(false); setModel(e.target.value); } }}>{AI_MODELS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="__custom__">ID model kustom…</option></select></div></div>
+            {customModel && <><label htmlFor="quiz-custom-model" className="field-label">ID model kustom</label><input id="quiz-custom-model" className="field-input" value={model} maxLength={120} onChange={e => setModel(e.target.value.trim())} placeholder="ID persis dari konsol Google AI Studio"/></>}
+            <p className="field-help">{selectedModel?.description ?? 'Model kustom harus tersedia untuk akun Google AI Studio Anda.'}</p>
+            <div className="connection-creator-status"><span className={'status-dot ' + (providerReady ? '' : 'inactive')}/><span>{providerReady ? 'API key Google AI Studio aktif' : 'API key Google AI Studio belum tersedia'}</span><button type="button" className="topic-chip" onClick={onOpenConnections}>Kelola Koneksi AI</button></div>
           </section>
 
           <details className="surface menu-advanced">
@@ -206,7 +205,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
               <div className="menu-setting-grid">
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
-              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{provider === 'groq' ? 'Groq mencari informasi web sebelum menyusun kuis; kegagalan riset menghentikan generasi.' : supportsGrounding ? 'Perkaya materi dengan rujukan dari Google Search.' : 'Model ini menggunakan materi dan pengetahuan AI tanpa pencarian Google.'}</small></span></label>
+              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? 'Perkaya materi dengan rujukan dari Google Search.' : 'Model ini menggunakan materi dan pengetahuan AI tanpa pencarian Google.'}</small></span></label>
               <label htmlFor="language-style" className="field-label">Gaya bahasa <span className="optional-badge">Opsional</span></label>
               <input id="language-style" list="language-styles" className="field-input" maxLength={500} value={languageStyle} onChange={e => setLanguageStyle(e.target.value)} placeholder="Baku & akademis" aria-describedby="style-help" />
               <datalist id="language-styles">{STYLES.map(style => <option key={style} value={style} />)}</datalist>

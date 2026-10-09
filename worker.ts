@@ -6,7 +6,7 @@ import { maskSecret } from './src/server/cryptoVault.js';
 import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
 import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
-type Environment = { GEMINI_API_KEY?: string; GROQ_API_KEY?: string; ENCRYPTION_SECRET?: string };
+type Environment = { GEMINI_API_KEY?: string; ENCRYPTION_SECRET?: string };
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 
 export default {
@@ -14,7 +14,7 @@ export default {
     const pathname = new URL(request.url).pathname;
     if (pathname === '/api/keys/capabilities') return json({ configured: false, storage: 'browser-vault', maxKeys: 100 });
     if (pathname === '/api/health' && request.method === 'GET') {
-      const providers = (['gemini','groq'] as const).filter(provider => { const key = provider === 'groq' ? env.GROQ_API_KEY : env.GEMINI_API_KEY; return key && !key.startsWith('MY_'); });
+      const providers = (['gemini'] as const).filter(provider => { const key = env.GEMINI_API_KEY; return key && !key.startsWith('MY_'); });
       const hasApiKey = providers.length > 0;
       return json({
         status: 'ok',
@@ -43,13 +43,13 @@ export default {
       }
       try {
         if(pathname==='/api/evaluate-quiz'){
-          const keys=(['gemini','groq'] as const).flatMap(provider=>{const key=provider==='groq'?env.GROQ_API_KEY:env.GEMINI_API_KEY;return key&&!key.startsWith('MY_')?[{id:'worker-'+provider,provider,name:'Key hosting',key,project:'',priority:1,enabled:true}]:[];});
+          const keys = env.GEMINI_API_KEY && !env.GEMINI_API_KEY.startsWith('MY_') ? [{ id: 'worker-gemini', provider: 'gemini' as const, name: 'Key hosting', key: env.GEMINI_API_KEY, project: '', priority: 1, enabled: true }] : [];
           const pool=new KeyPool({keys,settings:{...defaultSettings}});
           try{return json({success:true,evaluations:await evaluateQuiz(body,{pool,signal:AbortSignal.any([request.signal,AbortSignal.timeout(120000)])})});}finally{pool.lock();}
         }
         if (pathname === '/api/generate-quiz') {
           const config = normalizeQuizConfig(body);
-          const key = config.provider === 'groq' ? env.GROQ_API_KEY : env.GEMINI_API_KEY;
+          const key = env.GEMINI_API_KEY;
           if (!key || key.startsWith('MY_')) {
             return json({ success: false, error: 'API key penyedia pilihan belum dikonfigurasi. Tambahkan key di Koneksi AI atau pengaturan hosting.' }, 503);
           }

@@ -12,7 +12,7 @@ export default defineConfig(() => {
       transformIndexHtml() {
         const backend = process.env.VITE_API_BASE_URL ? new URL(process.env.VITE_API_BASE_URL) : null;
         if (backend && !['https:', 'http:'].includes(backend.protocol)) throw new Error('VITE_API_BASE_URL harus berupa URL HTTP(S).');
-        const policy = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://generativelanguage.googleapis.com https://api.groq.com${backend ? ' ' + backend.origin : ''}; object-src 'none'; base-uri 'none'; form-action 'self'`;
+        const policy = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://generativelanguage.googleapis.com${backend ? ' ' + backend.origin : ''}; object-src 'none'; base-uri 'none'; form-action 'self'`;
         return [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' }];
       }
     }],

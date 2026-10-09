@@ -1,31 +1,20 @@
-import { modelInfo, providerName, type AIProvider } from '../models.js';
+import { type AIProvider } from '../models.js';
 import { normalizeQuizConfig } from '../quizConfig.js';
 import { QUESTION_TYPES, type Quiz, type QuestionType, type QuizConfig } from '../types/quiz.js';
 import { QuizGenerationError } from './generationError.js';
-import { generateQuizWithGroq, type GenerationOptions } from './groqService.js';
 import { listProviderModels } from './providerClient.js';
+import type { KeyPool } from '../keyPool.js';
+
+export type GenerationOptions = { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void; research?: { text?: string }; attemptBudget?: { calls: number } };
 
 export const providerAdapters = {
   gemini: { generate: async (config: QuizConfig, key?: string, options?: GenerationOptions) => (await import('./geminiService.js')).generateQuizWithGemini(config,key,options), listModels: (key: string, signal: AbortSignal) => listProviderModels('gemini',key,signal) },
-  groq: { generate: generateQuizWithGroq, listModels: (key: string, signal: AbortSignal) => listProviderModels('groq',key,signal) },
 };
 async function generateBatch(input: QuizConfig, apiKey?: string, options: GenerationOptions = {}) {
   options={...options,attemptBudget:{calls:0}};
-  const config = normalizeQuizConfig(input), provider = config.provider!;
+  const config = normalizeQuizConfig(input);
   const signal = AbortSignal.any([AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
-  const execute = (provider: AIProvider, config: QuizConfig) => providerAdapters[provider].generate(config, apiKey, { ...options, signal });
-  try { return await execute(provider,config); }
-  catch (error: any) {
-    signal.throwIfAborted();
-    const settings = options.pool?.collection.settings;
-    if (config.enableGrounding || error?.code?.startsWith('WEB_SEARCH_')) throw error;
-    if (!settings?.allowProviderFallback || settings.fallbackProvider === provider || ['POOL_BUDGET','NETWORK_ERROR','INVALID_JSON','INVALID_QUIZ_STRUCTURE','INCOMPLETE_QUESTION_COUNT'].includes(error.code) || !([401,402,403,404,429,500,502,503,504].includes(error.status))) throw error;
-    const fallbackProvider = settings.fallbackProvider!, fallbackModel = settings.fallbackModel!;
-    if (!options.pool!.collection.keys.some(key => key.provider === fallbackProvider && key.enabled)) throw error;
-    options.onNotice?.(`Beralih dari ${providerName(provider)} ke ${providerName(fallbackProvider)} sesuai pengaturan. Materi dikirim ke penyedia cadangan.`);
-    const quiz = await execute(fallbackProvider, { ...config, provider: fallbackProvider, model: fallbackModel, enableGrounding: false });
-    return { ...quiz, requestedProvider: provider, requestedModel: config.model };
-  }
+  return await providerAdapters.gemini.generate(config, apiKey, { ...options, signal });
 }
 
 export async function generateQuiz(input:QuizConfig,apiKey?:string,options:GenerationOptions={}):Promise<Quiz>{

@@ -38,26 +38,25 @@ const old={...quiz,schemaVersion:undefined,questions:[{...fixtures.single_choice
 const migrated=migrateHistory([{quiz:old,savedAt:'2026-01-01'}]);assert.equal(migrated[0].quiz.questions[0].options?.length,4);assert.deepEqual(migrateHistory(migrated),migrated);
 const originalFetch=globalThis.fetch;let calls:any[]=[],mode='ok',serial=0;
 globalThis.fetch=async(input,init)=>{
- const req=new Request(input,init);req.signal.throwIfAborted();const body=await req.json(),groq=req.url.includes('groq.com');calls.push(body);
+ const req=new Request(input,init);req.signal.throwIfAborted();const body=await req.json();calls.push(body);
  if(mode==='error')return Response.json({error:{code:500,status:'INTERNAL',message:'Fixture provider error'}},{status:500});
- const prompt=groq?body.messages.at(-1).content:body.contents?.[0]?.parts?.map((p:any)=>p.text??'').join('\n')??'';
+ const prompt=body.contents?.[0]?.parts?.map((p:any)=>p.text??'').join('\n')??'';
  let value:any;
  if(prompt.includes('DATA: ')){const data=JSON.parse(prompt.split('DATA: ').at(-1));value={results:data.map((q:any)=>({questionId:q.questionId,criteria:q.rubric.map((c:any)=>({criterionId:c.id,level:mode==='invalid'?2:1,evidence:q.answer.text.slice(0,40),feedback:'Konsep terpenuhi.'})),feedback:'Jawaban memenuhi rubrik.',reviewFlags:mode==='review'?['Perlu tinjauan acuan']:[]}))};}
- else if(body.tools?.[0]?.type==='browser_search')return Response.json({choices:[{message:{content:'Fakta ilmiah hasil pencarian.'},finish_reason:'stop'}]});
  else{const type=(/Tipe: (\w+)/.exec(prompt)?.[1]??'single_choice') as QuestionType,count=Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]??1);value={title:'Kuis campuran',topic:'Konsep',summary:'Latihan',questions:Array.from({length:count},()=>({...fixtures[type],question:'Pertanyaan unik nomor '+(++serial)+' tentang konsep?'}))};}
- const content=JSON.stringify(value);return groq?Response.json({choices:[{message:{content},finish_reason:'stop'}]}):Response.json({candidates:[{content:{role:'model',parts:[{text:content}]}}]});
+ const content=JSON.stringify(value);return Response.json({candidates:[{content:{role:'model',parts:[{text:content}]}}]});
 };
-const makePool=(provider:'gemini'|'groq'='gemini')=>new KeyPool({keys:[{id:provider,name:'Fixture',provider,key:'fake-only-'+provider,project:'fixture',priority:1,enabled:true}],settings:{...defaultSettings}});
+const makePool=()=>new KeyPool({keys:[{id:'gemini',name:'Fixture',provider:'gemini',key:'fake-only-gemini',project:'fixture',priority:1,enabled:true}],settings:{...defaultSettings}});
 try{
- for(const provider of ['gemini','groq'] as const){const pool=makePool(provider);calls=[];const generated=await generateQuiz({provider,topic:'Konsep',difficulty:'easy',questionCount:7,questionDistribution:Object.fromEntries(QUESTION_TYPES.map(t=>[t,1])),timeLimitMinutes:0,language:'id',enableGrounding:false},undefined,{pool});assert.equal(generated.questions.length,7);assert.deepEqual(generated.questions.map(q=>q.type),QUESTION_TYPES);assert.ok(generated.questions.every(q=>q.maxPoints===1));pool.lock();}
+ {const pool=makePool();calls=[];const generated=await generateQuiz({provider:'gemini',topic:'Konsep',difficulty:'easy',questionCount:7,questionDistribution:Object.fromEntries(QUESTION_TYPES.map(t=>[t,1])),timeLimitMinutes:0,language:'id',enableGrounding:false},undefined,{pool});assert.equal(generated.questions.length,7);assert.deepEqual(generated.questions.map(q=>q.type),QUESTION_TYPES);assert.ok(generated.questions.every(q=>q.maxPoints===1));pool.lock();}
  const req={quiz,submission,settings:{...defaultEvaluationSettings,shortAnswerMode:'ai' as const},targetQuestionIds:['q4']};const pool=makePool();calls=[];const evaluated=await evaluateQuiz(req,{pool});assert.equal(evaluated.q4.status,'graded');assert.equal(evaluated.q4.earnedPoints,1);assert.equal(calls.length,1);assert.ok(calls.every(b=>!b.tools));await evaluateQuiz(req,{pool});assert.equal(calls.length,1,'Same snapshot should use cache');
  await evaluateQuiz({...req,previous:{q4:evaluated.q4}},{pool});assert.equal(calls.length,2,'New revision should evaluate again');pool.lock();
  mode='review';const review=await evaluateQuiz(req,{pool:makePool()});assert.equal(review.q4.status,'needs_review');assert.equal(review.q4.earnedPoints,null);assert.equal(review.q4.proposedPoints,1);
  mode='invalid';const invalid=await evaluateQuiz(req,{pool:makePool()});assert.equal(invalid.q4.status,'failed');assert.equal(invalid.q4.earnedPoints,null);
  mode='error';calls=[];const failed=await evaluateQuiz(req,{pool:makePool()});assert.equal(failed.q4.status,'failed');assert.ok(calls.length<=3);assert.ok(failed.q4.attemptCount!<=3);
  await assert.rejects(evaluateQuiz({...req,previous:{q4:{...failed.q4,attemptCount:3}}},{pool:makePool()}),/Tiga percobaan/);
- mode='ok';const disabledFallback={...req,settings:{...defaultEvaluationSettings,followGenerator:false,provider:'groq' as const,model:'openai/gpt-oss-120b',shortAnswerMode:'ai' as const}};calls=[];const unavailable=await evaluateQuiz(disabledFallback,{pool:makePool()});assert.equal(unavailable.q4.status,'failed');assert.equal(calls.length,0);
+ mode='ok';const unavailPool=new KeyPool({keys:[],settings:{...defaultSettings}});const unavailable=await evaluateQuiz(req,{pool:unavailPool});assert.equal(unavailable.q4.status,'failed');
  assert.throws(()=>validateEvaluationRequest({...req,targetQuestionIds:['q0']}));
  assert.throws(()=>parseEvaluationOutput({results:[{questionId:'q4',criteria:[],feedback:'x',reviewFlags:[]}]},[questions[4]],submission.userAnswers,defaultEvaluationSettings));
- console.log('PASS: seven types, five-option validation, scoring invariants, legacy migration, mixed generation Gemini/Groq, evaluator cache/revisions/review/failure/budget/fallback.');
+ console.log('PASS: seven types, five-option validation, scoring invariants, legacy migration, Gemini generation, evaluator cache/revisions/review/failure/budget/fallback.');
 }finally{globalThis.fetch=originalFetch;}

@@ -12,7 +12,7 @@ let response=await callWorker(body);assert.equal(response.status,200);assert.equ
 assert.equal((await callWorker({...body,targetQuestionIds:['missing']})).status,400);
 assert.equal((await callWorker({...body,settings:{...defaultEvaluationSettings,enabled:false}})).status,400);
 // Start an isolated production server with no provider credentials. Local alias grading must need no API.
-const child=spawn(process.execPath,['dist-server/server.js'],{env:{...process.env,PORT:'3012',NODE_ENV:'production',GEMINI_API_KEY:'',GROQ_API_KEY:'',VAULT_USERNAME:'',VAULT_PASSWORD_HASH:''},stdio:['ignore','pipe','pipe']});
+const child=spawn(process.execPath,['dist-server/server.js'],{env:{...process.env,PORT:'3012',NODE_ENV:'production',GEMINI_API_KEY:'',VAULT_USERNAME:'',VAULT_PASSWORD_HASH:''},stdio:['ignore','pipe','pipe']});
 try{
  await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Test server startup timed out')),10000);child.stdout.on('data',data=>{if(String(data).includes('3012')){clearTimeout(timeout);resolve();}});child.on('error',reject);child.on('exit',()=>{clearTimeout(timeout);reject(new Error('Test server exited'));});});
  const callNode=(data:unknown)=>fetch('http://127.0.0.1:3012/api/evaluate-quiz',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data),signal:AbortSignal.timeout(5000)});

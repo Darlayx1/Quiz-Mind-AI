@@ -26,10 +26,10 @@ assert.equal(loadStoredClientKeys(), null);
 
 // Test 2: Save valid collection
 const sampleCollection: KeyCollection = validateCollection({
-  settings: { ...defaultSettings, preferredProvider: 'groq', preferredModel: 'qwen/qwen3.8-27b' },
+  settings: { ...defaultSettings, preferredProvider: 'gemini', preferredModel: 'gemini-3.8-flash' },
   keys: [
     { id: 'key-1', name: 'Gemini Primary', project: 'my-proj', key: 'test-gemini-secret-1234', enabled: true, priority: 1, provider: 'gemini' },
-    { id: 'key-2', name: 'Groq Primary', project: '', key: 'gsk_test_groq_secret_5678', enabled: true, priority: 2, provider: 'groq' }
+    { id: 'key-2', name: 'Gemini Secondary', project: '', key: 'test-gemini-secret-5678', enabled: true, priority: 2, provider: 'gemini' }
   ]
 });
 
@@ -40,8 +40,23 @@ assert.ok(loaded);
 assert.equal(loaded.keys.length, 2);
 assert.equal(loaded.keys[0].name, 'Gemini Primary');
 assert.equal(loaded.keys[0].key, 'test-gemini-secret-1234');
-assert.equal(loaded.keys[1].provider, 'groq');
-assert.equal(loaded.settings.preferredProvider, 'groq');
+assert.equal(loaded.keys[1].provider, 'gemini');
+assert.equal(loaded.settings.preferredProvider, 'gemini');
+
+// Test 2b: Migration of legacy Groq keys in storage
+storageMap.set(CLIENT_STORAGE_KEY, JSON.stringify({
+  settings: { ...defaultSettings, preferredProvider: 'groq', fallbackProvider: 'groq' },
+  keys: [
+    { id: 'gem-1', name: 'Gemini Key', project: '', key: 'AIzaSy_ValidGeminiKey', enabled: true, priority: 1, provider: 'gemini' },
+    { id: 'grq-1', name: 'Legacy Groq', project: '', key: 'gsk_legacy_secret', enabled: true, priority: 2, provider: 'groq' }
+  ]
+}));
+const migrated = loadStoredClientKeys();
+assert.ok(migrated);
+assert.equal(migrated.keys.length, 1);
+assert.equal(migrated.keys[0].id, 'gem-1');
+assert.equal(migrated.settings.preferredProvider, 'gemini');
+assert.equal(migrated.settings.fallbackProvider, 'gemini');
 
 // Test 3: Initialize KeyPool with loaded collection (simulating page reload / startup)
 const pool = new KeyPool(loaded);
