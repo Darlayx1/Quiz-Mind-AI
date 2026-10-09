@@ -96,11 +96,11 @@ try {
   globalThis.fetch=async(input,init)=>{const req=new Request(input,init),body=await req.json(),tools=Boolean(body.tools?.length);toolCalls.push(tools);return tools?Response.json({error:{code:400,message:'googleSearch tool is unsupported',status:'INVALID_ARGUMENT'}},{status:400}):response();};
   pool=new KeyPool({...collection,keys:[collection.keys[0]]});await assert.rejects(generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool}));assert.deepEqual(toolCalls,[true]);
   toolCalls.length=0;pool=new KeyPool({...collection,settings:{...defaultSettings,allowGroundingFallback:true},keys:[collection.keys[0]]});
-  const noSearch=await generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool});assert.equal(noSearch.usedGrounding,false);assert.deepEqual(toolCalls,[true,false]);
+  await assert.rejects(generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool}));assert.deepEqual(toolCalls,[true]);
   toolCalls.length=0;
   globalThis.fetch=async(input,init)=>{const req=new Request(input,init),body=await req.json(),tools=Boolean(body.tools?.length);toolCalls.push(tools);return tools?Response.json({error:{code:403,message:'Grounding permission denied',status:'PERMISSION_DENIED'}},{status:403}):response();};
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowGroundingFallback:true},keys:[collection.keys[0]]});
-  const permitted=await generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool});assert.equal(permitted.usedGrounding,false);assert.deepEqual(toolCalls,[true,false]);
+  await assert.rejects(generateQuizWithGemini({...config,enableGrounding:true},undefined,{pool}));assert.deepEqual(toolCalls,[true]);
   toolCalls.length=0;
   globalThis.fetch=async(input,init)=>{const req=new Request(input,init),body=await req.json(),tools=Boolean(body.tools?.length);toolCalls.push(tools);return tools?Response.json({error:{code:400,message:'Content blocked by safety settings',status:'INVALID_ARGUMENT'}},{status:400}):response();};
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowGroundingFallback:true},keys:[collection.keys[0]]});

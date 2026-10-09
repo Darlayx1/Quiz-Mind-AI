@@ -131,6 +131,7 @@ export async function fetchApi(
           {
             success: false,
             error: message,
+            code: error?.code,
           },
           { status: status >= 400 && status < 600 ? status : 502 },
         );

@@ -45,6 +45,7 @@ export function errorKind(error: any): { kind: 'invalid' | 'restricted' | 'quota
     retry = delay ? Number(delay) * 1000 : header ? (Number.isFinite(Number(header)) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : NaN;
   }
   const retryMs = Number.isFinite(retry) && retry > 0 ? Math.min(retry, 86_400_000) : 60_000;
+  if (['WEB_SEARCH_EMPTY','WEB_SEARCH_TRUNCATED','WEB_SEARCH_UNAVAILABLE'].includes(code)) return { kind: 'stop', retryMs };
   if (error?.name === 'AbortError' || /DEADLINE|POOL_|CANCELLED/.test(code)) return { kind: 'stop', retryMs };
   if (/API_KEY_INVALID|API key not valid|UNAUTHENTICATED|UNAUTHORIZED/.test(msg + code) || status === 401) return { kind: 'invalid', retryMs };
   if (status === 403 || /PERMISSION_DENIED|FORBIDDEN/.test(code)) return { kind: 'restricted', retryMs };

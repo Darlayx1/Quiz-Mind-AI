@@ -21,7 +21,7 @@ export function loadStoredClientKeys(): KeyCollection | null {
     if (!raw) return null;
     return validateCollection(JSON.parse(raw));
   } catch (err) {
-    console.warn('Gagal memuat API key tersimpan dari perangkat:', err);
+    console.warn('Gagal memuat API key tersimpan dari perangkat: Format koleksi key tidak valid (maksimal 100 key).');
     return null;
   }
 }
@@ -32,7 +32,7 @@ export function saveStoredClientKeys(collection: KeyCollection): void {
     const validated = validateCollection(collection);
     localStorage.setItem(CLIENT_STORAGE_KEY, JSON.stringify(validated));
   } catch (err) {
-    console.error('Gagal menyimpan API key ke perangkat:', err);
+    console.error('Gagal menyimpan API key ke perangkat: Periksa format koleksi key.');
   }
 }
 

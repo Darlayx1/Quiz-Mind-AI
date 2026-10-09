@@ -62,7 +62,7 @@ globalThis.fetch = async (input, init) => {
           ],
         },
         ...(body.tools?.length
-          ? { groundingMetadata: { webSearchQueries: ["aljabar"] } }
+          ? { groundingMetadata: { webSearchQueries: ["aljabar"], groundingChunks: [{ web: { uri: "https://example.org/algebra", title: "Aljabar" } }] } }
           : {}),
       },
     ],
@@ -79,13 +79,17 @@ try {
     assert.equal(quiz.usedGrounding, false);
     assert.deepEqual(quiz.groundingQueriesUsed, []);
     calls.length = 0;
+    if (model === 'gemma-4-31b-it') {
+      await assert.rejects(generateQuizWithGemini({...config,model,enableGrounding:true},'test-key'),(e:any)=>e.code==='FALLBACK_CAPABILITY');
+      assert.equal(calls.length,0);continue;
+    }
     const grounded = await generateQuizWithGemini(
       { ...config, model, enableGrounding: true },
       "test-key",
     );
     assert.equal(calls[0].model, model);
-    assert.equal(calls[0].grounded, model !== "gemma-4-31b-it");
-    assert.equal(grounded.usedGrounding, model !== "gemma-4-31b-it");
+    assert.equal(calls[0].grounded, true);
+    assert.equal(grounded.usedGrounding, true);
   }
 
   calls.length = 0;

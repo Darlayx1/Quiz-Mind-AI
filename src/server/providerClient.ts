@@ -17,7 +17,7 @@ export async function groqRequest(path: 'models' | 'chat/completions', key: stri
     const messages: Record<number, string> = { 400: 'Konfigurasi atau format permintaan ditolak Groq. Periksa kemampuan model.', 401: 'API key Groq ditolak. Periksa atau ganti key.', 402: 'Saldo atau billing Groq perlu diperiksa.', 403: 'Akses Groq ditolak. Periksa izin model dan akun.', 404: 'Model Groq tidak ditemukan. Pilih model lain atau periksa ID model.', 429: 'Batas kuota Groq tercapai. Tunggu sesuai jeda layanan.', 500: 'Layanan Groq sedang bermasalah.', 502: 'Layanan Groq sementara tidak tersedia.', 503: 'Layanan Groq sedang sibuk.', 504: 'Groq melewati batas waktu.' };
     throw new ProviderError(messages[response.status] ?? 'Permintaan Groq gagal. Periksa koneksi dan konfigurasi.', response.status, response.status === 429 ? 'RATE_LIMIT' : response.status === 404 ? 'MODEL_NOT_FOUND' : 'PROVIDER_ERROR', response.headers);
   }
-  try { return await response.json(); } catch { throw new ProviderError('Respons Groq bukan JSON yang valid.', 502, 'INVALID_JSON'); }
+  try { return await response.json(); } catch { signal.throwIfAborted(); throw new ProviderError('Respons Groq bukan JSON yang valid.', 502, 'INVALID_JSON'); }
 }
 export async function listProviderModels(provider: AIProvider, key: string, signal: AbortSignal): Promise<string[]> {
   if (provider === 'groq') {

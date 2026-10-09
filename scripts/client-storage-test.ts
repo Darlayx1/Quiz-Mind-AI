@@ -77,3 +77,16 @@ assert.equal(loadStoredClientKeys(), null);
 storageMap.clear();
 
 console.log('PASS client-storage-test: persistence, auto-load on reload simulation, updates, deletions, and fail-safe corrupted handling.');
+
+// Corrupt JSON parser messages may echo key fragments. Logs must contain no raw errors.
+const originalWarn=console.warn, originalError=console.error;
+const diagnostics:unknown[][]=[];
+console.warn=(...args)=>{diagnostics.push(args);};console.error=(...args)=>{diagnostics.push(args);};
+try {
+ storageMap.set(CLIENT_STORAGE_KEY,'gsk_corrupted_sensitive_secret');
+ assert.equal(loadStoredClientKeys(),null);
+ saveStoredClientKeys({keys:'gsk_corrupted_sensitive_secret'} as any);
+ assert.equal(JSON.stringify(diagnostics).includes('gsk_corrupted_sensitive_secret'),false);
+ assert.ok(diagnostics.every(args=>args.length===1));
+} finally {console.warn=originalWarn;console.error=originalError;storageMap.clear();}
+console.log('PASS client-storage diagnostics: no corrupt JSON/key fragments or raw errors logged.');

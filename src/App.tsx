@@ -184,11 +184,11 @@ export default function App() {
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        const text = await response.text();
+
         throw new Error(
           response.status === 404
             ? 'Endpoint API tidak ditemukan (404). Server backend sedang sinkronisasi, silakan ulangi.'
-            : `Respon server bukan format JSON valid (${response.status}): ${text.slice(0, 100)}`
+            : `Respons server bukan format JSON valid (${response.status}). Silakan coba kembali.`
         );
       }
 
@@ -196,7 +196,7 @@ export default function App() {
       if (data.notices?.length) setKeyMessage(data.notices.join(' '));
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Gagal memproses kuis dengan model Gemini yang dipilih.');
+        throw new Error(data.error || 'Gagal memproses kuis dengan penyedia AI yang dipilih.');
       }
 
       const generatedQuiz: Quiz = data.quiz;

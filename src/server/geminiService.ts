@@ -197,6 +197,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
   config = normalizeQuizConfig(config);
   const selectedModel = config.model ?? DEFAULT_MODEL;
   const isGemma = selectedModel === 'gemma-4-31b-it';
+  if (config.enableGrounding && modelInfo(selectedModel)?.grounding !== true) throw new QuizGenerationError('Model pilihan tidak mendukung pencarian web. Pilih model dengan dukungan web.', 400, 'FALLBACK_CAPABILITY');
   const ai = options.pool ? undefined : getGeminiClient(apiKey);
   const signal = AbortSignal.any([AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
   let totalCalls = 0, batchCalls = 0;
@@ -205,13 +206,15 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
     params={...params,config:{...params.config,maxOutputTokens:8192}};
     if (modelInfo(String(params.model))?.structured && !params.config?.tools?.length) params = { ...params, config: { ...params.config, responseMimeType: 'application/json', responseJsonSchema: quizSchemaFor(config.questionType) } };
     if (!options.pool) {
-      if(options.attemptBudget&&++options.attemptBudget.calls>3)throw new PoolError('Batas percobaan pembuatan kuis tercapai.',503,'POOL_BUDGET');
+      if(options.attemptBudget&&options.attemptBudget.calls>=3)throw new PoolError('Batas percobaan pembuatan kuis tercapai.',503,'POOL_BUDGET');
+      if (options.attemptBudget) options.attemptBudget.calls++;
       const callSignal = AbortSignal.any([signal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
       return ai!.models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
     }
     return options.pool.run(async (key, poolSignal) => {
-      if (++batchCalls > 3 || ++totalCalls > Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget&&++options.attemptBudget.calls>3)
+      if (batchCalls >= 3 || totalCalls >= Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget&&options.attemptBudget.calls>=3)
         throw new PoolError('Batas percobaan pembuatan kuis tercapai.', 503, 'POOL_BUDGET');
+      batchCalls++; totalCalls++; if (options.attemptBudget) options.attemptBudget.calls++;
       const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
       try {
         return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
@@ -221,7 +224,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         // Retain structured provider errors for retry hints; never display raw credentials.
         throw error;
       }
-    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, maxAttempts:Math.max(1,3-(options.attemptBudget?.calls??0)) });
+    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : undefined, maxAttempts:Math.max(1,Math.min(params.config?.tools?.length ? 2 : 3,3-(options.attemptBudget?.calls??0))) });
   };
   // A managed pool already bounds and cancels each attempt. Wrapping its entire retry sequence
   // in Promise.race would leave retries running after the outer timeout has returned.
@@ -256,7 +259,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
     const extractedSources: GroundingSource[] = [];
 
     if (options.pool) {
-      const grounded = config.enableGrounding && !isGemma && validQuestions.length === 0;
+      const grounded = config.enableGrounding && !isGemma;
       const prompt = buildPrompt(config, currentBatchCount, validQuestions.map(q => q.question));
       const contents = isGemma ? buildGemmaPrompt(config, currentBatchCount, validQuestions.map(q => q.question)) : prompt.userPrompt;
       const send = (model: string, tools: boolean) => requestContent({ model, contents,
@@ -264,16 +267,10 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       for (const model of modelCandidates) {
         try {
           rawResponse = await send(model, grounded);
-          usedGrounding ||= grounded; usedModelName = model; lastError = null; break;
+          usedModelName = model; lastError = null; break;
         } catch (error: any) {
           signal.throwIfAborted(); lastError = error;
-          const toolCompatibility = error?.status === 400 && /google.?search|grounding|tool.{0,30}(unsupported|not supported)|unsupported.{0,30}tool/i.test(String(error?.message));
-          const toolTransient = error?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + ':grounding' && h.reason === 'Layanan sementara bermasalah');
-          if (grounded && options.pool.collection.settings.allowGroundingFallback && (toolCompatibility || toolTransient || error?.code === 'POOL_MODEL_ACCESS')) {
-            options.onNotice?.('Pencarian web gagal. Melanjutkan tanpa pencarian sesuai pengaturan Anda.');
-            try { rawResponse = await send(model,false); usedModelName = model; lastError = null; break; }
-            catch (plainError) { lastError = plainError; }
-          }
+          if (grounded) throw classifyApiError(error, model);
           const modelTransient = lastError?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + (grounded ? ':grounding' : '') && h.reason === 'Layanan sementara bermasalah');
           if (!options.pool.collection.settings.allowModelFallback || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient)) throw classifyApiError(lastError,model);
           options.onNotice?.('Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.');
@@ -308,9 +305,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         usedModelName = selectedModel;
       } catch (err: any) {
         signal.throwIfAborted();
-        options.onNotice?.('Pencarian web tidak tersedia. Melanjutkan tanpa pencarian sesuai pengaturan Anda.');
-        lastError = err;
-        // Lanjut ke percobaan tanpa tool jika kuota/search grounding terkendala
+        throw classifyApiError(err, selectedModel);
       }
     }
 
@@ -373,6 +368,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       throw classifyApiError(lastError || new Error('Respons model AI kosong.'), usedModelName);
     }
 
+    if (rawResponse.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new QuizGenerationError('Respons Gemini terpotong sebelum selesai.', 502, config.enableGrounding ? 'WEB_SEARCH_TRUNCATED' : 'INCOMPLETE_RESPONSE');
     const rawText = rawResponse.text || '';
 
     // Ekstrak metadata grounding Google Search (jika ada pada Gemini)
@@ -391,6 +387,11 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
           });
         }
       }
+    }
+
+    if (config.enableGrounding) {
+      if (!Array.isArray(groundingMetadata?.webSearchQueries) || !groundingMetadata.webSearchQueries.length || !extractedSources.length) throw new QuizGenerationError('Pencarian web Gemini tidak menghasilkan referensi yang dapat diverifikasi.', 502, 'WEB_SEARCH_EMPTY');
+      usedGrounding = true;
     }
 
     // Parse JSON

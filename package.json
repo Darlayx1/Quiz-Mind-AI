@@ -12,7 +12,7 @@
     "lint": "tsc --noEmit",
     "vault:password": "node scripts/vault-password.mjs",
     "test:keys": "node --import tsx scripts/client-storage-test.ts && node --import tsx scripts/multi-key-test.ts && node --import tsx scripts/server-key-test.ts",
-    "test:providers": "node --import tsx scripts/provider-test.ts",
+    "test:providers": "node --import tsx scripts/provider-test.ts && node --import tsx scripts/generation-ui-test.ts",
     "test:quiz-types": "node --import tsx scripts/quiz-types-test.ts"
   },
   "engines": {

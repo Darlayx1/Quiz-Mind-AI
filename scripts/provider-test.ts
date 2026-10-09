@@ -3,7 +3,9 @@ import { KeyPool, defaultSettings, validateCollection } from '../src/keyPool.js'
 import { normalizeQuizConfig } from '../src/quizConfig.js';
 import { encryptCollection, decryptCollection, MULTI_VAULT_KEY } from '../src/multiKeyVault.js';
 import { generateQuiz } from '../src/server/aiService.js';
-import { probeKey } from '../src/server/providerClient.js';
+import { researchDiagnostics } from '../src/server/groqResearch.js';
+import { generateQuizWithGroq } from '../src/server/groqService.js';
+import { probeKey, groqRequest } from '../src/server/providerClient.js';
 import type { QuizConfig } from '../src/types/quiz.js';
 import express from 'express';
 import { ServerKeyStore } from '../src/server/keyStore.js';
@@ -17,7 +19,7 @@ const keys = [
   { id: 'groq', name: 'Groq', provider: 'groq' as const, key: 'fake-groq-secret', project: 'same-id', priority: 1, enabled: true },
   { id: 'groq-backup', name: 'Groq backup', provider: 'groq' as const, key: 'fake-groq-backup', project: 'other-org', priority: 2, enabled: true },
 ];
-const config: QuizConfig = { provider: 'groq', model: 'openai/gpt-oss-20b', topic: 'Aljabar', difficulty: 'easy', questionCount: 7, timeLimitMinutes: 5, language: 'id', enableGrounding: false };
+const config: QuizConfig = { provider: 'groq', model: 'openai/gpt-oss-20b', topic: 'Aljabar', difficulty: 'easy', questionCount: 7, timeLimitMinutes: 5, language: 'id', enableGrounding: true };
 const originalFetch = globalThis.fetch;
 const calls: { provider: string; key: string; model?: string; body?: any }[] = [];
 let failGroq = 0, failGoogle = 0, malformed = false, invalidQuestion = false, truncate = false, searchEmpty = false, serial = 0, slow = false;
@@ -105,14 +107,14 @@ try {
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true}});
   const notices:string[]=[];
-  const fallback=await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1},undefined,{pool,onNotice:message=>notices.push(message)});
+  const fallback=await generateQuiz({...config,enableGrounding:false,provider:'gemini',model:'gemini-3.8-flash',questionCount:1},undefined,{pool,onNotice:message=>notices.push(message)});
   assert.equal(fallback.provider,'groq'); assert.equal(fallback.requestedProvider,'gemini'); assert.equal(fallback.requestedModel,'gemini-3.8-flash'); assert.ok(notices.some(message=>message.includes('Materi dikirim')));
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true}});
-  assert.equal((await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})).usedGrounding,true);
+  await assert.rejects(generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})); assert.ok(calls.every(c=>c.provider==='gemini'));
   reset(); failGoogle=429;
   pool=new KeyPool({...collection,settings:{...defaultSettings,allowProviderFallback:true,allowGroundingFallback:true}});
-  assert.equal((await generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})).usedGrounding,true);
+  await assert.rejects(generateQuiz({...config,provider:'gemini',model:'gemini-3.8-flash',questionCount:1,enableGrounding:true},undefined,{pool})); assert.ok(calls.every(c=>c.provider==='gemini'));
   reset(); malformed=true;
   await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection)}),/JSON/); assert.equal(calls.length,2);
   reset(); invalidQuestion=true;
@@ -124,6 +126,73 @@ try {
   const pending=generateQuiz({...config,questionCount:1},undefined,{pool:new KeyPool(collection),signal:controller.signal});
   setTimeout(()=>controller.abort(),50); await assert.rejects(pending,error=>(error as Error).name==='AbortError');
   reset();
+
+  slow=true;
+  await assert.rejects(groqRequest('chat/completions','fake-timeout-key',AbortSignal.timeout(20),{model:'openai/gpt-oss-20b'}),(e:any)=>e.name==='TimeoutError');reset();
+  // Deterministic research regressions; no credentials or external requests.
+  const normalFetch=globalThis.fetch;
+  let researchAttempts=0, responses:any[]=[];
+  globalThis.fetch=async(input,init)=>{
+    const req=new Request(input,init);
+    if(req.method==='POST' && req.url.includes('api.groq.com')){
+      const b=await req.clone().json();
+      if(b.tools){researchAttempts++;const next=responses.shift();
+        if(next instanceof Response)return next;
+        if(next==='timeout')return Response.json({}, {status:504});
+        if(next)return Response.json(next);
+      }
+    }
+    return normalFetch(input,init);
+  };
+  const researchResponse=(content:any,finish='stop')=>({choices:[{message:{content,reasoning:'private reasoning',executed_tools:[{output:'private tool output'}]},finish_reason:finish}]});
+  const fresh=()=>new KeyPool(collection);
+  for(const [content,finish,code] of [[null,'stop','WEB_SEARCH_EMPTY'],['','stop','WEB_SEARCH_EMPTY'],['partial','length','WEB_SEARCH_TRUNCATED']] as const){
+    reset();researchAttempts=0;responses=[researchResponse(content,finish)];const research:{}={};
+    await assert.rejects(generateQuizWithGroq({...config,questionCount:1},undefined,{pool:fresh(),research}), (e:any)=>e.code===code);
+    assert.equal(researchAttempts,1);assert.deepEqual(research,{});assert.equal(calls.length,0,'No quiz call after failed research');
+
+  }
+  reset();researchAttempts=0;responses=[Response.json({}, {status:503}),researchResponse('Materi riset valid tentang aljabar.')];
+  const budget={calls:0};assert.equal((await generateQuizWithGroq({...config,questionCount:1},undefined,{pool:fresh(),attemptBudget:budget})).usedGrounding,true);assert.equal(researchAttempts,2);assert.equal(budget.calls,3);
+  reset();researchAttempts=0;responses=[Response.json({}, {status:503}),researchResponse('Materi riset valid tentang aljabar.')];failGroq=503;
+  const exhaustedBudget={calls:0};await assert.rejects(generateQuizWithGroq({...config,questionCount:1},undefined,{pool:fresh(),attemptBudget:exhaustedBudget}));assert.equal(researchAttempts,2);assert.equal(calls.length,1);assert.equal(exhaustedBudget.calls,3,'No nested retries beyond shared budget');
+  reset();researchAttempts=0;responses=[Response.json({}, {status:503}),Response.json({}, {status:503})];
+  await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:fresh()}),(e:any)=>e.code==='WEB_SEARCH_UNAVAILABLE');assert.equal(researchAttempts,2);assert.equal(calls.length,0);
+  for(const [status,code] of [[429,'WEB_SEARCH_RATE_LIMITED'],[401,'PROVIDER_ERROR'],[400,'PROVIDER_ERROR']] as const){
+    reset();researchAttempts=0;responses=[Response.json({error:{message:'gsk_sensitive prompt'}},{status,headers:{'retry-after':'120'}})];
+    await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:fresh()}),(e:any)=>e.code===code&&!e.message.includes('gsk_sensitive'));assert.equal(researchAttempts,1);
+  }
+  reset();researchAttempts=0;responses=['timeout','timeout'];
+  await assert.rejects(generateQuiz({...config,questionCount:1},undefined,{pool:fresh()}),(e:any)=>e.code==='WEB_SEARCH_TIMEOUT');assert.equal(researchAttempts,2);
+  reset();researchAttempts=0;responses=[];
+  assert.equal((await generateQuiz({...config,enableGrounding:false,questionCount:1},undefined,{pool:fresh()})).usedGrounding,false);assert.equal(researchAttempts,0);assert.equal(calls.length,1);
+  reset();researchAttempts=0;responses=[researchResponse('Riset request pertama.')];
+  await generateQuiz(config,undefined,{pool:fresh()});assert.equal(researchAttempts,1,'Research shared across batches');
+  responses=[researchResponse('Riset request kedua.')];await generateQuiz({...config,questionCount:1},undefined,{pool:fresh()});assert.equal(researchAttempts,2);assert.ok(calls.at(-1)!.body.messages.at(-1).content.includes('Riset request kedua.'));assert.ok(!calls.at(-1)!.body.messages.at(-1).content.includes('Riset request pertama.'));
+  const diagnostics=JSON.stringify(researchDiagnostics({...researchResponse('secret prompt'),usage:{prompt_tokens:3,completion_tokens:8,other:'secret key'}},5,{status:401,message:'secret key',headers:new Headers({authorization:'secret key'})}));assert.ok(!diagnostics.includes('secret'));assert.ok(!diagnostics.includes('private'));
+  globalThis.fetch=normalFetch;reset();
+
+  // Gemini grounding must be proven on every batch; never continue without web.
+  const googleFetch=globalThis.fetch;
+  let googleMode='grounded';
+  globalThis.fetch=async(input,init)=>{
+    const req=new Request(input,init);
+    const response=await googleFetch(input,init);
+    if(req.url.includes('generativelanguage.googleapis.com') && req.method==='POST' && response.ok){
+      const data=await response.json();
+      if(googleMode==='grounded')data.candidates[0].groundingMetadata={webSearchQueries:['aljabar'],groundingChunks:[{web:{uri:'https://example.org/algebra',title:'Aljabar'}}]};
+      if(googleMode==='truncated')data.candidates[0].finishReason='MAX_TOKENS';
+      return Response.json(data);
+    }
+    return response;
+  };
+  reset();
+  const googleConfig={...config,provider:'gemini' as const,model:'gemini-3.8-flash',enableGrounding:true};
+  assert.equal((await generateQuiz(googleConfig,undefined,{pool:fresh()})).usedGrounding,true);assert.equal(calls.length,2);assert.ok(calls.every(c=>c.body.tools?.length));
+  for(const [mode,code] of [['missing','WEB_SEARCH_EMPTY'],['truncated','WEB_SEARCH_TRUNCATED']]){
+    reset();googleMode=mode;await assert.rejects(generateQuiz({...googleConfig,questionCount:1},undefined,{pool:new KeyPool({...collection,settings:{...defaultSettings,allowGroundingFallback:true,allowProviderFallback:true}})}),(e:any)=>e.code===code);assert.equal(calls.length,1);
+  }
+  globalThis.fetch=googleFetch;reset();
 
   const dir=mkdtempSync(path.join(tmpdir(),'quizmind-provider-test-'));
   const loginPassword='fake-test-owner-password', loginSalt=randomBytes(16);
