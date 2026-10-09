@@ -52,7 +52,7 @@ export function lockKeys(clearStorage = false) {
   notify();
 }
 export async function cloudApi(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST') {
-  const response = await fetch(apiBase + '/api/keys/' + path, { method, credentials: 'include',
+  const response = await fetch(apiBase + '/api/keys/' + path, { method, credentials: 'include', signal: AbortSignal.timeout(path === 'test-generation' ? 300_000 : 20_000),
     headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-Vault-CSRF': csrf } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json();

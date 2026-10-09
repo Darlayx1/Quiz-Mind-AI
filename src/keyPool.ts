@@ -6,6 +6,9 @@ export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: 
 export type KeyCollection = { schemaVersion?: 3; keys: KeyEntry[]; settings: PoolSettings };
 export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: true, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'gemini', fallbackModel: 'gemini-3.5-flash-lite', modelFallbacks: { gemini: 'gemini-3.5-flash-lite' } };
 export type KeyHealth = { state: 'untested' | 'ready' | 'waiting' | 'invalid' | 'restricted'; until?: number; scope?: string; lastSuccess?: number; reason?: string; successes: number; failures: number };
+export type KeyUsage = { calls: number; successes: number; failures: number; inputTokens: number; outputTokens: number; thinkingTokens: number; totalTokens: number; measuredResponses: number; durationMs: number; lastModel?: string; lastCall?: number };
+export type PoolEvent = { at: number; keyId: string; model?: string; type: 'success' | 'failure' | 'fallback' | 'reset'; reason: string; targetId?: string };
+export type PoolMonitoring = { since: number; updatedAt: number; activeKeyIds: string[]; usage: Record<string, KeyUsage>; events: PoolEvent[] };
 export class PoolError extends Error {
   constructor(message: string, public status = 503, public code = 'POOL_UNAVAILABLE') { super(message); }
 }
@@ -89,6 +92,22 @@ export class KeyPool {
   private cursor = 0;
   private locked = false;
   private controller = new AbortController();
+  private since = Date.now();
+  private usage = new Map<string, KeyUsage>();
+  private events: PoolEvent[] = [];
+  private active = new Set<string>();
+  private event(event: Omit<PoolEvent, 'at'>) { this.events.unshift({ ...event, at: Date.now() }); this.events.length = Math.min(this.events.length, 100); }
+  monitoring(): PoolMonitoring {
+    return { since: this.since, updatedAt: Date.now(), activeKeyIds: [...this.active], usage: Object.fromEntries([...this.usage].map(([id, value]) => [id, { ...value }])), events: this.events.map(event => ({ ...event })) };
+  }
+  recordUsage(key: string, metadata: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; totalTokenCount?: number } | undefined) {
+    const entry = this.collection.keys.find(entry => entry.key === key), usage = entry && this.usage.get(entry.id);
+    if (!usage || !metadata) return;
+    const count = (value?: number) => Number.isFinite(value) && value! >= 0 ? value! : 0;
+    usage.inputTokens += count(metadata.promptTokenCount); usage.outputTokens += count(metadata.candidatesTokenCount);
+    usage.thinkingTokens += count(metadata.thoughtsTokenCount); usage.totalTokens += count(metadata.totalTokenCount);
+    usage.measuredResponses++; this.changed();
+  }
   constructor(collection: KeyCollection, private changed: () => void = () => {}) { this.collection = validateCollection(collection); }
   update(collection: KeyCollection) {
     const next = validateCollection(collection);
@@ -99,25 +118,28 @@ export class KeyPool {
       const replacement = next.keys.find(k => k.id === previous.id);
       if (!replacement || replacement.key !== previous.key || replacement.project !== previous.project || replacement.provider !== previous.provider) {
         this.health.delete(previous.id); for (const scope of this.restrictions) if (scope.startsWith(previous.id + ':')) this.restrictions.delete(scope);
+        this.usage.delete(previous.id); this.events = this.events.filter(event => event.keyId !== previous.id && event.targetId !== previous.id);
       }
     }
     this.collection = next; this.changed();
   }
   private group(key: KeyEntry) { return `${key.provider ?? 'gemini'}:${key.project || '__unknown__'}`; }
-  lock() { this.locked = true; this.controller.abort(); this.collection = { keys: [], settings: defaultSettings }; this.health.clear(); this.changed(); }
+  lock() { this.locked = true; this.controller.abort(); this.collection = { keys: [], settings: defaultSettings }; this.health.clear(); this.usage.clear(); this.events = []; this.active.clear(); this.changed(); }
   status(id: string, scope?: string): KeyHealth {
     const key = this.collection.keys.find(k => k.id === id);
     const base = this.health.get(id) || { state: 'untested', successes: 0, failures: 0 };
     const until = key ? Math.max(!scope || !base.scope || base.scope === scope ? base.until || 0 : 0, this.cooldown.get(this.group(key)) || 0) : 0;
     return { ...base, state: until > Date.now() && !['invalid','restricted'].includes(base.state) ? 'waiting' : base.state === 'waiting' && until <= Date.now() ? 'untested' : base.state, until };
   }
-  reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) this.cooldown.delete(this.group(key)); this.changed(); }
+  reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) { this.cooldown.delete(this.group(key)); this.event({ keyId: id, type: 'reset', reason: 'Karantina dan jeda kelompok direset oleh pengguna' }); } this.changed(); }
   async run<T>(fn: (key: string, signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; onNotice?: (message: string) => void; maxAttempts?: number; allowKeyFallback?: boolean; model?: string; provider?: AIProvider } = {}): Promise<T> {
-    const signal = AbortSignal.any([this.controller.signal, ...(options.signal ? [options.signal] : [])]);
+    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
     const seen = new Set<string>();
     let attempts = 0, transientRetries = 0;
+    const maxAttempts = Math.max(1, Math.min(3, Math.floor(options.maxAttempts || 3)));
+    let previousId: string | undefined;
     const started = Date.now();
-    while (attempts < (options.maxAttempts ?? 3)) {
+    while (attempts < maxAttempts) {
       signal.throwIfAborted();
       if (this.locked) throw new PoolError('Vault terkunci.', 401, 'POOL_LOCKED');
       const ordered = this.collection.keys.filter(k => k.enabled && k.provider === (options.provider ?? 'gemini')).sort((a,b) => a.priority - b.priority);
@@ -129,16 +151,28 @@ export class KeyPool {
         ordered.some(k => this.restrictions.has(k.id + ':' + options.model)) ? 'POOL_MODEL_ACCESS' : 'POOL_UNAVAILABLE');
       const entry = this.collection.settings.mode === 'balanced' ? available[this.cursor++ % available.length] : available[0];
       const group = this.group(entry);
+      if (previousId && previousId !== entry.id) this.event({ keyId: previousId, targetId: entry.id, model: options.model, type: 'fallback', reason: 'Beralih ke key cadangan yang memenuhi syarat' });
+      previousId = entry.id;
+      const callStarted = Date.now();
+      const usage = this.usage.get(entry.id) || { calls: 0, successes: 0, failures: 0, inputTokens: 0, outputTokens: 0, thinkingTokens: 0, totalTokens: 0, measuredResponses: 0, durationMs: 0 };
+      usage.calls++; usage.lastCall = callStarted; usage.lastModel = options.model; this.usage.set(entry.id, usage); this.active.add(entry.id); this.changed();
       this.busy.set(group, 1); attempts++;
       const old = this.health.get(entry.id) || { state: 'untested' as const, successes: 0, failures: 0 };
       try {
         const result = await fn(entry.key, signal);
         signal.throwIfAborted();
+        usage.successes++;
+        this.recordUsage(entry.key, (result as any)?.usageMetadata);
+        this.event({ keyId: entry.id, model: options.model, type: 'success', reason: 'Panggilan penyedia berhasil; validasi hasil dilakukan oleh aplikasi' });
         this.health.set(entry.id, { state: 'ready', lastSuccess: Date.now(), successes: old.successes + 1, failures: old.failures });
         this.changed(); return result;
       } catch (error: any) {
+        usage.failures++;
+        if (signal.aborted) this.event({ keyId: entry.id, model: options.model, type: 'failure', reason: 'Panggilan dibatalkan atau batas waktu tercapai' });
         signal.throwIfAborted();
         const { kind, retryMs } = errorKind(error);
+        const reasons = { invalid: 'Key tidak valid atau dicabut; dikarantina otomatis', restricted: 'Akses model atau billing perlu diperiksa', quota: 'Kuota proyek tercapai; kelompok dijeda', temporary: 'Gangguan sementara pada layanan', network: 'Koneksi jaringan gagal; rotasi dihentikan', stop: 'Permintaan gagal; rotasi dihentikan' };
+        this.event({ keyId: entry.id, model: options.model, type: 'failure', reason: reasons[kind] });
         const health: KeyHealth = { ...old, scope: options.model, failures: old.failures + 1 };
         if (kind === 'invalid') { health.state = 'invalid'; health.reason = 'Key tidak valid atau dicabut'; seen.add(entry.id); }
         else if (kind === 'restricted') {
@@ -154,7 +188,7 @@ export class KeyPool {
           this.cooldown.set(group, health.until); seen.add(entry.id);
         } else if (kind === 'temporary') {
           health.reason = 'Layanan sementara bermasalah';
-          if (transientRetries++ < 1 && attempts < (options.maxAttempts ?? 3)) {
+          if (transientRetries++ < 1 && attempts < maxAttempts) {
             this.health.set(entry.id, health); this.changed();
             options.onNotice?.('Layanan AI sedang bermasalah. Mencoba kembali dengan jeda.');
             await pause(1000 + Math.random() * 500, signal); continue;
@@ -164,7 +198,7 @@ export class KeyPool {
         this.health.set(entry.id, health); this.changed();
         if (!(options.allowKeyFallback ?? this.collection.settings.allowKeyFallback)) throw error;
         options.onNotice?.(`${entry.name}: ${health.reason}. Mencoba key cadangan yang tersedia.`);
-      } finally { this.busy.delete(group); }
+      } finally { this.busy.delete(group); this.active.delete(entry.id); usage.durationMs += Date.now() - callStarted; this.changed(); }
     }
     throw new PoolError('Batas percobaan tercapai. Coba kembali setelah jeda atau perbaiki key di pengelola.');
   }

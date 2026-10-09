@@ -2563,3 +2563,16 @@ progress::-moz-progress-bar {
 .topic-chip:focus-visible,.field-input:focus-visible{outline:3px solid #818cf8;outline-offset:3px}
 @media(max-width:600px){.matching-row,.ordering-review{grid-template-columns:1fr}.ordering-answer li{gap:.5rem}.order-text{flex-basis:calc(100% - 32px)}.question-composition.section-pad{padding:1.2rem}.type-distribution>div{grid-template-columns:minmax(0,1fr) 74px}.review-filters{flex-wrap:wrap}}
 @media print{.answer-text{background:transparent;padding:0}.review-card{break-inside:auto}.written-answer,.answer-text,.explanation{overflow:visible}.evaluation-progress{border:1px solid #aaa}.ordering-review{display:block}.manual-review{display:none}.review-option{break-inside:avoid}}
+/* Connection monitoring uses the existing connection window styles. */
+.api-monitor-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.api-monitor-stats .connection-summary { margin: 0; }
+.api-monitor-stats strong { display: block; font-size: 1.5rem; }
+.api-monitor-table { overflow-x: auto; margin: 20px 0; }
+.api-monitor-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: .85rem; }
+.api-monitor-table caption { text-align: left; font-weight: 600; margin-bottom: 12px; }
+.api-monitor-table th, .api-monitor-table td { padding: 12px; vertical-align: top; border-bottom: 1px solid #64748b33; }
+.api-monitor-table td div, .api-monitor-table small { color: var(--text-secondary, #94a3b8); font-size: .75rem; }
+.api-monitor-events { padding: 0; list-style: none; max-height: 340px; overflow-y: auto; }
+.api-monitor-events li { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #64748b33; }
+.api-monitor-events time { font-size: .75rem; white-space: nowrap; }
+.api-monitor-events p { margin: 4px 0; font-size: .85rem; }

@@ -61,7 +61,7 @@ export class ServerKeyStore {
   }
   metadata() {
     const { revision, collection } = this.read(), pool = this.pool();
-    return { revision, settings: collection.settings, keys: collection.keys.map(({ key, ...entry }) => ({ ...entry, masked: '••••' + key.slice(-4), health: pool.status(entry.id) })) };
+    return { revision, settings: collection.settings, monitoring: pool.monitoring(), keys: collection.keys.map(({ key, ...entry }) => ({ ...entry, masked: '••••' + key.slice(-4), health: pool.status(entry.id) })) };
   }
   private cleanup() {
     const now = Date.now();

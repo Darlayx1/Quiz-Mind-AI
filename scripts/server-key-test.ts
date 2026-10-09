@@ -27,6 +27,8 @@ try {
   const key={id:'one',name:'Utama',project:'my-project',key:'fake-stored-server-key',enabled:true,priority:1};
   assert.equal((await call('add',{keys:[key],revision:0},{'x-vault-csrf':'incorrect'})).status,403);
   res=await call('add',{keys:[key],revision:0});assert.equal(res.status,200);data=await res.json();assert.equal(data.revision,1);assert.equal(JSON.stringify(data).includes(key.key),false);assert.equal(data.keys[0].health.state,'untested');
+  await store.pool().run(async () => ({ usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2, totalTokenCount: 6 } }));
+  res=await call('session');data=await res.json();assert.equal(data.monitoring.usage.one.totalTokens,6);assert.equal(JSON.stringify(data).includes(key.key),false);
   assert.equal((await call('add',{keys:[{...key,id:'two'}],revision:1})).status,400);
   assert.equal((await call('update',{id:'one',patch:{name:'new'},revision:0})).status,409);
   res=await call('update',{id:'one',patch:{priority:2},revision:1});assert.equal(res.status,200);data=await res.json();assert.equal(data.revision,2);
