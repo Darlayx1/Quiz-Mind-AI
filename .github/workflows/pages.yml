@@ -28,6 +28,7 @@ jobs:
           cache: npm
       - uses: actions/configure-pages@v5
       - run: npm ci
+      - run: npm run build
       - run: npm run lint
       - run: node --import tsx scripts/model-test.ts
       - run: npm run build:pages
