@@ -26,7 +26,6 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
   return new GoogleGenAI({
     apiKey: apiKey,
     httpOptions: {
-      timeout: 180000, // 3 menit untuk penalaran mendalam Gemma & batching
       retryOptions: { attempts: 1 }, // The application owns the shared retry budget.
     },
   });
@@ -35,7 +34,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
 /** One bounded provider call; retry/key selection belong to the workspace orchestrator. */
 export async function generateQuizBatch(input: QuizConfig, apiKey: string, existing: string[] = [], signal?: AbortSignal): Promise<Quiz> {
   const config = normalizeQuizConfig(input);
-  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75000, retryOptions: { attempts: 1 } } });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
   const gemma = model === 'gemma-4-31b-it';
   if (gemma && config.enableGrounding) throw new QuizGenerationError('Model Gemma tidak mendukung pencarian web. Pilih model Gemini untuk kuis dengan referensi terkini.', 400, 'WEB_SEARCH_UNSUPPORTED');
@@ -186,20 +185,6 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   );
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs = 90000, label = 'Permintaan AI'): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new QuizGenerationError(`${label} melebihi batas waktu maksimal (${timeoutMs / 1000} detik).`, 504, 'TIMEOUT'));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 /**
  * Exponential backoff retry helper untuk error transient.
  */
@@ -207,13 +192,12 @@ async function callWithRetry<T>(
   fn: () => Promise<T>,
   maxRetries = 2,
   baseDelayMs = 2000,
-  modelId = '',
-  timeoutMs = modelId === 'gemma-4-31b-it' ? 150000 : 90000
+  modelId = ''
 ): Promise<T> {
   let lastErr: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(fn(), timeoutMs, `Permintaan model ${modelId}`);
+      return await fn();
     } catch (err: any) {
       lastErr = err;
       const msg = String(err?.message || err);
@@ -264,7 +248,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
   const isGemma = selectedModel === 'gemma-4-31b-it';
   if (config.enableGrounding && modelInfo(selectedModel)?.grounding !== true) throw new QuizGenerationError('Model pilihan tidak mendukung pencarian web. Pilih model dengan dukungan web.', 400, 'FALLBACK_CAPABILITY');
   const ai = options.pool ? undefined : getGeminiClient(apiKey);
-  const signal = AbortSignal.any([AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
+  const signal = options.signal ?? new AbortController().signal;
   let totalCalls = 0, batchCalls = 0;
   const requestContent = async (params: Parameters<GoogleGenAI['models']['generateContent']>[0]) => {
     signal.throwIfAborted();
@@ -273,26 +257,22 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
     if (!options.pool) {
       if(options.attemptBudget&&options.attemptBudget.calls>=3)throw new PoolError('Batas percobaan pembuatan kuis tercapai.',503,'POOL_BUDGET');
       if (options.attemptBudget) options.attemptBudget.calls++;
-      const callSignal = AbortSignal.any([signal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
-      return ai!.models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+      return ai!.models.generateContent({ ...params, config: { ...params.config, abortSignal: signal } });
     }
     return options.pool.run(async (key, poolSignal) => {
       if (batchCalls >= 3 || totalCalls >= Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget&&options.attemptBudget.calls>=3)
         throw new PoolError('Batas percobaan pembuatan kuis tercapai.', 503, 'POOL_BUDGET');
       batchCalls++; totalCalls++; if (options.attemptBudget) options.attemptBudget.calls++;
-      const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
       try {
-        return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+        return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: poolSignal } });
       } catch (error: any) {
         poolSignal.throwIfAborted();
-        if (callSignal.aborted) throw new QuizGenerationError('Layanan AI melewati batas waktu.', 504, 'TIMEOUT');
         // Retain structured provider errors for retry hints; never display raw credentials.
         throw error;
       }
     }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : undefined, maxAttempts:Math.max(1,Math.min(params.config?.tools?.length ? 2 : modelCandidates.length > 1 && String(params.model) === selectedModel ? 2 : 3,3-(options.attemptBudget?.calls??0))) });
   };
-  // A managed pool already bounds and cancels each attempt. Wrapping its entire retry sequence
-  // in Promise.race would leave retries running after the outer timeout has returned.
+  // Both paths pass the caller's cancellation signal through to the provider.
   const callGeneration = <T>(fn: () => Promise<T>, retries: number, delay: number, model: string) =>
     options.pool ? fn() : callWithRetry(fn, retries, delay, model);
 

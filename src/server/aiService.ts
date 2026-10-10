@@ -13,12 +13,12 @@ export const providerAdapters = {
 async function generateBatch(input: QuizConfig, apiKey?: string, options: GenerationOptions = {}) {
   options={...options,attemptBudget:{calls:0}};
   const config = normalizeQuizConfig(input);
-  const signal = AbortSignal.any([AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
+  const signal = options.signal ?? new AbortController().signal;
   return await providerAdapters.gemini.generate(config, apiKey, { ...options, signal });
 }
 
 export async function generateQuiz(input:QuizConfig,apiKey?:string,options:GenerationOptions={}):Promise<Quiz>{
- const config=normalizeQuizConfig(input),signal=AbortSignal.any([AbortSignal.timeout(600_000),...(options.signal?[options.signal]:[])]);
+ const config=normalizeQuizConfig(input),signal=options.signal??new AbortController().signal;
  const active=QUESTION_TYPES.filter(t=>(config.questionDistribution?.[t]??0)>0);
  const questions:Quiz['questions']=[],generationBatches:NonNullable<Quiz['generationBatches']>=[];const research:{text?:string}={};let quiz:Quiz|undefined;const seen=new Set<string>();const groundingQueries=new Set<string>();
  for(const type of active){

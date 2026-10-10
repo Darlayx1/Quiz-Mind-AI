@@ -13,6 +13,8 @@
 .workspace-loading h1 { font-size: 24px; font-weight: 600; color: var(--qm-ink); margin-bottom: 10px; }
 .workspace-loading p { margin-bottom: 24px; }
 .generation-controls { display: flex; align-items: center; justify-content: center; gap: 24px; margin: -25px 20px 50px; font-size: 13px; color: var(--qm-muted); }
+.app-toast { position: fixed; z-index: 1000; right: 24px; bottom: 24px; max-width: min(420px, calc(100vw - 32px)); padding: 14px 18px; border-radius: 12px; box-shadow: 0 12px 32px rgba(25, 36, 65, .18); font-size: 14px; line-height: 1.5; background: #edf9f1; color: #17633e; border: 1px solid #bce6cb; }
+.app-toast.error { background: #fff3f0; color: #9c372d; border-color: #f1c8c0; }
 .ai-config-shortcut { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--qm-line); border-radius: 10px; background: #fafbfe; text-align: left; font-size: 13px; }
 .ai-config-shortcut small { display: block; color: var(--qm-muted); font-size: 11px; margin-top: 4px; }
 .ai-config-shortcut > svg:last-child { margin-left: auto; }

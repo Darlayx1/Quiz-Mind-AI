@@ -22,13 +22,22 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsTab | null>(null);
   const [isEvaluating,setIsEvaluating]=useState(false);
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0 });
   const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
+  const activeGeneration = useRef<Promise<void> | null>(null);
+  const activeJobId = useRef<string | null>(null);
   const restoredScope = useRef<string | null>(null);
   const attemptedProgress = useRef('');
   useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+  useEffect(() => {
     abort.current?.abort(new Error('Sesi atau ruang penyimpanan berubah. Operasi sebelumnya dihentikan.')); abort.current = null;
-    setLoading(false); setIsEvaluating(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
+    setLoading(false); setIsEvaluating(false); setCancelling(false); setToast(null); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
   }, [w.scope, w.mode]);
   useEffect(() => {
     if (!w.ready || restoredScope.current === w.scope) return;
@@ -54,25 +63,55 @@ export default function App() {
     const controller = new AbortController(); abort.current = controller;
     setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0 });
     const started = Date.now(); let currentJob: GenerationJob | undefined;
+    activeJobId.current = null;
     try {
       const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
         controller.signal.throwIfAborted();
         if (scope.current !== origin || abort.current !== controller) throw new Error('Operasi sebelumnya sudah dihentikan.');
-        currentJob = job; await w.update(d => ({ ...d, job }), origin);
+        currentJob = job; activeJobId.current = job.id; await w.update(d => ({ ...d, job }), origin);
       }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration({ config, completed }); });
       controller.signal.throwIfAborted(); if (scope.current !== origin || abort.current !== controller) return;
       await w.update(d => ({ ...d, job: null, history: [{ quiz: generated, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
+      controller.signal.throwIfAborted();
       if (scope.current !== origin || abort.current !== controller) return;
       setQuiz(generated); setResult(null); setView('runner');
+      setToast({ kind: 'success', message: 'Kuis berhasil dibuat.' });
     } catch (e) {
       if (scope.current !== origin || abort.current !== controller) return;
       const cancelled = controller.signal.aborted;
-      setError(cancelled ? 'Pembuatan kuis dibatalkan. Batch yang sudah selesai tetap dicatat.' : (e as Error).message);
+      setError(cancelled ? '' : (e as Error).message);
+      if (!cancelled) setToast({ kind: 'error', message: `Pembuatan kuis gagal: ${(e as Error).message}` });
       await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
           detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
-    } finally { if (scope.current === origin && abort.current === controller) { setLoading(false); abort.current = null; void w.refresh(); } }
+    } finally { if (scope.current === origin && abort.current === controller) { setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
+  };
+  const startGeneration = (config: QuizConfig, resume?: GenerationJob) => {
+    const task = generate(config, resume);
+    activeGeneration.current = task;
+    void task.finally(() => { if (activeGeneration.current === task) activeGeneration.current = null; });
+  };
+  const cancelGeneration = async () => {
+    if (cancelling || !abort.current) return;
+    const origin = scope.current;
+    const jobId = activeJobId.current;
+    const task = activeGeneration.current;
+    setCancelling(true);
+    abort.current.abort(new DOMException('Pembuatan kuis dibatalkan.', 'AbortError'));
+    const cancelOnServer = w.mode === 'account' && jobId
+      ? accountRpc(origin, 'qm_cancel_job', { p_id: jobId })
+      : Promise.resolve();
+    const [, serverResult] = await Promise.allSettled([task ?? Promise.resolve(), cancelOnServer]);
+    if (scope.current !== origin) return;
+    setView('creator');
+    if (serverResult.status === 'fulfilled') {
+      setError('');
+      setToast({ kind: 'success', message: 'Pembuatan kuis berhasil dibatalkan.' });
+    } else {
+      setToast({ kind: 'error', message: `Pembatalan di akun gagal: ${String(serverResult.reason?.message || serverResult.reason)}` });
+    }
+    setCancelling(false);
   };
   const saveResult = (next:QuizResult,origin=w.scope) => w.update(d=>({...d,progress:null,history:d.history.map(h=>h.quiz.id===next.quiz.id?{...h,lastResult:next,savedAt:new Date().toISOString(),attempts:[...(h.attempts??(h.lastResult?[h.lastResult]:[])).filter(r=>r.submission.completedAt!==next.submission.completedAt),next]}:h)}),origin);
   const runEvaluation = async (source:QuizResult,targets?:string[]) => {
@@ -114,10 +153,10 @@ export default function App() {
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span><button onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button></div></div>}
       {w.mode === 'initializing' ? <div className="workspace-loading" role="status">Memulihkan ruang penyimpanan…</div> : !w.ready ? <div className="workspace-loading"><h1>Penyimpanan perlu diperiksa</h1><p>Data lokal dan akun tetap terpisah. Periksa koneksi atau pulihkan sesi Anda.</p><button className="settings-primary" onClick={() => setSettings('account')}>Buka pengaturan akun</button></div> : loading ? <>
         <GenerationLoader topic={generation.config.topic} enableGrounding={w.data.preferences.grounding} model={w.data.preferences.model} />
-        <div className="generation-controls"><span>{generation.completed}/{generation.config.questionCount} soal selesai</span><button className="settings-secondary" onClick={() => { abort.current?.abort(); if (w.mode === 'account' && w.data.job) void accountRpc(w.scope, 'qm_cancel_job', { p_id: w.data.job.id }).catch(() => {}); }}>Batalkan pembuatan</button></div>
+        <div className="generation-controls"><span>{generation.completed}/{generation.config.questionCount} soal selesai</span><button className="settings-secondary" disabled={cancelling} onClick={cancelGeneration}>{cancelling ? 'Membatalkan…' : 'Batalkan pembuatan'}</button></div>
       </> : view === 'creator' ? <>
-        {w.data.job && ['running','interrupted'].includes(w.data.job.status) && <div className="page-shell !pb-0 !pt-5"><div className="resume-banner"><div><strong>Pembuatan kuis belum selesai</strong><p>{w.data.job.questions.length}/{w.data.job.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => void generate(w.data.job!.config, w.data.job!)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div></div>}
-        <QuizCreator key={w.scope} onGenerate={config => void generate(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} initialDraft={w.data.draft} onDraft={persistDraft} />
+        {w.data.job && ['running','interrupted'].includes(w.data.job.status) && <div className="page-shell !pb-0 !pt-5"><div className="resume-banner"><div><strong>Pembuatan kuis belum selesai</strong><p>{w.data.job.questions.length}/{w.data.job.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => startGeneration(w.data.job!.config, w.data.job!)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div></div>}
+        <QuizCreator key={w.scope} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} initialDraft={w.data.draft} onDraft={persistDraft} />
       </> : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
       : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={()=>abort.current?.abort()} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
@@ -125,5 +164,6 @@ export default function App() {
     </main>
     <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>
     {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
+    {toast && <div className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</div>}
   </div>;
 }

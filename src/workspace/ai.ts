@@ -10,7 +10,7 @@ export async function invokeAccount(body: Record<string, unknown>, signal?: Abor
   if (!session.session) throw new Error('Sesi berakhir. Masuk kembali untuk melanjutkan.');
   if (expectedOwner && session.session.user.id !== expectedOwner) throw new Error('Identitas akun berubah. Operasi dihentikan.');
   const response = await fetch(`${SUPABASE_URL}/functions/v1/quiz-ai`, {
-    method: 'POST', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(140000)]) : AbortSignal.timeout(90000), headers: { 'Content-Type': 'application/json', apikey: PUBLISHABLE_KEY,
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json', apikey: PUBLISHABLE_KEY,
       Authorization: `Bearer ${session.session.access_token}` }, body: JSON.stringify(body),
   });
   let result: any;
@@ -23,7 +23,7 @@ export async function testKey(repository: WorkspaceRepository, id: string, model
   try {
     const { generateQuizBatch } = await import('../server/geminiService.js');
     // Tests model access with one small call, only after an explicit user action.
-    await generateQuizBatch({ model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await localCredential(id), [], AbortSignal.timeout(80000));
+    await generateQuizBatch({ model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await localCredential(id));
     await repository.recordKeyOutcome(id, 'available');
   } catch (e) { await repository.recordKeyOutcome(id, keyStatus(e)); throw e; }
 }
@@ -37,10 +37,9 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   if (job.preferences.grounding && job.quiz?.groundingFallbackUsed) throw new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.');
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
-  const timeoutAt = new Date(job.createdAt).getTime() + 30 * 60 * 1000;
   let keyIndex = 0;
   while (job.questions.length < job.config.questionCount) {
-    signal.throwIfAborted(); if (Date.now() > timeoutAt) throw new Error('Batas waktu keseluruhan operasi terlampaui. Buat kuis baru.');
+    signal.throwIfAborted();
     if (repository.scope !== 'guest') {
       const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
       job.quiz = result.quiz; job.questions = result.quiz.questions;
@@ -52,8 +51,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
         try {
-          const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(80000)]);
-          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
+          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), signal);
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;

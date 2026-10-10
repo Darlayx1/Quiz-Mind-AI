@@ -55,4 +55,31 @@ assert.equal(pending[1].args[5].aborted, false, 'New operation remains active');
 pending[1].resolve({ id: 'second', questions: [] }); await settle();
 assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'second');
 assert.equal(updates, 1, 'Only current operation saves its result');
-console.log('PASS: real App session interruption, stale rejection, new-operation isolation, and successful recovery. No external calls.');
+runtime.__generate = (...args: any[]) => new Promise((_resolve, reject) => {
+  const signal = args[5] as AbortSignal;
+  signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  pending.push({ args });
+});
+find(render(), 'QuizRunner').props.onQuit();
+find(render(), 'QuizCreator').props.onGenerate({ topic: 'Cancel', questionCount: 1 });
+const loadingTree = render();
+const controls = (function byClass(node: any): any {
+  if (!node) return;
+  if (Array.isArray(node)) return node.map(byClass).find(Boolean);
+  if (node.props?.className === 'generation-controls') return node;
+  return byClass(node.props?.children);
+})(loadingTree);
+assert.ok(controls, 'Cancel controls are shown during generation');
+const cancelButton = controls.props.children.find((child: any) => child?.type === 'button');
+await cancelButton.props.onClick();
+assert.equal(pending[2].args[5].aborted, true, 'Cancel reaches the active provider signal');
+assert.ok(find(render(), 'QuizCreator'), 'Cancel returns to the creator');
+assert.equal(find(render(), 'GenerationLoader'), undefined);
+const toast = (function byToast(node: any): any {
+  if (!node) return;
+  if (Array.isArray(node)) return node.map(byToast).find(Boolean);
+  if (typeof node.props?.className === 'string' && node.props.className.startsWith('app-toast')) return node;
+  return byToast(node.props?.children);
+})(render());
+assert.match(toast.props.children, /berhasil dibatalkan/);
+console.log('PASS: real App session recovery and cancel action aborts generation and returns to creator. No external calls.');

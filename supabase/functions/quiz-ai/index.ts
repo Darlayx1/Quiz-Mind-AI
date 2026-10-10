@@ -15,6 +15,23 @@ async function outcome(id, userId, status) {
   const { error } = await admin.rpc('qm_record_outcome', { p_user: userId, p_key: id, p_status: status });
   if (error) throw new Error('Status key belum berhasil disimpan.');
 }
+function watchGenerationCancellation(job, userId, requestSignal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(new DOMException('Pembuatan kuis dibatalkan.', 'AbortError'));
+  requestSignal.addEventListener('abort', abort, { once: true });
+  if (requestSignal.aborted) abort();
+  let checking = false;
+  const timer = setInterval(async () => {
+    if (checking || controller.signal.aborted) return;
+    checking = true;
+    try {
+      const { data, error } = await admin.from('qm_ai_jobs').select('status,lease_token').eq('id', job.id).eq('user_id', userId).single();
+      if (!error && (data?.status === 'cancelled' || data?.lease_token !== job.lease_token)) abort();
+    } catch { /* A transient database read failure must not override the active request. */ }
+    finally { checking = false; }
+  }, 2000);
+  return { signal: controller.signal, stop() { clearInterval(timer); requestSignal.removeEventListener('abort', abort); } };
+}
 Deno.serve(async request => {
   if (request.method === 'OPTIONS') return new Response(null, { headers });
   if (request.method !== 'POST') return json({ error: 'Metode tidak didukung' }, 405);
@@ -37,7 +54,7 @@ Deno.serve(async request => {
     if (body.action === 'test') {
       const key = keys.find(k => k.id === body.keyId); if (!key) return json({ error: 'Key aktif tidak ditemukan pada akun ini.' }, 404);
       try {
-        await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], AbortSignal.timeout(80000));
+        await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], request.signal);
         await outcome(key.id, userId, 'available'); return json({ success: true });
       } catch (error) { const classified = classifyApiError(error, body.model); await outcome(key.id, userId, statusOf(classified)); throw classified; }
     }
@@ -65,27 +82,35 @@ Deno.serve(async request => {
     if (!candidates.length) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
     const previous = job.result?.questions || [];
     const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
-    let batch; let last; let keyIndex = 0;
-    for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
-      const key = candidates[keyIndex];
-      try {
-        batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
-        await outcome(key.id, userId, 'available'); break;
-      } catch (error) {
-        last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
-        if (!isRetryableGenerationError(last)) break;
-        if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
+    const cancellation = watchGenerationCancellation(job, userId, request.signal);
+    try {
+      let batch; let last; let keyIndex = 0;
+      for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
+        cancellation.signal.throwIfAborted();
+        const key = candidates[keyIndex];
+        try {
+          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal);
+          cancellation.signal.throwIfAborted();
+          await outcome(key.id, userId, 'available'); break;
+        } catch (error) {
+          cancellation.signal.throwIfAborted();
+          last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
+          if (!isRetryableGenerationError(last)) break;
+          if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
+        }
       }
-    }
-    if (!batch) throw last || new Error('Batch gagal.');
-    const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
-      groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
-    const complete = quiz.questions.length === body.config.questionCount;
-    const { error: commitError } = await admin.rpc('qm_commit_job', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_result: quiz, p_status: complete ? 'completed' : 'pending' });
-    if (commitError) throw new Error('Operasi berubah atau dibatalkan. Hasil batch tidak dipindahkan ke ruang lain.');
-    return json({ quiz, complete });
+      if (!batch) throw last || new Error('Batch gagal.');
+      cancellation.signal.throwIfAborted();
+      const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
+        groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
+      const complete = quiz.questions.length === body.config.questionCount;
+      const { error: commitError } = await admin.rpc('qm_commit_job', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_result: quiz, p_status: complete ? 'completed' : 'pending' });
+      if (commitError) throw new Error('Operasi berubah atau dibatalkan. Hasil batch tidak dipindahkan ke ruang lain.');
+      return json({ quiz, complete });
+    } finally { cancellation.stop(); }
   } catch (error) {
     if (job && userId) await admin.rpc('qm_commit_job', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_result: job.result, p_status: 'pending' });
+    if (error?.name === 'AbortError' || request.signal.aborted) return json({ error: 'Pembuatan kuis dibatalkan.', code: 'CANCELLED' }, 409);
     // No provider request/credentials are logged or returned.
     const status = Number(error.status);
     const code = error.code || 'ACCOUNT_REQUEST_FAILED';

@@ -147,9 +147,15 @@ const outcomes: string[] = [];
 const commits: any[] = [];
 const preferences = { ...emptyWorkspace().preferences, grounding: false };
 const operationId = crypto.randomUUID();
+let cancelledInDatabase = false;
 const admin = {
   auth: { getUser: async () => ({ data: { user: { id: 'account-fixture' } }, error: null }) },
-  from: () => {
+  from: (table: string) => {
+    if (table === 'qm_ai_jobs') {
+      const query: any = { select: () => query, eq: () => query,
+        single: async () => ({ data: { status: cancelledInDatabase ? 'cancelled' : 'running', lease_token: 'fixture-lease' }, error: null }) };
+      return query;
+    }
     const query: any = { select: () => query, eq: () => query, order: () => query,
       then: (resolve: any) => Promise.resolve({ data: [{ id: 'account-key', enabled: true }], error: null }).then(resolve) };
     return query;
@@ -214,7 +220,43 @@ try {
   const grounded = (await response.json()).quiz;
   assert.ok(grounded.usedGrounding && grounded.webCheckedAt);
   assert.ok(grounded.questions.every((q: any) => q.groundingSources.length));
-  console.log('PASS: authenticated account handler, generated Edge engine, sparse essay distribution, correct schema, and checkpoint preserved after truncated response. No external API requests.');
+  let providerSignal: AbortSignal | undefined;
+  let providerStarted!: () => void;
+  const providerCalled = new Promise<void>(resolve => { providerStarted = resolve; });
+  runtime.__accountGenerationCall = (params: any) => new Promise((_resolve, reject) => {
+    providerSignal = params.config.abortSignal;
+    providerSignal!.addEventListener('abort', () => reject(providerSignal!.reason), { once: true });
+    providerStarted();
+  });
+  const controller = new AbortController();
+  const cancellable = new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST', signal: controller.signal,
+    headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'generate', operationId, config: essayOnly, preferences }) });
+  const interrupted = handler!(cancellable);
+  await providerCalled;
+  const commitsBeforeCancel = commits.length;
+  controller.abort();
+  await interrupted;
+  assert.equal(providerSignal?.aborted, true, 'Client cancellation must abort the Edge Gemini call');
+  assert.ok(commits.slice(commitsBeforeCancel).every(commit => commit.p_status !== 'completed'));
+  let secondProviderStarted!: () => void;
+  const secondProviderCalled = new Promise<void>(resolve => { secondProviderStarted = resolve; });
+  runtime.__accountGenerationCall = (params: any) => new Promise((_resolve, reject) => {
+    providerSignal = params.config.abortSignal;
+    providerSignal!.addEventListener('abort', () => reject(providerSignal!.reason), { once: true });
+    secondProviderStarted();
+  });
+  const dbInterrupted = handler!(request());
+  await secondProviderCalled;
+  cancelledInDatabase = true;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([dbInterrupted, new Promise((_, reject) => {
+      watchdog = setTimeout(() => reject(new Error('Database cancellation did not reach Gemini.')), 5000);
+    })]);
+  } finally { if (watchdog) clearTimeout(watchdog); }
+  assert.equal(providerSignal?.aborted, true, 'Database cancellation must abort the Edge Gemini call');
+  console.log('PASS: account generation, client and database cancellation reach the Edge Gemini call. No external API requests.');
 } finally {
   runtime.Deno = priorDeno;
   delete runtime.__accountGenerationAdmin;

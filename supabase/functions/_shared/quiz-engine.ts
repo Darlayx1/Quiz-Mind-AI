@@ -490,8 +490,6 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY) {
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
-      timeout: 18e4,
-      // 3 menit untuk penalaran mendalam Gemma & batching
       retryOptions: { attempts: 1 }
       // The application owns the shared retry budget.
     }
@@ -499,7 +497,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY) {
 }
 async function generateQuizBatch(input, apiKey, existing = [], signal) {
   const config = normalizeQuizConfig(input);
-  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75e3, retryOptions: { attempts: 1 } } });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
   const gemma = model === "gemma-4-31b-it";
   if (gemma && config.enableGrounding) throw new QuizGenerationError("Model Gemma tidak mendukung pencarian web. Pilih model Gemini untuk kuis dengan referensi terkini.", 400, "WEB_SEARCH_UNSUPPORTED");
@@ -643,24 +641,11 @@ function classifyApiError(err, modelId) {
     "GENERATION_FAILED"
   );
 }
-async function withTimeout(promise, timeoutMs = 9e4, label = "Permintaan AI") {
-  let timer;
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new QuizGenerationError(`${label} melebihi batas waktu maksimal (${timeoutMs / 1e3} detik).`, 504, "TIMEOUT"));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-async function callWithRetry(fn, maxRetries = 2, baseDelayMs = 2e3, modelId = "", timeoutMs = modelId === "gemma-4-31b-it" ? 15e4 : 9e4) {
+async function callWithRetry(fn, maxRetries = 2, baseDelayMs = 2e3, modelId = "") {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(fn(), timeoutMs, `Permintaan model ${modelId}`);
+      return await fn();
     } catch (err) {
       lastErr = err;
       const msg = String(err?.message || err);
@@ -692,7 +677,7 @@ async function generateQuizWithGemini(config, apiKey, options = {}) {
   const isGemma = selectedModel === "gemma-4-31b-it";
   if (config.enableGrounding && modelInfo(selectedModel)?.grounding !== true) throw new QuizGenerationError("Model pilihan tidak mendukung pencarian web. Pilih model dengan dukungan web.", 400, "FALLBACK_CAPABILITY");
   const ai = options.pool ? void 0 : getGeminiClient(apiKey);
-  const signal = AbortSignal.any([AbortSignal.timeout(6e5), ...options.signal ? [options.signal] : []]);
+  const signal = options.signal ?? new AbortController().signal;
   let totalCalls = 0, batchCalls = 0;
   const requestContent = async (params) => {
     signal.throwIfAborted();
@@ -701,8 +686,7 @@ async function generateQuizWithGemini(config, apiKey, options = {}) {
     if (!options.pool) {
       if (options.attemptBudget && options.attemptBudget.calls >= 3) throw new PoolError("Batas percobaan pembuatan kuis tercapai.", 503, "POOL_BUDGET");
       if (options.attemptBudget) options.attemptBudget.calls++;
-      const callSignal = AbortSignal.any([signal, AbortSignal.timeout(isGemma ? 15e4 : 9e4)]);
-      return ai.models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+      return ai.models.generateContent({ ...params, config: { ...params.config, abortSignal: signal } });
     }
     return options.pool.run(async (key, poolSignal) => {
       if (batchCalls >= 3 || totalCalls >= Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget && options.attemptBudget.calls >= 3)
@@ -710,12 +694,10 @@ async function generateQuizWithGemini(config, apiKey, options = {}) {
       batchCalls++;
       totalCalls++;
       if (options.attemptBudget) options.attemptBudget.calls++;
-      const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(isGemma ? 15e4 : 9e4)]);
       try {
-        return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+        return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: poolSignal } });
       } catch (error) {
         poolSignal.throwIfAborted();
-        if (callSignal.aborted) throw new QuizGenerationError("Layanan AI melewati batas waktu.", 504, "TIMEOUT");
         throw error;
       }
     }, { signal, provider: "gemini", model: String(params.model) + (params.config?.tools?.length ? ":grounding" : ""), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : void 0, maxAttempts: Math.max(1, Math.min(params.config?.tools?.length ? 2 : modelCandidates.length > 1 && String(params.model) === selectedModel ? 2 : 3, 3 - (options.attemptBudget?.calls ?? 0))) });

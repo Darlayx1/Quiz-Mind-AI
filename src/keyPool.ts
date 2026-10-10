@@ -140,7 +140,7 @@ export class KeyPool {
   }
   reset(id: string) { const key = this.collection.keys.find(k => k.id === id); this.health.delete(id); for (const scope of this.restrictions) if (scope.startsWith(id + ':')) this.restrictions.delete(scope); if (key) { for (const scope of this.cooldown.keys()) if (scope.startsWith(this.group(key) + '\0')) { this.cooldown.delete(scope); this.quotaMessages.delete(scope); } this.event({ keyId: id, type: 'reset', reason: 'Karantina dan jeda kelompok direset oleh pengguna' }); } this.changed(); }
   async run<T>(fn: (key: string, signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; onNotice?: (message: string) => void; maxAttempts?: number; allowKeyFallback?: boolean; model?: string; provider?: AIProvider } = {}): Promise<T> {
-    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
+    const signal = AbortSignal.any([this.controller.signal, ...(options.signal ? [options.signal] : [])]);
     const seen = new Set<string>();
     let attempts = 0, transientRetries = 0;
     const maxAttempts = Math.max(1, Math.min(3, Math.floor(options.maxAttempts || 3)));
