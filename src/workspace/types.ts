@@ -1,13 +1,16 @@
 import { DEFAULT_MODEL, type AIModel } from '../models.js';
 import type { Quiz, QuizConfig, QuizResult, Question, StoredAnswer, EvaluationSettings } from '../types/quiz.js';
 import { defaultEvaluationSettings } from '../evaluationSettings.js';
+import type { ParallelResearch } from '../server/parallelSearch.js';
 
 export type KeyStatus = 'untested' | 'available' | 'invalid' | 'quota' | 'unavailable';
 export interface ApiKeyRecord {
+  provider?: 'gemini' | 'parallel';
   id: string; label: string; suffix: string; fingerprint: string; enabled: boolean;
   priority: number; status: KeyStatus; testedAt?: string; successes: number; failures: number;
 }
 export interface Preferences {
+  searchProvider?: 'google' | 'parallel';
   allowGroundingFallback?: boolean;
   model: AIModel; keyId: string | null; grounding: boolean; maxAttempts: number; fallback: boolean;
   evaluation?: EvaluationSettings;
@@ -22,6 +25,7 @@ export interface Activity {
   durationMs: number; keyId?: string; detail?: string;
 }
 export interface GenerationJob {
+  parallelResearch?: ParallelResearch;
   id: string; config: QuizConfig; preferences: Preferences; questions: Question[];
   quiz?: Quiz; status: 'running' | 'interrupted' | 'completed' | 'cancelled'; createdAt: string;
 }
@@ -30,7 +34,7 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, allowGroundingFallback: false, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
+  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {
@@ -45,7 +49,7 @@ export interface WorkspaceRepository {
   load(): Promise<WorkspaceSnapshot>;
   save(data: WorkspaceData, revision: number): Promise<number>;
   keys(): Promise<ApiKeyRecord[]>;
-  putKey(input: { id?: string; label: string; secret?: string; enabled?: boolean; priority?: number }): Promise<void>;
+  putKey(input: { id?: string; label: string; secret?: string; enabled?: boolean; priority?: number; provider?: 'gemini' | 'parallel' }): Promise<void>;
   removeKey(id: string): Promise<void>;
   recordKeyOutcome(id: string, status: KeyStatus): Promise<void>;
 }
@@ -57,7 +61,7 @@ export function keyStatus(error: unknown): KeyStatus {
   return 'unavailable';
 }
 export function availableKeys(keys: ApiKeyRecord[], preferences: Preferences) {
-  const sorted = keys.filter(k => k.enabled).sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  const sorted = keys.filter(k => k.enabled && k.provider !== 'parallel').sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   if (!preferences.keyId) return sorted;
   const selected = sorted.find(k => k.id === preferences.keyId);
   return selected ? [selected, ...(preferences.fallback ? sorted.filter(k => k.id !== selected.id) : [])] : [];

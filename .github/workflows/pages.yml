@@ -30,9 +30,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: node --import tsx scripts/model-test.ts
-      - run: node --import tsx scripts/workspace-test.ts
       - run: node --import tsx scripts/workspace-ai-test.ts
-      - run: node --import tsx scripts/workspace-generation-test.ts
+      - run: npm run test:parallel
       - run: node --import tsx scripts/app-operation-test.ts
       - run: node --import tsx scripts/quiz-types-test.ts
       - run: npm run build:pages

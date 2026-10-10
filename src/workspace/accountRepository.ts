@@ -17,12 +17,12 @@ export function accountRepository(userId: string): WorkspaceRepository {
       const response = await fetch(`${SUPABASE_URL}/rest/v1/qm_api_keys?select=*&user_id=eq.${userId}&order=priority.asc,id.asc`, {
         signal: AbortSignal.timeout(20000), headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${identity.session.access_token}` } });
       const data = await response.json(); if (!response.ok) throw accountError(data);
-      return (data || []).map((k: Record<string, any>) => ({ id: k.id, label: k.label, suffix: k.suffix, fingerprint: k.fingerprint,
+      return (data || []).map((k: Record<string, any>) => ({ id: k.id, provider: k.provider ?? 'gemini', label: k.label, suffix: k.suffix, fingerprint: k.fingerprint,
         enabled: k.enabled, priority: k.priority, status: k.status, testedAt: k.tested_at,
         successes: k.successes, failures: k.failures })) as ApiKeyRecord[];
     },
     async putKey(input) {
-      await accountRpc(userId, 'qm_upsert_key', { p_id: input.id || null, p_label: input.label,
+      await accountRpc(userId, 'qm_upsert_provider_key', { p_id: input.id || null, p_label: input.label, p_provider: input.provider || null,
         p_secret: input.secret?.trim() || null, p_enabled: input.enabled ?? null, p_priority: input.priority ?? null });
     },
     async removeKey(id) { await accountRpc(userId, 'qm_remove_key', { p_id: id }); },

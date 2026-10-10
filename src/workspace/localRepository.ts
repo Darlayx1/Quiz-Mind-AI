@@ -1,6 +1,7 @@
 import { openDB, type DBSchema } from 'idb';
 import { readData, migrateHistory } from '../quizStorage.js';
 import { validateCollection } from '../keyPool.js';
+import { validateParallelKey } from '../server/parallelSearch.js';
 import { emptyWorkspace, sanitizeWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository, type WorkspaceSnapshot, type KeyStatus } from './types.js';
 
 interface LocalDatabase extends DBSchema {
@@ -67,11 +68,15 @@ export const localRepository: WorkspaceRepository = {
     const all = await tx.objectStore('keys').getAll();
     const fail = async (message: string) => { tx.abort(); await tx.done.catch(() => {}); throw new Error(message); };
     if (input.id && !existing) return fail('Key tidak ditemukan.');
-    if (!existing && all.length >= 100) return fail('Maksimal 100 API key untuk ruang lokal.');
+    const provider = input.provider ?? existing?.provider ?? 'gemini';
+    if (!['gemini', 'parallel'].includes(provider) || existing && provider !== (existing.provider ?? 'gemini')) return fail('Penyedia key tidak dapat diubah.');
+    if (provider === 'parallel' && secret) { try { validateParallelKey(secret); } catch (e) { return fail((e as Error).message); } }
+    if (!existing && provider === 'parallel' && all.some(k => k.provider === 'parallel')) return fail('Maksimal 1 API key Parallel untuk ruang lokal. Ganti key yang sudah ada.');
+    if (!existing && provider === 'gemini' && all.filter(k => k.provider !== 'parallel').length >= 100) return fail('Maksimal 100 API key untuk ruang lokal.');
     if (!existing && !secret) return fail('Masukkan API key.');
     if (digest && all.some(k => k.fingerprint === digest && k.id !== input.id)) return fail('API key ini sudah tersimpan di ruang lokal.');
     const id = existing?.id ?? crypto.randomUUID();
-    await tx.objectStore('keys').put({ id, label: input.label.trim(), suffix: secret ? secret.slice(-4) : existing!.suffix,
+    await tx.objectStore('keys').put({ id, provider, label: input.label.trim(), suffix: secret ? secret.slice(-4) : existing!.suffix,
       fingerprint: digest ?? existing!.fingerprint, enabled: input.enabled ?? existing?.enabled ?? true,
       priority: input.priority ?? existing?.priority ?? (Math.max(0, ...all.map(k => k.priority)) + 1),
       status: secret ? 'untested' : existing!.status, testedAt: secret ? undefined : existing?.testedAt,

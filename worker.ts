@@ -1,6 +1,7 @@
 import assets from './.worker-assets.json';
 import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
 import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
+import { parallelRelay } from './src/server/parallelSearch.js';
 
 type Environment = { GEMINI_API_KEY?: string };
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -8,6 +9,7 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 export default {
   async fetch(request: Request, env: Environment) {
     const pathname = new URL(request.url).pathname;
+    if (pathname === '/api/parallel-search') return parallelRelay(request);
     if (pathname === '/api/health' && request.method === 'GET') {
       const hasApiKey = Boolean(env.GEMINI_API_KEY && env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
       return json({

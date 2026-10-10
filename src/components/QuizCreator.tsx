@@ -57,7 +57,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
   const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
   const selectedDifficulty = DIFFICULTIES.find(level => level.id === difficulty)!;
-  const supportsGrounding = model !== "gemma-4-31b-it";
+  const supportsGrounding = model !== "gemma-4-31b-it" || preferences.searchProvider === 'parallel';
   const selectedModel = AI_MODELS.find(item => item.id === model)!;
   const missingReason = !topic.trim() ? "Isi topik kuis untuk melanjutkan."
     : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."

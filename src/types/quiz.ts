@@ -55,6 +55,8 @@ export interface QuestionEvaluation {
 }
 
 export interface Quiz {
+  searchProvider?: 'google' | 'parallel';
+  parallelResearch?: import('../server/parallelSearch.js').ParallelResearch;
   webCheckedAt?: string;
   groundingFallbackUsed?: boolean;
   generationWarnings?: string[];

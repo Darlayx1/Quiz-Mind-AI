@@ -3,6 +3,8 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../_shared/quiz-engine.ts';
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
+import { searchParallel, usableResearch } from '../../../src/server/parallelSearch.ts';
+
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Content-Type': 'application/json' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -54,12 +56,13 @@ Deno.serve(async request => {
     if (body.action === 'test') {
       const key = keys.find(k => k.id === body.keyId); if (!key) return json({ error: 'Key aktif tidak ditemukan pada akun ini.' }, 404);
       try {
-        await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], request.signal);
+        if (key.provider === 'parallel') await searchParallel('Penjumlahan sederhana', await getSecret(key), request.signal);
+        else await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], request.signal);
         await outcome(key.id, userId, 'available'); return json({ success: true });
       } catch (error) { const classified = classifyApiError(error, body.model); await outcome(key.id, userId, statusOf(classified)); throw classified; }
     }
     if (body.action === 'evaluate') {
-      const key=keys.find(k=>k.id===body.keyId); if(!key)return json({error:'Key aktif tidak tersedia pada akun ini.'},404);
+      const key=keys.find(k=>k.id===body.keyId && k.provider !== 'parallel'); if(!key)return json({error:'Key aktif tidak tersedia pada akun ini.'},404);
       const {data: workspace,error}=await admin.from('qm_workspaces').select('data').eq('user_id',userId).single();
       const stored=workspace?.data?.history?.find(h=>h.quiz.id===body.input?.quiz?.id)?.lastResult;
       if(error||!stored||stored.submission.completedAt!==body.input?.submission?.completedAt)return json({error:'Jawaban belum tersimpan pada akun aktif.'},409);
@@ -72,30 +75,46 @@ Deno.serve(async request => {
     const preferences = body.preferences;
     if (!body.config || !Number.isInteger(body.config.questionCount) || body.config.questionCount < 1 || body.config.questionCount > 100) return json({ error: 'Jumlah soal harus 1–100.' }, 400);
     if (!preferences || !Number.isInteger(preferences.maxAttempts) || preferences.maxAttempts < 1 || preferences.maxAttempts > 3) return json({ error: 'Batas percobaan tidak valid.' }, 400);
+    if (preferences.searchProvider && !['google', 'parallel'].includes(preferences.searchProvider)) return json({ error: 'Penyedia pencarian tidak valid.' }, 400);
     const { data: claimed, error: claimError } = await admin.rpc('qm_claim_job', { p_user: userId, p_id: body.operationId, p_config: body.config, p_preferences: preferences });
     if (claimError) return json({ error: claimError.code === '55P03' ? 'Batch masih diproses. Tunggu sebelum melanjutkan.' : claimError.message }, claimError.code === '55P03' ? 409 : 400);
     job = claimed;
     if (preferences.grounding && job.result?.groundingFallbackUsed) throw Object.assign(new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.'), { status: 409, code: 'WEB_RESTART_REQUIRED' });
     if (job.status === 'completed') return json({ quiz: job.result, complete: true });
-    const selected = preferences.keyId ? keys.find(k => k.id === preferences.keyId) : null;
-    const candidates = preferences.keyId ? selected ? [selected, ...(preferences.fallback ? keys.filter(k => k.id !== selected.id) : [])] : [] : keys;
+    const generationKeys = keys.filter(k => k.provider !== 'parallel');
+    const selected = preferences.keyId ? generationKeys.find(k => k.id === preferences.keyId) : null;
+    const candidates = preferences.keyId ? selected ? [selected, ...(preferences.fallback ? generationKeys.filter(k => k.id !== selected.id) : [])] : [] : generationKeys;
     if (!candidates.length) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
     const previous = job.result?.questions || [];
     const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
     const cancellation = watchGenerationCancellation(job, userId, request.signal);
     try {
+      let research;
+      if (preferences.grounding && preferences.searchProvider === 'parallel') {
+        const searchKey = keys.find(k => k.provider === 'parallel');
+        if (!searchKey) throw Object.assign(new Error('Tambahkan atau aktifkan satu API key Parallel pada akun ini.'), { status: 400, code: 'PARALLEL_KEY_MISSING' });
+        research = job.result?.parallelResearch;
+        if (!usableResearch(research, batchConfig.topic)) {
+          try { research = await searchParallel(batchConfig.topic, await getSecret(searchKey), cancellation.signal); await outcome(searchKey.id, userId, 'available'); }
+          catch (error) { if (!cancellation.signal.aborted) await outcome(searchKey.id, userId, statusOf(error)); throw error; }
+          // Persist evidence before generation so a failed batch can resume without another search.
+          job.result = { ...(job.result || {}), questions: previous, parallelResearch: research };
+          const { error: researchError } = await admin.rpc('qm_checkpoint_research', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_research: research });
+          if (researchError) throw Object.assign(new Error('Checkpoint pencarian belum tersimpan atau operasi dibatalkan.'), { status: 409, code: 'PARALLEL_CHECKPOINT_FAILED' });
+        }
+      }
       let batch; let last; let keyIndex = 0;
       for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
         cancellation.signal.throwIfAborted();
         const key = candidates[keyIndex];
         try {
-          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal);
+          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal, research);
           cancellation.signal.throwIfAborted();
           await outcome(key.id, userId, 'available'); break;
         } catch (error) {
           cancellation.signal.throwIfAborted();
           last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
-          if (!isRetryableGenerationError(last)) break;
+          if (!isRetryableGenerationError(last) || String(last.code || '').startsWith('PARALLEL_')) break;
           if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
         }
       }

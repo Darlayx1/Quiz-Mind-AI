@@ -9,4 +9,6 @@ await writeFile('supabase/functions/_shared/evaluation-engine.ts', '// @ts-noche
 const edge = await build({ entryPoints: ['supabase/functions/quiz-ai/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', external: ['npm:*'], minify: true });
 await mkdir('build', { recursive: true });
 await writeFile('build/quiz-ai.ts', '// @ts-nocheck\n' + edge.outputFiles[0].text);
+const relay = await build({ entryPoints: ['supabase/functions/parallel-search/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', minify: true });
+await writeFile('build/parallel-search.ts', '// @ts-nocheck\n' + relay.outputFiles[0].text);
 console.log('Supabase Edge source ready.');

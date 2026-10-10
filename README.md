@@ -7,11 +7,13 @@ Situs: https://darlayx1.github.io/Quiz-Mind-AI/
 ## Pengaturan AI
 
 - **Akun:** masuk, daftar, pemulihan akun, profil, logout, dan impor data lokal secara eksplisit.
-- **API key:** hingga 100 key per ruang, status, pengaktifan, prioritas, uji akses, edit, dan hapus. Key nonaktif tetap dihitung.
+- **API key:** hingga 100 key Google dan satu key Parallel per ruang, status, pengaktifan, uji akses, edit, dan hapus. Key nonaktif tetap dihitung; prioritas hanya berlaku untuk key Google.
 - **Model & penggunaan:** pilihan model dan key, referensi web jika didukung, maksimal 1–3 percobaan per batch.
 - **Riwayat:** kuis, hasil pengerjaan, aktivitas AI, pencarian, ekspor tanpa kredensial.
 
 Desktop menggunakan window dengan sidebar; ponsel menggunakan window penuh dan tab horizontal. Pengaturan mendukung keyboard, fokus dialog, dan pengembalian fokus saat ditutup.
+
+Parallel Search memakai API key yang diinput pengguna dan menyimpan kredensial mengikuti ruang lokal/akun yang aktif. Lihat [panduan integrasi, deployment, dan pengujian](docs/parallel-search.md).
 
 ## Penyimpanan
 

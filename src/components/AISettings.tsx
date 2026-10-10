@@ -24,12 +24,16 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
   const [authView, setAuthView] = useState<'login' | 'signup' | 'forgot' | 'reset'>(w.passwordRecovery ? 'reset' : 'login');
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(w.session?.user.user_metadata?.name || '');
   const [editing, setEditing] = useState<ApiKeyRecord | 'new' | null>(null); const [label, setLabel] = useState(''); const [secret, setSecret] = useState('');
+  const [parallelSecret, setParallelSecret] = useState('');
+  const [parallelConflict, setParallelConflict] = useState<'skip' | 'replace'>('skip');
+  const parallelKey = w.keys.find(k => k.provider === 'parallel');
+  const googleKeys = w.keys.filter(k => k.provider !== 'parallel');
   const [search, setSearch] = useState(''); const [page, setPage] = useState(0);
   const [importPreview, setImportPreview] = useState<Awaited<ReturnType<typeof localImportPayload>> | null>(null);
   const [selectedImports, setSelectedImports] = useState<string[]>([]); const [importPreferences, setImportPreferences] = useState(false);
   const dialog = useRef<HTMLDivElement>(null); const mounted = useRef(true); const currentScope = useRef(w.scope); currentScope.current = w.scope;
   const titleId = 'ai-settings-title';
-  const dirty = Boolean(editing && (label.trim() || secret));
+  const dirty = Boolean(editing && (label.trim() || secret) || parallelSecret.trim());
   const close = () => { if (!busy && (!dirty || confirm('Form API key belum disimpan. Tutup pengaturan?'))) onClose(); };
   const closeRef = useRef(close); closeRef.current = close;
   useEffect(() => {
@@ -46,7 +50,7 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
     document.addEventListener('keydown', keydown);
     return () => { mounted.current = false; document.body.style.overflow = overflow; document.removeEventListener('keydown', keydown); prior?.focus(); };
   }, []);
-  useEffect(() => { setSecret(''); setEditing(null); setImportPreview(null); setMessage(''); setError(''); setPage(0); setPassword(''); }, [w.scope]);
+  useEffect(() => { setSecret(''); setEditing(null); setImportPreview(null); setParallelSecret(''); setParallelConflict('skip'); setMessage(''); setError(''); setPage(0); setPassword(''); }, [w.scope]);
   const act = async (action: () => Promise<unknown>, success?: string) => {
     if (busy) return; const scope = w.scope; setBusy(true); setMessage(''); setError('');
     try { await action(); if (mounted.current && currentScope.current === scope && success) setMessage(success); }
@@ -55,15 +59,15 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
   };
   const chooseTab = (next: SettingsTab) => {
     if (busy || (dirty && !confirm('Form API key belum disimpan. Pindah tab?'))) return;
-    setTab(next); setEditing(null); setSecret(''); setMessage(''); setError(''); setSearch(''); setPage(0);
+    setTab(next); setParallelSecret(''); setEditing(null); setSecret(''); setMessage(''); setError(''); setSearch(''); setPage(0);
   };
   const pref = (patch: Partial<Preferences>) => act(() => w.update(d => ({ ...d, preferences: { ...d.preferences, ...patch } })), 'Pilihan tersimpan.');
   const edit = (key: ApiKeyRecord | 'new') => { setEditing(key); setLabel(key === 'new' ? '' : key.label); setSecret(''); setMessage(''); setError(''); };
   const exportData = () => {
-    const blob = new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), data: w.data, keys: w.keys.map(({ fingerprint, ...key }) => key) }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ version: 3, exportedAt: new Date().toISOString(), data: w.data, keys: w.keys.map(({ fingerprint, ...key }) => key) }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'quizmind-riwayat.json'; link.click(); URL.revokeObjectURL(url);
   };
-  const filteredKeys = w.keys.filter(k => `${k.label} ${k.suffix} ${statusLabel[k.status]}`.toLowerCase().includes(search.toLowerCase()));
+  const filteredKeys = googleKeys.filter(k => `${k.label} ${k.suffix} ${statusLabel[k.status]}`.toLowerCase().includes(search.toLowerCase()));
   const filteredHistory = w.data.history.filter(item => `${item.quiz.title} ${item.quiz.topic}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   const scopeLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : `Akun · ${w.session?.user.email || 'sesi perlu dipulihkan'}`;
   return <div className="settings-overlay">
@@ -89,10 +93,11 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
               <div className="settings-divider" />
               <h4>Data lokal dan akun tetap terpisah</h4><p className="settings-help">Masuk tidak memindahkan data perangkat. Pilih sendiri data yang ingin diimpor ke akun ini.</p>
               <button className="settings-secondary" disabled={busy || !w.ready || accountLocked} onClick={() => act(async () => { const payload = await localImportPayload(); setImportPreview(payload); setSelectedImports(payload.keys.map(k => k.id)); })}>Pratinjau impor data lokal</button>
-              {importPreview && <div className="settings-card import-preview"><h4>Impor ke {w.session.user.email}</h4><p>{importPreview.data.history.length} kuis · {importPreview.data.activity.length} aktivitas · {importPreview.keys.length} API key lokal</p><p className="settings-help">Data lokal tetap disimpan. Key duplikat dilewati; batas akun tetap 100.</p>
+              {importPreview && <div className="settings-card import-preview"><h4>Impor ke {w.session.user.email}</h4><p>{importPreview.data.history.length} kuis · {importPreview.data.activity.length} aktivitas · {importPreview.keys.length} API key lokal</p><p className="settings-help">Data lokal tetap disimpan. Key duplikat dilewati; maksimal 100 key Google dan 1 key Parallel.</p>
                 <div className="import-key-list">{importPreview.keys.map(k => <label key={k.id}><input type="checkbox" checked={selectedImports.includes(k.id)} onChange={e => setSelectedImports(ids => e.target.checked ? [...ids, k.id] : ids.filter(id => id !== k.id))} />{k.label} <span>••••{k.suffix}</span></label>)}</div>
+                <label htmlFor="parallel-import-conflict">Jika akun sudah memiliki key Parallel berbeda</label><select id="parallel-import-conflict" value={parallelConflict} onChange={e => setParallelConflict(e.target.value as 'skip' | 'replace')}><option value="skip">Lewati key Parallel lokal</option><option value="replace">Ganti key Parallel akun dengan key lokal</option></select>
                 <label className="settings-checkbox"><input type="checkbox" checked={importPreferences} onChange={e => setImportPreferences(e.target.checked)} />Ganti preferensi akun dengan preferensi lokal</label>
-                <button className="settings-primary" disabled={busy || accountLocked} onClick={() => act(async () => { const data = await accountRpc(w.scope, 'qm_import_local', { p_payload: { ...importPreview, keys: importPreview.keys.filter(k => selectedImports.includes(k.id)) }, p_import_preferences: importPreferences }); setImportPreview(null); await w.refresh(); return data; }, 'Impor selesai. Data lokal tetap tersimpan.')}>Impor data yang dipilih</button>
+                <button className="settings-primary" disabled={busy || accountLocked} onClick={() => act(async () => { const data = await accountRpc(w.scope, 'qm_import_local', { p_payload: { ...importPreview, parallelConflict, keys: importPreview.keys.filter(k => selectedImports.includes(k.id)) }, p_import_preferences: importPreferences }); setImportPreview(null); await w.refresh(); return data; }, 'Impor selesai. Data lokal tetap tersimpan.')}>Impor data yang dipilih</button>
               </div>}
               <button className="settings-link logout-link" disabled={busy || accountLocked} onClick={() => act(w.logout)}><LogOut size={16} />Keluar ke mode lokal</button>
             </> : <>
@@ -115,29 +120,46 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
             </>}
           </>}
           {tab === 'keys' && <>
-            <div className="settings-heading"><h3>API key <span className="settings-count">{w.keys.length}/100</span></h3><p>Kelola akses AI tanpa vault atau kata sandi penyimpanan tambahan.</p></div>
+            <div className="settings-heading"><h3>API key Google <span className="settings-count">{googleKeys.length}/100</span></h3><p>Kelola akses AI tanpa vault atau kata sandi penyimpanan tambahan.</p></div>
             {editing ? <form className="settings-form settings-card" onSubmit={e => { e.preventDefault(); void act(async () => { await w.keyAction(repo => repo.putKey({ id: editing === 'new' ? undefined : editing.id, label, secret: secret || undefined })); setEditing(null); setSecret(''); }, 'API key tersimpan.'); }}>
               <button type="button" className="settings-link" onClick={() => { if (!dirty || confirm('Batalkan perubahan API key?')) { setEditing(null); setSecret(''); } }}><ChevronLeft size={15} />Kembali ke daftar</button><h4>{editing === 'new' ? 'Tambahkan API key' : 'Edit API key'}</h4>
               <label htmlFor="key-label">Nama key</label><input id="key-label" required maxLength={80} placeholder="Contoh: Key utama" value={label} onChange={e => setLabel(e.target.value)} />
               <label htmlFor="key-value">{editing === 'new' ? 'API key Google' : 'Key pengganti (opsional)'}</label><input id="key-value" type="password" autoComplete="off" spellCheck={false} required={editing === 'new'} minLength={8} maxLength={1024} placeholder={editing === 'new' ? 'Masukkan API key' : 'Kosongkan untuk mempertahankan key'} value={secret} onChange={e => setSecret(e.target.value)} />
               <p className="settings-help">Disimpan tanpa enkripsi khusus aplikasi, {w.mode === 'guest' ? 'di browser ini' : 'di penyimpanan privat akun ini'}. Nilai penuh tidak ditampilkan dalam daftar.</p><button className="settings-primary" disabled={busy || !w.ready}>Simpan API key</button>
             </form> : <>
-              <div className="settings-toolbar"><button className="settings-primary" disabled={busy || !w.ready || w.keys.length >= 100} onClick={() => edit('new')}><Plus size={17} />Tambahkan API key</button><label className="settings-search"><Search size={16} /><input aria-label="Cari API key" placeholder="Cari key…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} /></label></div>
+              <div className="settings-toolbar"><button className="settings-primary" disabled={busy || !w.ready || googleKeys.length >= 100} onClick={() => edit('new')}><Plus size={17} />Tambahkan API key</button><label className="settings-search"><Search size={16} /><input aria-label="Cari API key" placeholder="Cari key…" value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} /></label></div>
               {!filteredKeys.length && <div className="settings-empty"><KeyRound size={30} /><h4>{search ? 'Key tidak ditemukan' : 'Belum ada API key'}</h4><p>Tambahkan key Google untuk membuat kuis pada ruang ini.</p></div>}
               <div className="key-list">{filteredKeys.slice(page * 10, page * 10 + 10).map(key => <article key={key.id} className={`settings-card key-card ${!key.enabled ? 'disabled-key' : ''}`}><div className="key-card-top"><div><h4>{key.label} <span className="masked-key">••••{key.suffix}</span></h4><p>Google AI · Prioritas {key.priority} · {key.enabled ? 'Aktif' : 'Nonaktif'}</p></div><span className={`status-badge ${key.status}`}>{statusLabel[key.status]}</span></div><div className="key-stats">{key.successes} berhasil · {key.failures} gagal <span>Uji terakhir: {date(key.testedAt)}</span></div>
                 <div className="key-actions"><button disabled={busy || !key.enabled || !w.ready} onClick={() => act(async () => { if (!w.repository) return; try { await testKey(w.repository, key.id, w.data.preferences.model); } finally { await w.refresh(); } }, 'Akses model berhasil diuji.')}><RefreshCw size={15} />Uji akses</button><button disabled={busy || !w.ready} onClick={() => edit(key)}><Pencil size={15} />Edit</button><button disabled={busy || !w.ready} onClick={() => act(() => w.keyAction(repo => repo.putKey({ id: key.id, label: key.label, enabled: !key.enabled })), 'Status key tersimpan.')}>{key.enabled ? 'Nonaktifkan' : 'Aktifkan'}</button>
                   <button disabled={busy || !w.ready} aria-label={`Naikkan prioritas ${key.label}`} onClick={() => act(() => w.keyAction(repo => repo.putKey({ id: key.id, label: key.label, priority: Math.max(0, key.priority - 1) })), 'Prioritas tersimpan.')}><ArrowUp size={15} /></button><button disabled={busy || !w.ready} aria-label={`Turunkan prioritas ${key.label}`} onClick={() => act(() => w.keyAction(repo => repo.putKey({ id: key.id, label: key.label, priority: key.priority + 1 })), 'Prioritas tersimpan.')}><ArrowDown size={15} /></button>
                   <button className="danger" disabled={busy || !w.ready} onClick={() => { if (confirm(`Hapus ${key.label} dari ruang ini? Pilihan key spesifik akan kembali ke otomatis jika diperlukan.`)) void act(() => w.keyAction(repo => repo.removeKey(key.id)), 'API key dihapus.'); }}><Trash2 size={15} />Hapus</button></div></article>)}</div>
               {filteredKeys.length > 10 && <div className="settings-pagination"><button disabled={page === 0} onClick={() => setPage(p => p - 1)}>Sebelumnya</button><span>{page + 1} / {Math.ceil(filteredKeys.length / 10)}</span><button disabled={(page + 1) * 10 >= filteredKeys.length} onClick={() => setPage(p => p + 1)}>Berikutnya</button></div>}
-              <p className="settings-help">Maksimal 100 key termasuk key nonaktif. Uji akses menggunakan satu permintaan AI kecil dan dapat memakai kuota.</p>
+              <p className="settings-help">Maksimal 100 key Google termasuk key nonaktif. Uji akses menggunakan satu permintaan AI kecil dan dapat memakai kuota.</p>
             </>}
           </>}
+          {tab === 'keys' && <div className="settings-card settings-form">
+            <h3>Parallel Search <span className="settings-count">{parallelKey ? '1/1' : '0/1'}</span></h3>
+            <p className="settings-help">Masukkan key Parallel milik Anda. Maksimal satu key termasuk yang nonaktif. Pencarian menggunakan kuota Parallel.</p>
+            {parallelKey && <><p>Key tersimpan: ••••{parallelKey.suffix} · {parallelKey.enabled ? 'Aktif' : 'Nonaktif'}</p><span className={'status-badge ' + parallelKey.status}>{statusLabel[parallelKey.status]}</span><p>Uji terakhir: {date(parallelKey.testedAt)} · {parallelKey.successes} berhasil · {parallelKey.failures} gagal</p></>}
+            <label htmlFor="parallel-key">{parallelKey ? 'API key pengganti' : 'API key Parallel'}</label>
+            <input id="parallel-key" type="password" autoComplete="off" spellCheck={false} maxLength={1024} value={parallelSecret} onChange={e => setParallelSecret(e.target.value)} placeholder="Masukkan API key Parallel" disabled={busy || !w.ready} />
+            <p className="settings-help">Disimpan tanpa enkripsi khusus aplikasi, {w.mode === 'guest' ? 'di browser ini' : 'di penyimpanan privat akun ini'}. Nilai penuh tidak ditampilkan kembali.</p>
+            <button className="settings-primary" disabled={busy || !w.ready || !parallelSecret.trim()} onClick={() => void act(async () => { await w.keyAction(repo => repo.putKey({ id: parallelKey?.id, label: 'Parallel Search', provider: 'parallel', secret: parallelSecret })); setParallelSecret(''); }, 'API key Parallel tersimpan.')}>{parallelKey ? 'Ganti API key' : 'Simpan API key'}</button>
+            {parallelKey && <div className="key-actions">
+              <button disabled={busy || !w.ready || !parallelKey.enabled} onClick={() => void act(async () => { if (!w.repository) return; try { await testKey(w.repository, parallelKey.id, w.data.preferences.model); } finally { await w.refresh(); } }, 'Akses Parallel berhasil diuji.')}>Uji akses</button>
+              <button disabled={busy || !w.ready} onClick={() => void act(() => w.keyAction(repo => repo.putKey({ id: parallelKey.id, label: parallelKey.label, enabled: !parallelKey.enabled })), 'Status Parallel tersimpan.')}>{parallelKey.enabled ? 'Nonaktifkan' : 'Aktifkan'}</button>
+              <button className="danger" disabled={busy || !w.ready} onClick={() => { if (confirm('Hapus API key Parallel dari ruang ini?')) void act(() => w.keyAction(repo => repo.removeKey(parallelKey.id)), 'API key Parallel dihapus.'); }}>Hapus</button>
+            </div>}
+            <p className="settings-help">Uji akses melakukan satu pencarian dan dapat memakai kuota. Menyimpan key tidak melakukan pencarian.</p>
+          </div>}
           {tab === 'models' && <>
             <div className="settings-heading"><h3>Model & penggunaan</h3><p>Tentukan partner AI dan cara memilih key untuk kuis berikutnya.</p></div>
             <fieldset disabled={busy || !w.ready} className="settings-form settings-card"><h4>Pembuat kuis</h4><label htmlFor="settings-model">Model</label><select id="settings-model" value={w.data.preferences.model} onChange={e => void pref({ model: e.target.value as AIModel })}>{AI_MODELS.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</select><p className="settings-help">Ketersediaan mengikuti akses project Google Anda. Gunakan Uji akses untuk memeriksa model yang dipilih.</p>
-              <label htmlFor="settings-key">API key</label><select id="settings-key" value={w.data.preferences.keyId || ''} onChange={e => void pref({ keyId: e.target.value || null })}><option value="">Otomatis · ikuti prioritas key</option>{w.keys.filter(k => k.enabled).map(k => <option key={k.id} value={k.id}>{k.label} · ••••{k.suffix}</option>)}</select>
-              <label className="settings-checkbox"><input type="checkbox" disabled={w.data.preferences.model === 'gemma-4-31b-it'} checked={w.data.preferences.grounding && w.data.preferences.model !== 'gemma-4-31b-it'} onChange={e => void pref({ grounding: e.target.checked })} />Gunakan referensi web jika model mendukung</label>
-              <p className="settings-help">Saat referensi web aktif, hasil pencarian dan sumber wajib tersedia. Jika Google membatasi pencarian, kuis dihentikan tanpa beralih ke pembuatan tanpa web. Fakta yang berubah dapat diperiksa melalui sumber dan waktu pencarian.</p>
+              <label htmlFor="settings-key">API key</label><select id="settings-key" value={w.data.preferences.keyId || ''} onChange={e => void pref({ keyId: e.target.value || null })}><option value="">Otomatis · ikuti prioritas key</option>{googleKeys.filter(k => k.enabled).map(k => <option key={k.id} value={k.id}>{k.label} · ••••{k.suffix}</option>)}</select>
+              <label className="settings-checkbox"><input type="checkbox" disabled={w.data.preferences.model === 'gemma-4-31b-it' && w.data.preferences.searchProvider !== 'parallel'} checked={w.data.preferences.grounding && (w.data.preferences.model !== 'gemma-4-31b-it' || w.data.preferences.searchProvider === 'parallel')} onChange={e => void pref({ grounding: e.target.checked })} />Gunakan referensi web</label>
+              <label htmlFor="settings-search-provider">Penyedia pencarian web</label><select id="settings-search-provider" value={w.data.preferences.searchProvider ?? 'google'} onChange={e => void pref({ searchProvider: e.target.value as 'google' | 'parallel' })}><option value="google">Google Search</option><option value="parallel">Parallel Search</option></select>
+              {w.data.preferences.grounding && w.data.preferences.searchProvider === 'parallel' && !parallelKey?.enabled && <p role="status" className="settings-help">Tambahkan atau aktifkan key Parallel pada tab API key sebelum membuat kuis.</p>}
+              <p className="settings-help">Saat referensi web aktif, hasil pencarian dan sumber wajib tersedia. Jika penyedia pencarian gagal, kuis dihentikan tanpa beralih ke pembuatan tanpa web. Fakta yang berubah dapat diperiksa melalui sumber dan waktu pencarian.</p>
             </fieldset>
             <fieldset disabled={busy || !w.ready} className="settings-form settings-card"><h4>Penggunaan otomatis</h4><p className="settings-help">Key nonaktif dilewati. Key dari akun lain atau ruang lokal tidak digunakan sebagai cadangan.</p><label htmlFor="settings-attempts">Maksimal percobaan per batch</label><select id="settings-attempts" value={w.data.preferences.maxAttempts} onChange={e => void pref({ maxAttempts: Number(e.target.value) })}>{[1,2,3].map(n => <option key={n} value={n}>{n} percobaan</option>)}</select><label className="settings-checkbox"><input type="checkbox" checked={w.data.preferences.fallback} onChange={e => void pref({ fallback: e.target.checked })} />Izinkan key alternatif saat key spesifik gagal</label><p className="settings-help">Model tetap sesuai pilihan Anda. Perubahan tidak memengaruhi operasi yang sedang berjalan.</p></fieldset>
             <AIEvaluationSettings value={w.data.preferences.evaluation ?? defaultEvaluationSettings} onSave={evaluation => w.update(d=>({...d,preferences:{...d.preferences,evaluation}})).then(()=>{})} />
