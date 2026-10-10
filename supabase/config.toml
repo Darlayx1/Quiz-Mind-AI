@@ -1,0 +1,5 @@
+project_id = "btsvqhlfkkgwkqsezzoq"
+
+[functions.quiz-ai]
+verify_jwt = false
+# User JWT is verified with auth.getUser in the handler; publishable keys are not JWTs.

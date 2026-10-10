@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateQuizWithGemini } from "../src/server/geminiService.js";
+import { generateQuizWithGemini, generateQuizBatch } from "../src/server/geminiService.js";
 import { AI_MODELS, DEFAULT_MODEL, DIFFICULTIES } from "../src/models.js";
 import { normalizeQuizConfig, quizTimerSeconds } from "../src/quizConfig.js";
 import type { QuizConfig } from "../src/types/quiz.js";
@@ -191,6 +191,20 @@ try {
     generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key"),
     /1 soal valid dari 5/,
   );
+  // The new workspace path performs exactly one call per batch; its outer adapter owns retries.
+  calls.length = 0;
+  const batch = await generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key");
+  assert.equal(batch.questions.length, 1);
+  assert.equal(calls.length, 1);
+  calls.length = 0;
+  failAlways = true;
+  await assert.rejects(generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key"));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model, DEFAULT_MODEL);
+  failAlways = false;
+  calls.length = 0;
+  await assert.rejects(generateQuizBatch({ ...config, questionCount: 5 }, "test-key"), /valid|jumlah/i);
+  assert.equal(calls.length, 1);
   console.log(
     "PASS: enam model, sembilan level, grounding, fallback, prompt personal, custom 25 soal, timer per mode, tanpa batas, konfigurasi lama, validasi jumlah hasil. Tidak ada panggilan API eksternal.",
   );

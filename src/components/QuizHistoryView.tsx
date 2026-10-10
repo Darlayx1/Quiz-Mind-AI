@@ -48,7 +48,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
         </div>
         <h2 className="text-xl font-bold text-slate-900 mb-2">Belum Ada Riwayat Kuis</h2>
         <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-          Setiap kuis yang Anda buat akan tersimpan di browser untuk dipelajari kembali kapan saja.
+          Kuis yang Anda buat akan tersimpan pada ruang penyimpanan aktif untuk dipelajari kembali.
         </p>
         <Button
           label="Buat Kuis Pertama Sekarang"
@@ -72,7 +72,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
             <span>Riwayat Kuis Tersimpan</span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Daftar kuis dan catatan skor yang pernah dihasilkan di peramban ini.
+            Kuis dan catatan skor pada ruang penyimpanan aktif.
           </p>
         </div>
 
@@ -161,7 +161,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
       <ConfirmModal
         isOpen={showClearConfirm}
         title="Kosongkan Semua Riwayat?"
-        message="Tindakan ini akan menghapus seluruh data kuis dan catatan skor yang tersimpan di perangkat ini. Tindakan ini tidak dapat dibatalkan."
+        message="Seluruh kuis dan skor pada ruang aktif akan dihapus. Ruang lokal dan akun lain tidak terpengaruh. Tindakan ini tidak dapat dibatalkan."
         confirmLabel="Ya, Kosongkan"
         cancelLabel="Batal"
         isDestructive={true}
@@ -176,7 +176,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
       <ConfirmModal
         isOpen={Boolean(deletingId)}
         title="Hapus Kuis Ini?"
-        message="Kuis dan rekap skor terkait akan dihapus dari penyimpanan lokal Anda."
+        message="Kuis dan rekap skor terkait akan dihapus dari ruang penyimpanan aktif."
         confirmLabel="Hapus"
         cancelLabel="Batal"
         isDestructive={true}

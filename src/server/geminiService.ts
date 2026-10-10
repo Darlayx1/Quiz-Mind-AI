@@ -35,6 +35,40 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
   });
 }
 
+/** One bounded provider call; retry/key selection belong to the workspace orchestrator. */
+export async function generateQuizBatch(input: QuizConfig, apiKey: string, existing: string[] = [], signal?: AbortSignal): Promise<Quiz> {
+  const config = normalizeQuizConfig(input);
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75000 } });
+  const model = config.model ?? DEFAULT_MODEL;
+  const gemma = model === 'gemma-4-31b-it';
+  const prompt = buildPrompt(config, config.questionCount, existing);
+  try {
+    const response = await ai.models.generateContent({ model,
+      contents: gemma ? buildGemmaPrompt(config, config.questionCount, existing) : prompt.userPrompt,
+      config: { abortSignal: signal, ...(gemma ? {} : { systemInstruction: prompt.systemInstruction }),
+        ...(!gemma && config.enableGrounding ? { tools: [{ googleSearch: {} }] } : {}) },
+    });
+    const parsed = extractJsonFromResponse(response.text || '');
+    const sources: GroundingSource[] = (response.candidates?.[0]?.groundingMetadata?.groundingChunks || [])
+      .filter(chunk => chunk.web?.uri).map(chunk => ({ title: chunk.web!.title || 'Referensi', url: chunk.web!.uri! }));
+    const previous = new Set(existing.map(q => q.trim().toLowerCase()));
+    const questions: Question[] = [];
+    for (const raw of Array.isArray(parsed.questions) ? parsed.questions : []) {
+      const question = validateAndSanitizeQuestion(raw, questions.length, config.topic, sources);
+      if (question && !previous.has(question.question.trim().toLowerCase())) {
+        question.id = crypto.randomUUID(); questions.push(question); previous.add(question.question.trim().toLowerCase());
+      }
+    }
+    if (questions.length !== config.questionCount) throw new QuizGenerationError('Jumlah soal valid belum sesuai. Batch dihentikan untuk mencegah hasil tidak lengkap.', 502, 'INCOMPLETE_QUESTION_COUNT');
+    return { id: crypto.randomUUID(), title: String(parsed.title || `Kuis: ${config.topic}`), summary: String(parsed.summary || ''),
+      ...config, createdAt: new Date().toISOString(), questions, requestedModel: model, model,
+      usedGrounding: !gemma && config.enableGrounding, groundingQueriesUsed: response.candidates?.[0]?.groundingMetadata?.webSearchQueries || [] };
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException('Operasi dibatalkan', 'AbortError');
+    throw classifyApiError(error, model);
+  }
+}
+
 /**
  * Klasifikasi error API Google ke dalam HTTP status code dan pesan yang jelas.
  */

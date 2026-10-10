@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { difficultyName, modelName } from "../models.js";
 import { quizTimerSeconds, durationLabel } from "../quizConfig.js";
 import type { Quiz, QuizSubmission, Question } from "../types/quiz.js";
+import type { QuizProgress } from '../workspace/types.js';
 import { Button } from "./Button.js";
 import { ConfirmModal } from "./ConfirmModal.js";
 import {
@@ -20,33 +21,43 @@ interface QuizRunnerProps {
   quiz: Quiz;
   onSubmit: (submission: QuizSubmission) => void;
   onQuit: () => void;
+  initialProgress?: QuizProgress | null;
+  onProgress?: (progress: QuizProgress) => void;
 }
 
 export const QuizRunner: React.FC<QuizRunnerProps> = ({
   quiz,
   onSubmit,
   onQuit,
+  initialProgress,
+  onProgress,
 }) => {
   const sequential = quiz.displayMode === "sequential";
   const limit = quizTimerSeconds(quiz);
   const unlimited = limit === 0;
   const total = quiz.questions.length;
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [userAnswers, setUserAnswers] = useState<Record<string, number>>({});
-  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
+  const restored = initialProgress?.quizId === quiz.id ? initialProgress : null;
+  const [currentIndex, setCurrentIndex] = useState(restored?.currentIndex ?? 0);
+  const [userAnswers, setUserAnswers] = useState<Record<string, number>>(restored?.answers ?? {});
+  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set(restored?.bookmarks ?? []));
   const [timeLeft, setTimeLeft] = useState(limit);
   const [notice, setNotice] = useState("");
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const submitted = useRef(false);
-  const startedAt = useRef(Date.now());
-  const deadline = useRef(startedAt.current + limit * 1000);
-  const indexRef = useRef(0);
+  const startedAt = useRef(restored?.startedAt ?? Date.now());
+  const deadline = useRef(restored?.deadline ?? (startedAt.current + limit * 1000));
+  const indexRef = useRef(restored?.currentIndex ?? 0);
   const answersRef = useRef(userAnswers);
   const bookmarksRef = useRef(bookmarks);
   const submitRef = useRef(onSubmit);
   submitRef.current = onSubmit;
   const questionHeading = useRef<HTMLHeadingElement>(null);
+  const progressCallback = useRef(onProgress); progressCallback.current = onProgress;
+  useEffect(() => {
+    if (!submitted.current) progressCallback.current?.({ quizId: quiz.id, currentIndex, answers: userAnswers,
+      bookmarks: Array.from(bookmarks), startedAt: startedAt.current, deadline: deadline.current });
+  }, [currentIndex, userAnswers, bookmarks]);
 
   const finish = (finishedAt = Date.now()) => {
     if (submitted.current) return;

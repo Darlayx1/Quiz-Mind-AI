@@ -1,197 +1,59 @@
-# QuizMind AI: Generator Kuis Gemini 3.8 Flash & Google Grounding
+# QuizMind AI
 
-Aplikasi kuis interaktif bertenaga **Gemini 3.8 Flash** dengan kemampuan **berpikir mendalam (deep thinking)** dan **Google Search Grounding** untuk menghasilkan butir-butir soal berkualitas tinggi, bebas halusinasi, dan dilengkapi verifikasi sumber rujukan faktual.
+Aplikasi latihan kuis dengan pengaturan AI terpusat, penyimpanan lokal tanpa login, dan data akun terisolasi melalui Supabase.
 
----
+Situs: https://darlayx1.github.io/Quiz-Mind-AI/
 
-## Fitur Utama
+## Pengaturan AI
 
-- **Model Gemini 3.8 Flash**: Penalaran mendalam (*deep thinking*) dalam menyusun opsi jawaban, distractor realistis, dan pembahasan analitis.
-- **Google Search Grounding Terintegrasi**: Memvalidasi fakta ilmiah, peristiwa sejarah, dan konsep terkini secara langsung via mesin pencari Google, lengkap dengan tautan sumber web yang dapat diverifikasi.
-- **API Key Pribadi & Backend Opsional**:
-  - Pengguna GitHub Pages memasukkan kunci Gemini sendiri. Key aktif berada dalam memori halaman dan dikirim langsung ke Google. Vault opsional menyimpan hanya ciphertext di `localStorage`, terpisah dari riwayat kuis.
-  - Hosting Node.js/Express juga mendukung kunci milik server (`process.env.GEMINI_API_KEY`), yang tidak dimasukkan ke bundle browser.
-  - File `.env` diproteksi secara otomatis melalui `.gitignore` sehingga aman saat di-push ke GitHub.
-  - Modul vault kriptografi AES-256-GCM terotentikasi untuk perlindungan token dan integritas kuis.
-- **Pengerjaan Kuis Interaktif**:
-  - Live countdown timer dengan format MM:SS.
-  - Matriks navigasi nomor soal dan penanda ragu-ragu (*bookmark*).
-  - Penilaian instan dengan rincian akurasi, waktu pengerjaan, dan analisis kekuatan belajar.
-  - Pembahasan mendalam langkah-demi-langkah beserta sitasi Google Grounding.
-- **Penyimpanan Lokal & Ekspor**:
-  - Riwayat kuis otomatis tersimpan di peramban (`localStorage`).
-  - Fitur cetak / simpan lembar evaluasi dalam format PDF.
+- **Akun:** masuk, daftar, pemulihan akun, profil, logout, dan impor data lokal secara eksplisit.
+- **API key:** hingga 100 key per ruang, status, pengaktifan, prioritas, uji akses, edit, dan hapus. Key nonaktif tetap dihitung.
+- **Model & penggunaan:** pilihan model dan key, referensi web jika didukung, maksimal 1–3 percobaan per batch.
+- **Riwayat:** kuis, hasil pengerjaan, aktivitas AI, pencarian, ekspor tanpa kredensial.
 
----
+Desktop menggunakan window dengan sidebar; ponsel menggunakan window penuh dan tab horizontal. Pengaturan mendukung keyboard, fokus dialog, dan pengembalian fokus saat ditutup.
 
-## Panduan Instalasi & Menjalankan Aplikasi
+## Penyimpanan
 
-## Deployment GitHub Pages
+Tanpa login, key, pengaturan, draft, checkpoint generasi, kuis, progres, hasil, dan aktivitas disimpan dalam IndexedDB pada browser/origin yang sama. Setelah login, seluruh data domain dibaca dan disimpan pada akun aktif di Supabase. Kegagalan jaringan akun tidak mengalihkan penyimpanan ke tamu. Logout mengembalikan ruang tamu yang sebelumnya tersimpan.
 
-Halaman aplikasi diterbitkan di `https://darlayx1.github.io/Quiz-Mind-AI/`
-melalui workflow `.github/workflows/pages.yml` setiap push ke `main`.
-Pengguna mengisi kolom **API Key Pribadi**, memilih materi, lalu membuat kuis.
-Browser menghubungi Google Gemini secara langsung sehingga tidak memerlukan backend
-Render atau konfigurasi `VITE_API_BASE_URL`. Kunci disamarkan secara bawaan,
-dapat disimpan terenkripsi, dibuka dengan kata sandi setelah reload, diganti tanpa build ulang, dikunci, atau dihapus.
-Kuota dan akses model mengikuti proyek Google milik masing-masing pengguna.
+Login tidak otomatis memindahkan data. Impor dilakukan melalui tab Akun dengan pilihan key dan preferensi; data sumber tetap tersedia. Akun A dan B mempunyai data dan batas key masing-masing. Pergantian ruang membatalkan operasi frontend dan mengosongkan state ruang sebelumnya.
 
-Sebagai pilihan untuk menggunakan kunci milik server, backend dapat dibuat dari `render.yaml` menggunakan
-[Deploy to Render](https://render.com/deploy?repo=https://github.com/Darlayx1/Quiz-Mind-AI).
-Pasang `GEMINI_API_KEY` sebagai secret di Render. Setelah backend aktif, atur
-repository variable `VITE_API_BASE_URL` di GitHub ke URL HTTPS layanan Render
-(tanpa `/api`), lalu jalankan ulang workflow **Deploy GitHub Pages**.
-`VITE_API_BASE_URL` hanya alamat backend, bukan API key.
+Tidak ada vault atau enkripsi khusus aplikasi. Kredensial tamu berupa teks di IndexedDB; kredensial akun berupa teks dalam tabel privat Supabase. Browser hanya membaca metadata key akun. Layanan Edge memeriksa identitas pengguna sebelum mengambil key milik akun itu. HTTPS dan proteksi infrastruktur tetap berlaku.
 
-Jangan masukkan API key ke repository atau variabel dengan awalan `VITE_`.
+Data lokal bertahan setelah reload/penutupan normal, tetapi dapat hilang jika data situs dihapus atau browser menolak penyimpanan. Riwayat lokal lama diimpor tanpa menghapus sumber. Vault lama tidak dipindahkan otomatis.
 
-### 1. Prasyarat
-- Node.js versi 22.12 atau lebih baru
-- NPM
+## Arsitektur
 
-### 2. Kloning & Instalasi Dependensi
-```bash
-git clone https://github.com/Darlayx1/Quiz-Mind-AI.git
-cd Quiz-Mind-AI
+- src/workspace/: domain, repository lokal/akun, Auth, antrean penyimpanan dengan pemeriksaan versi, eksekusi AI.
+- src/components/AISettings.tsx: window empat tab.
+- src/server/geminiService.ts: validasi konfigurasi dan hasil satu batch; jalur aplikasi baru tidak mengganti model diam-diam.
+- supabase/migrations/: tabel, RLS, kredensial privat, transaksi batas 100, impor, lease pekerjaan AI.
+- supabase/functions/quiz-ai/: layanan AI akun; handler memverifikasi token pengguna.
+- .agents/rules/anti-loop.md: aturan debugging permanen yang dipertahankan.
+
+Mode tamu memanggil Google dengan key lokal. Mode akun memanggil Supabase Edge dengan sesi pengguna; key provider tidak dikirim kembali ke browser. Penilaian pilihan ganda tetap deterministik. Token/biaya yang tidak tersedia tidak ditampilkan sebagai perkiraan.
+
+## Pengembangan
+
+Memerlukan Node.js 22.12+.
+
+~~~sh
 npm ci
-```
-
-### 3. Konfigurasi Lingkungan (.env)
-Salin file template `.env.example` menjadi `.env`:
-```bash
-cp .env.example .env
-```
-Buka file `.env` dan masukkan API Key Google Gemini Anda:
-```env
-GEMINI_API_KEY="AIzaSy..."
-PORT=3000
-```
-> **Catatan**: Dapatkan API Key Gemini secara gratis di [Google AI Studio](https://aistudio.google.com/).
-
-### 4. Menjalankan Server Development
-```bash
 npm run dev
-```
-Buka peramban di `http://localhost:3000`.
-
-### 5. Build dan Deployment Produksi
-
-```bash
-npm ci
 npm run lint
+node --import tsx scripts/workspace-test.ts
+node --import tsx scripts/model-test.ts
 npm run build
 node scripts/smoke-test.mjs
-npm start
-```
+~~~
 
-`npm start` menjalankan server produksi dari `dist-server/server.js` dan melayani
-halaman dari `dist`. Port mengikuti variabel `PORT` dari penyedia hosting, dengan
-default `3000`. Gunakan Node.js 22.12 atau lebih baru. Build juga menghasilkan
-Worker ESM untuk Sites di `dist/server/index.js`, berisi halaman, aset, dan API.
+.env.example hanya memuat konfigurasi publik Supabase dan port. Jangan menaruh key Google atau service role pada variabel VITE_. Server Node/Worker melayani aset dan health; endpoint vault dan AI anonim lama dinonaktifkan.
 
-Di pengaturan lingkungan hosting, pasang `GEMINI_API_KEY` sebagai secret dan
-`ENCRYPTION_SECRET` sebagai secret acak. Jangan gunakan awalan `VITE_` untuk
-kredensial, karena variabel tersebut masuk ke bundle browser. Situs dapat dibuka
-tanpa kunci Gemini; pembuatan kuis memerlukan kunci yang valid dan kuota tersedia.
-`/api/health` mengembalikan status pemasangan kunci tanpa menampilkan kunci lengkap.
+## Deployment
 
-Sites menggunakan identitas pada `.openai/hosting.json`. Publikasi awal bersifat
-privat untuk pemilik. GitHub Pages menggunakan API key pribadi melalui browser;
-endpoint server dan demo vault hanya tersedia jika menggunakan backend.
+Push main menjalankan pemeriksaan dan deployment GitHub Pages melalui .github/workflows/pages.yml; tidak ada jadwal cron. Supabase menggunakan proyek btsvqhlfkkgwkqsezzoq.
 
----
+Untuk mereproduksi backend: terapkan kedua migrasi berurutan, jalankan node scripts/build-edge.mjs, lalu deploy quiz-ai dengan Supabase CLI atau source tunggal build/quiz-ai.ts melalui dashboard. Gateway verify_jwt=false digunakan karena handler memvalidasi bearer token melalui auth.getUser; permintaan tanpa sesi tetap ditolak. SUPABASE_SERVICE_ROLE_KEY hanya digunakan di runtime Edge.
 
-## Panduan Push Aman ke GitHub
-
-File `.gitignore` pada proyek ini sudah secara ketat mengecualikan file `.env*` dan hanya mengizinkan template `.env.example`.
-
-Langkah-langkah push ke repositori GitHub:
-```bash
-# Inisialisasi git jika belum ada
-git init
-
-# Tambahkan seluruh file proyek
-git add .
-
-# Verifikasi bahwa .env TIDAK tercantum dalam daftar staged files
-git status
-
-# Lakukan commit
-git commit -m "feat: quiz generator gemini 3.8 flash with deep thinking & google grounding"
-
-# Tentukan branch utama
-git branch -M main
-
-# Sambungkan remote repositori Anda
-git remote add origin https://github.com/USERNAME/quizmind-ai.git
-
-# Push ke GitHub
-git push -u origin main
-```
-
----
-
-## Struktur Arsitektur
-
-```
-├── server.ts                  # Server Express & proxy API Gemini 3.8 Flash
-├── src/
-│   ├── server/
-│   │   ├── geminiService.ts   # Integrasi @google/genai dengan thinking & googleSearch
-│   │   └── cryptoVault.ts     # Enkripsi & dekripsi AES-256-GCM
-│   ├── types/
-│   │   └── quiz.ts            # Tipe data TypeScript untuk kuis & grounding
-│   ├── components/
-│   │   ├── TopBar.tsx         # Navigasi 3 zona sesuai standar desain
-│   │   ├── QuizCreator.tsx    # Form konfigurasi kuis & materi
-│   │   ├── GenerationLoader.tsx # Visualisasi proses penalaran AI
-│   │   ├── QuizRunner.tsx     # Runner pengerjaan kuis dengan timer
-│   │   ├── QuizResults.tsx    # Hasil skor & lembar pembahasan
-│   │   ├── QuizHistoryView.tsx# Riwayat kuis lokal
-│   │   ├── SecurityGuideModal.tsx # Panduan keamanan & demo enkripsi
-│   │   ├── ConfirmModal.tsx   # Dialog konfirmasi defensif
-│   │   └── Button.tsx         # Komponen tombol standar
-│   ├── App.tsx                # Orkestrasi state & alur aplikasi
-│   ├── main.tsx               # Entry point React
-│   └── index.css              # Tailwind CSS
-├── .env.example               # Template variabel lingkungan publik
-├── .gitignore                 # Proteksi ketat file kredensial
-└── metadata.json              # Konfigurasi applet AI Studio
-```
-
-## Pilihan model & pengalaman belajar
-
-Menu pembuatan kuis menyediakan enam model: **Gemini 3.8 Flash**, **Gemini 3.7 Flash**, **Gemini 3.6 Flash**, **Gemini 3.5 Flash**, **Gemini 3.5 Flash Lite**, dan **Gemma 4 31B** (`gemma-4-31b-it`). Pilihan diterapkan pada API server, Worker, dan mode API key pribadi di browser. Konfigurasi lama tanpa `model` tetap menggunakan Gemini 3.8 Flash. ID model mengikuti [katalog Gemini API](https://ai.google.dev/gemini-api/docs/models) dan [dokumentasi Gemma pada Gemini API](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api).
-
-Jika model Gemini tidak tersedia, sistem mencoba model lainnya lalu `gemini-flash-latest`. Pilihan Gemma 4 31B tetap menggunakan `gemma-4-31b-it`, tanpa perpindahan otomatis ke Gemini. Jalur Gemma menggunakan prompt teks gabungan dan `thinkingLevel: MINIMAL` tanpa Google Search; opsi referensi web dinonaktifkan untuk jalur ini. Kuis menyimpan `requestedModel`, `model` aktual, dan `usedGrounding` agar halaman hasil menjelaskan penggunaan model cadangan dan status pencarian web. Ketersediaan dan kuota mengikuti proyek Google pengguna. Referensi yang dihasilkan AI tetap perlu ditinjau.
-
-Uji Gemma melalui API nyata: pasang `GEMINI_API_KEY` di `.env`, lalu jalankan `node --import tsx scripts/gemma-live-test.ts`. Tes ini menggunakan kuota API dan hanya lulus jika Gemma sendiri menghasilkan satu soal. Tes tiruan tidak membuktikan layanan Google sedang tersedia. Error `500 INTERNAL` atau `504 DEADLINE_EXCEEDED` pada API nyata harus diselesaikan sebelum menyatakan integrasi berhasil atau menerbitkan perubahan.
-
-Tampilan menu, pengerjaan, dan hasil menggunakan desain indigo yang konsisten dengan layout responsif, ringkasan pengaturan, progres jawaban, timer berbasis waktu nyata, filter benar/salah/belum dijawab, dan navigasi keyboard.
-
-Konfigurasi dibagi menjadi materi, ritme kuis, partner AI, dan personalisasi:
-
-- Sembilan tingkat kesulitan: primitif, sangat mudah, mudah, sedang, menengah, sulit, sangat sulit, master, dan grand master. Masing-masing memiliki arahan penalaran tersendiri di prompt AI.
-- Jumlah soal: 5, 10, 15, 20, atau custom berupa bilangan bulat 1–100. Hasil AI harus memuat tepat jumlah soal yang diminta; hasil tidak lengkap menghasilkan pesan untuk mencoba kembali.
-- **Non sekuensial**: semua soal ditampilkan dan dapat dikerjakan atau ditinjau dengan urutan bebas. Slider mengatur durasi total 1–120 menit. Saat waktu habis, jawaban otomatis dikumpulkan.
-- **Sekuensial**: satu soal per langkah, tanpa kembali ke soal sebelumnya. Slider mengatur 15–600 detik per soal dengan langkah 15 detik. Waktu direset setelah beralih; saat habis, soal dikunci dan kuis otomatis melanjutkan. Setelah soal terakhir, jawaban otomatis dikumpulkan.
-- Kedua mode mendukung **tanpa batas**; nilai timer aktif `0` menonaktifkan countdown. Waktu pengerjaan tetap dicatat. Timer menggunakan deadline absolut agar tetap akurat saat tab tidak aktif.
-- Gaya bahasa opsional menerima saran atau teks bebas, maksimal 500 karakter. Instruksi tambahan opsional menerima maksimal 2.000 karakter. Kedua preferensi dikirim ke AI dan disimpan bersama kuis.
-
-Validasi bersama berada di `src/quizConfig.ts`. Kuis lama tetap dapat dibuka; konfigurasi lama `beginner`, `advanced`, dan `expert` dipetakan ke level baru saat digunakan untuk membuat kuis.
-
-Verifikasi lokal: `npm run lint`, `npm run build`, `node --import tsx scripts/model-test.ts`, dan `node scripts/smoke-test.mjs`. Tes model menggunakan respons tiruan sehingga tidak memakai kuota Gemini.
-
-Untuk memeriksa alur pengerjaan tanpa API atau penyimpanan riwayat, jalankan `npm run dev`, lalu buka `/scripts/quiz-session-preview.html`. Fixture lokal menyediakan kedua mode dengan dan tanpa timer singkat untuk menguji navigasi, penguncian jawaban, dan pengumpulan otomatis. Halaman fixture tidak disertakan dalam build produksi.
-
-## Vault API key pribadi
-
-Pada menu **API key pribadi**, masukkan key dan kata sandi unik minimal 12 karakter, ulangi kata sandi, lalu pilih **Simpan terenkripsi**. Untuk memakai key kembali setelah reload, masukkan kata sandi dan pilih **Buka vault**. Penggantian memakai kolom key pengganti dan kata sandi untuk salinan baru; key lama hanya ditimpa setelah enkripsi dan penyimpanan berhasil. Status aktif berarti key telah dipasang untuk permintaan berikutnya, bukan validasi kredensial Google.
-
-- AES-256-GCM melalui Web Crypto, salt acak 16 byte, IV acak 12 byte pada setiap penyimpanan, dan PBKDF2-SHA-256 sebanyak 600.000 iterasi. Kunci enkripsi tidak dapat diekspor. Tidak ada API key atau kata sandi yang ditanam dalam kode/bundle.
-- Kata sandi dan key enkripsi tidak disimpan. Vault tersimpan hanya pada profil browser dan origin situs tersebut, tanpa sinkronisasi akun. Vault memerlukan HTTPS atau localhost. Jika penyimpanan ditolak, gunakan **Gunakan tanpa menyimpan** untuk sesi ini.
-- Reload dan **Kunci / kosongkan sesi** membersihkan key aktif. Setelah 15 menit tanpa aktivitas keyboard/klik, aplikasi juga mengosongkan key aktif. Permintaan Google yang sudah berjalan dapat tetap selesai.
-- Perubahan vault dari tab lain mengosongkan key aktif pada semua tampilan agar pengguna membuka key terbaru. Penghapusan permanen memerlukan konfirmasi di menu dan tidak mencabut key di Google; pencabutan dilakukan di AI Studio.
-- Kata sandi tidak dapat dipulihkan. Jika lupa, hapus vault lalu simpan API key kembali. Enkripsi melindungi salinan tersimpan; skrip berbahaya pada origin yang sama atau perangkat terkompromi dapat membaca key ketika aktif. Jangan gunakan vault pada perangkat bersama.
-
-Implementasi: src/personalKeyVault.ts dan src/components/PersonalKeyManager.tsx. Verifikasi vault: node --import tsx scripts/key-vault-test.ts.
+Pasang Site URL dan redirect Auth sesuai origin deployment. Verifikasi RLS di supabase/tests/workspace_rls.sql menggunakan transaksi yang di-rollback. Catatan hasil dan keterbatasan berada di docs/IMPLEMENTATION.md.

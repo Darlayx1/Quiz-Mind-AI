@@ -1,378 +1,108 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { fetchApi, setPersonalApiKey, standalonePages } from './api.js';
-import { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Settings2, Monitor, Cloud, ArrowRight, RefreshCw } from 'lucide-react';
+import type { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
 import { GenerationLoader } from './components/GenerationLoader.js';
 import { QuizRunner } from './components/QuizRunner.js';
 import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
-import { SecurityGuideModal } from './components/SecurityGuideModal.js';
-import { DEFAULT_MODEL, AIModel } from './models.js';
-import { VAULT_STORAGE_KEY } from './personalKeyVault.js';
-
-const STORAGE_KEY = 'quizmind_ai_history_v1';
+import { AISettings, type SettingsTab } from './components/AISettings.js';
+import { useWorkspace } from './workspace/useWorkspace.js';
+import { availableKeys, generateWorkspaceQuiz } from './workspace/ai.js';
+import { accountRpc } from './workspace/supabase.js';
+import type { GenerationJob, QuizProgress } from './workspace/types.js';
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
-  const [currentQuiz, setCurrentQuiz] = useState<Quiz | null>(null);
-  const [currentResult, setCurrentResult] = useState<QuizResult | null>(null);
-  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [activeView]);
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingTopic, setLoadingTopic] = useState('');
-  const [loadingGrounding, setLoadingGrounding] = useState(true);
-  const [loadingModel, setLoadingModel] = useState<AIModel>(DEFAULT_MODEL);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState('');
-  const personalMode = standalonePages || Boolean(apiKey.trim());
-  const handleApiKeyChange = useCallback((value: string) => {
-    setPersonalApiKey(value);
-    setApiKey(value);
-    setErrorMessage(null);
-  }, []);
-
-  // Changes in another tab invalidate the active key on every application view.
+  const w = useWorkspace();
+  const [view, setView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
+  const [quiz, setQuiz] = useState<Quiz | null>(null); const [result, setResult] = useState<QuizResult | null>(null);
+  const [settings, setSettings] = useState<SettingsTab | null>(null);
+  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0 });
+  const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
+  const restoredScope = useRef<string | null>(null);
+  const attemptedProgress = useRef('');
   useEffect(() => {
-    const syncVault = (event: StorageEvent) => {
-      if (event.key === VAULT_STORAGE_KEY || event.key === null) handleApiKeyChange('');
-    };
-    window.addEventListener('storage', syncVault);
-    return () => window.removeEventListener('storage', syncVault);
-  }, [handleApiKeyChange]);
-
-  // Expire plaintext using a deadline, including when background timers are delayed.
+    abort.current?.abort(); setLoading(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
+  }, [w.scope, w.mode]);
   useEffect(() => {
-    if (!apiKey) return;
-    let timer: ReturnType<typeof setTimeout>;
-    let deadline = 0;
-    const lock = () => handleApiKeyChange('');
-    const reset = () => {
-      if (deadline && Date.now() >= deadline) { lock(); return; }
-      clearTimeout(timer);
-      deadline = Date.now() + 15 * 60 * 1000;
-      timer = setTimeout(lock, 15 * 60 * 1000);
-    };
-    const check = () => { if (Date.now() >= deadline) lock(); };
-    reset();
-    window.addEventListener('pointerdown', reset);
-    window.addEventListener('keydown', reset);
-    window.addEventListener('focus', check);
-    window.addEventListener('pagehide', lock);
-    document.addEventListener('visibilitychange', check);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener('pointerdown', reset);
-      window.removeEventListener('keydown', reset);
-      window.removeEventListener('focus', check);
-      window.removeEventListener('pagehide', lock);
-      document.removeEventListener('visibilitychange', check);
-    };
-  }, [apiKey, handleApiKeyChange]);
-
-  const [historyItems, setHistoryItems] = useState<
-    Array<{ quiz: Quiz; lastResult?: QuizResult; savedAt: string }>
-  >([]);
-
-  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
-  const [serverSecurity, setServerSecurity] = useState({
-    hasApiKey: false,
-    maskedKey: 'Memuat...',
-  });
-
-  // Load history from localStorage
-  useEffect(() => {
+    if (!w.ready || restoredScope.current === w.scope) return;
+    restoredScope.current = w.scope;
+    if (w.data.progress) {
+      const saved = w.data.history.find(item => item.quiz.id === w.data.progress!.quizId);
+      if (saved) { setQuiz(saved.quiz); setView('runner'); }
+    }
+  }, [w.ready, w.scope, w.data.progress, w.data.history]);
+  useEffect(() => { if (w.passwordRecovery) setSettings('account'); }, [w.passwordRecovery]);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
+  const persistDraft = useCallback((draft: Record<string, unknown>) => { void w.update(d => ({ ...d, draft })).catch(() => {}); }, [w.update]);
+  const persistProgress = useCallback((progress: QuizProgress) => {
+    const serialized = JSON.stringify(progress); if (attemptedProgress.current === serialized) return;
+    attemptedProgress.current = serialized;
+    void w.update(d => ({ ...d, progress })).catch(() => { attemptedProgress.current = ''; });
+  }, [w.update]);
+  const newQuiz = () => { setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
+  const generate = async (config: QuizConfig, resume?: GenerationJob) => {
+    if (loading || !w.ready || !w.repository) return;
+    const origin = w.scope; const repository = w.repository;
+    const preferences = structuredClone(resume?.preferences || w.data.preferences);
+    const controller = new AbortController(); abort.current = controller;
+    setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0 });
+    const started = Date.now(); let currentJob: GenerationJob | undefined;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setHistoryItems(JSON.parse(saved));
-      }
-    } catch (err) {
-      console.error('Gagal membaca riwayat kuis dari localStorage:', err);
-    }
-  }, []);
-
-  // Save history to localStorage
-  const saveHistory = (items: Array<{ quiz: Quiz; lastResult?: QuizResult; savedAt: string }>) => {
-    setHistoryItems(items);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch (err) {
-      console.error('Gagal menyimpan riwayat kuis ke localStorage:', err);
-    }
+      const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
+        currentJob = job; await w.update(d => ({ ...d, job }), origin);
+      }, controller.signal, resume, completed => { if (scope.current === origin) setGeneration({ config, completed }); });
+      controller.signal.throwIfAborted(); if (scope.current !== origin) return;
+      await w.update(d => ({ ...d, job: null, history: [{ quiz: generated, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
+        activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
+      setQuiz(generated); setResult(null); setView('runner');
+    } catch (e) {
+      if (scope.current !== origin) return;
+      const cancelled = controller.signal.aborted;
+      setError(cancelled ? 'Pembuatan kuis dibatalkan. Batch yang sudah selesai tetap dicatat.' : (e as Error).message);
+      await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
+        activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
+          detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
+    } finally { if (scope.current === origin) { setLoading(false); abort.current = null; void w.refresh(); } }
   };
-
-  // Fetch server health & security status
-  useEffect(() => {
-    fetchApi('/api/health')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.security) {
-          setServerSecurity({
-            hasApiKey: Boolean(data.security.hasApiKey),
-            maskedKey: data.security.maskedKey || 'Tidak terdeteksi',
-          });
-        }
-      })
-      .catch((err) => {
-        console.warn('Gagal menghubungi /api/health:', err);
-      });
-  }, [apiKey]);
-
-  // Handle Quiz Generation
-  const handleGenerateQuiz = async (config: QuizConfig) => {
-    setLoadingModel(config.model ?? DEFAULT_MODEL);
-    setIsLoading(true);
-    setLoadingTopic(config.topic);
-    setLoadingGrounding(config.enableGrounding);
-    setErrorMessage(null);
-
-    try {
-      const response = await fetchApi('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await response.text();
-        throw new Error(
-          response.status === 404
-            ? 'Endpoint API tidak ditemukan (404). Server backend sedang sinkronisasi, silakan ulangi.'
-            : `Respon server bukan format JSON valid (${response.status}): ${text.slice(0, 100)}`
-        );
-      }
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Gagal memproses kuis dengan model Gemini yang dipilih.');
-      }
-
-      const generatedQuiz: Quiz = data.quiz;
-      setCurrentQuiz(generatedQuiz);
-      setCurrentResult(null);
-
-      // Simpan ke riwayat kuis
-      const updatedHistory = [
-        {
-          quiz: generatedQuiz,
-          savedAt: new Date().toISOString(),
-        },
-        ...historyItems.filter((item) => item.quiz.id !== generatedQuiz.id),
-      ];
-      saveHistory(updatedHistory);
-
-      // Pindah ke tampilan runner kuis
-      setActiveView('runner');
-    } catch (err: any) {
-      console.error('Generate quiz error:', err);
-      setErrorMessage(err.message || 'Terjadi kesalahan sistem saat menghubungi server.');
-    } finally {
-      setIsLoading(false);
-    }
+  const finish = (submission: QuizSubmission) => {
+    if (!quiz) return;
+    const total = quiz.questions.length;
+    const correct = quiz.questions.filter(q => submission.userAnswers[q.id] === q.correctAnswerIndex).length;
+    const unanswered = quiz.questions.filter(q => submission.userAnswers[q.id] === undefined).length;
+    const score = Math.round(correct / total * 100);
+    const next: QuizResult = { quiz, submission, score, correctCount: correct, incorrectCount: total - correct - unanswered,
+      unansweredCount: unanswered, accuracyPercentage: score,
+      evaluationAnalysis: score >= 90 ? 'Pemahaman Anda sangat baik. Pertahankan dan lanjutkan ke materi berikutnya.' : score >= 70 ? 'Fondasi Anda sudah baik. Tinjau kembali pembahasan soal yang belum tepat.' : 'Pelajari pembahasan, lalu ulangi latihan untuk memperkuat pemahaman.' };
+    setResult(next); setView('results');
+    void w.update(d => ({ ...d, progress: null, history: d.history.map(h => h.quiz.id === quiz.id ? { ...h, lastResult: next, attempts: [...(h.attempts || (h.lastResult ? [h.lastResult] : [])), next], savedAt: new Date().toISOString() } : h) })).catch(() => {});
   };
-
-  // Handle Quiz Submission
-  const handleSubmitQuiz = (submission: QuizSubmission) => {
-    if (!currentQuiz) return;
-
-    let correctCount = 0;
-    let unansweredCount = 0;
-
-    currentQuiz.questions.forEach((q) => {
-      const userAns = submission.userAnswers[q.id];
-      if (userAns === undefined) {
-        unansweredCount++;
-      } else if (userAns === q.correctAnswerIndex) {
-        correctCount++;
-      }
-    });
-
-    const total = currentQuiz.questions.length;
-    const incorrectCount = total - correctCount - unansweredCount;
-    const score = Math.round((correctCount / total) * 100);
-    const accuracy = total > 0 ? Math.round((correctCount / total) * 100) : 0;
-
-    let analysis = 'Pemahaman materi cukup baik.';
-    if (score >= 90) {
-      analysis = 'Luar biasa! Anda menguasai topik ini secara komprehensif dengan penalaran tingkat tinggi.';
-    } else if (score >= 70) {
-      analysis = 'Bagus! Anda memiliki fondasi pemahaman yang solid. Perhatikan pembahasan pada butir soal yang keliru.';
-    } else if (score >= 50) {
-      analysis = 'Cukup baik. Disarankan untuk meninjau kembali penalaran mendalam pada lembar pembahasan di bawah.';
-    } else {
-      analysis = 'Perlu pendalaman lebih lanjut. Pelajari penjelasan sumber fakta Google Grounding untuk memperkuat konsep.';
-    }
-
-    const result: QuizResult = {
-      quiz: currentQuiz,
-      submission,
-      score,
-      correctCount,
-      incorrectCount,
-      unansweredCount,
-      accuracyPercentage: accuracy,
-      evaluationAnalysis: analysis,
-    };
-
-    setCurrentResult(result);
-
-    // Update result di riwayat kuis
-    const updatedHistory = historyItems.map((item) => {
-      if (item.quiz.id === currentQuiz.id) {
-        return {
-          ...item,
-          lastResult: result,
-          savedAt: new Date().toISOString(),
-        };
-      }
-      return item;
-    });
-    saveHistory(updatedHistory);
-
-    setActiveView('results');
+  const selectQuiz = (selected: Quiz) => {
+    setQuiz(selected); const saved = w.data.history.find(h => h.quiz.id === selected.id);
+    if (saved?.lastResult) { setResult(saved.lastResult); setView('results'); } else { setResult(null); setView('runner'); }
   };
-
-  // Retake current quiz
-  const handleRetakeQuiz = () => {
-    if (currentQuiz) {
-      setCurrentResult(null);
-      setActiveView('runner');
-    }
-  };
-
-  // Start fresh quiz
-  const handleNewQuiz = () => {
-    setCurrentQuiz(null);
-    setCurrentResult(null);
-    setErrorMessage(null);
-    setActiveView('creator');
-  };
-
-  // Select quiz from history
-  const handleSelectHistoryQuiz = (quiz: Quiz) => {
-    setCurrentQuiz(quiz);
-    const existing = historyItems.find((item) => item.quiz.id === quiz.id);
-    if (existing?.lastResult) {
-      setCurrentResult(existing.lastResult);
-      setActiveView('results');
-    } else {
-      setCurrentResult(null);
-      setActiveView('runner');
-    }
-  };
-
-  // Delete single history item
-  const handleDeleteHistoryItem = (quizId: string) => {
-    const updated = historyItems.filter((item) => item.quiz.id !== quizId);
-    saveHistory(updated);
-  };
-
-  // Clear all history
-  const handleClearAllHistory = () => {
-    saveHistory([]);
-  };
-
-  return (
-    <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans selection:bg-blue-100 selection:text-blue-900">
-      {/* TopBar 3-zone standard navigation */}
-      <TopBar
-        activeView={activeView}
-        isBusy={isLoading}
-        onNavigate={(view) => setActiveView(view)}
-        onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
-        isKeyConfigured={Boolean(apiKey.trim()) || (!standalonePages && serverSecurity.hasApiKey)}
-        onNewQuizClick={handleNewQuiz}
-      />
-
-      {/* Main Content Area */}
-      <main className="flex-1 w-full" aria-busy={isLoading}>
-        {isLoading && (
-          <GenerationLoader
-            topic={loadingTopic}
-            enableGrounding={loadingGrounding}
-            model={loadingModel}
-          />
-        )}
-        {activeView === 'creator' ? (
-          <div hidden={isLoading}>
-          <QuizCreator
-            onGenerate={handleGenerateQuiz}
-            isLoading={isLoading}
-            errorMessage={errorMessage}
-            apiKey={apiKey}
-            onApiKeyChange={handleApiKeyChange}
-            requiresApiKey={standalonePages}
-          />
-          </div>
-        ) : activeView === 'runner' && currentQuiz ? (
-          <QuizRunner
-            quiz={currentQuiz}
-            onSubmit={handleSubmitQuiz}
-            onQuit={handleNewQuiz}
-          />
-        ) : activeView === 'results' && currentResult ? (
-          <QuizResults
-            result={currentResult}
-            onRetake={handleRetakeQuiz}
-            onNewQuiz={handleNewQuiz}
-          />
-        ) : activeView === 'history' ? (
-          <QuizHistoryView
-            historyItems={historyItems}
-            onSelectQuiz={handleSelectHistoryQuiz}
-            onClearHistory={handleClearAllHistory}
-            onDeleteItem={handleDeleteHistoryItem}
-            onNewQuiz={handleNewQuiz}
-          />
-        ) : (
-          <div className="py-20 text-center">
-            <p className="text-slate-500 text-sm">Tidak ada kuis yang sedang aktif.</p>
-            <button
-              onClick={handleNewQuiz}
-              className="mt-3 text-blue-600 font-semibold text-sm hover:underline cursor-pointer"
-            >
-              Mulai Buat Kuis
-            </button>
-          </div>
-        )}
-      </main>
-
-      {/* Subtle modern footer */}
-      <footer className="w-full border-t border-slate-200/80 py-6 px-4 bg-white text-xs text-slate-500 text-center print:hidden">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 px-4">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">QuizMind AI</span>
-            <span>·</span>
-            <span>Belajar dengan rasa ingin tahu.</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsSecurityModalOpen(true)}
-              className="hover:text-slate-800 transition-colors cursor-pointer"
-            >
-              Privasi API Key
-            </button>
-            <span>·</span>
-            <span>{personalMode ? 'Vault pribadi · key aktif di memori' : 'Privasi terjaga'}</span>
-          </div>
-        </div>
-      </footer>
-
-      {/* Security Guide Modal */}
-      <SecurityGuideModal
-        isOpen={isSecurityModalOpen}
-        onClose={() => setIsSecurityModalOpen(false)}
-        maskedKey={serverSecurity.maskedKey}
-        personalMode={personalMode}
-      />
-    </div>
-  );
+  const retryQuiz = () => { void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
+  const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : `Akun · ${w.session?.user.email || 'pulihkan sesi'}`;
+  const hasKey = availableKeys(w.keys, w.data.preferences).length > 0;
+  return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
+    <TopBar activeView={view} isBusy={loading} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
+    <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>
+    <main className="flex-1 w-full" aria-busy={loading || w.mode === 'initializing'}>
+      {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span><button onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button></div></div>}
+      {w.mode === 'initializing' ? <div className="workspace-loading" role="status">Memulihkan ruang penyimpanan…</div> : !w.ready ? <div className="workspace-loading"><h1>Penyimpanan perlu diperiksa</h1><p>Data lokal dan akun tetap terpisah. Periksa koneksi atau pulihkan sesi Anda.</p><button className="settings-primary" onClick={() => setSettings('account')}>Buka pengaturan akun</button></div> : loading ? <>
+        <GenerationLoader topic={generation.config.topic} enableGrounding={w.data.preferences.grounding} model={w.data.preferences.model} />
+        <div className="generation-controls"><span>{generation.completed}/{generation.config.questionCount} soal selesai</span><button className="settings-secondary" onClick={() => { abort.current?.abort(); if (w.mode === 'account' && w.data.job) void accountRpc(w.scope, 'qm_cancel_job', { p_id: w.data.job.id }).catch(() => {}); }}>Batalkan pembuatan</button></div>
+      </> : view === 'creator' ? <>
+        {w.data.job && ['running','interrupted'].includes(w.data.job.status) && <div className="page-shell !pb-0 !pt-5"><div className="resume-banner"><div><strong>Pembuatan kuis belum selesai</strong><p>{w.data.job.questions.length}/{w.data.job.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => void generate(w.data.job!.config, w.data.job!)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div></div>}
+        <QuizCreator key={w.scope} onGenerate={config => void generate(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} initialDraft={w.data.draft} onDraft={persistDraft} />
+      </> : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={newQuiz} initialProgress={w.data.progress} onProgress={persistProgress} />
+      : view === 'results' && result ? <QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} />
+      : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
+      : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}
+    </main>
+    <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>
+    {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || view === 'runner'} />}
+  </div>;
 }

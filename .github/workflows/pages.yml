@@ -30,10 +30,12 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: node --import tsx scripts/model-test.ts
+      - run: node --import tsx scripts/workspace-test.ts
       - run: npm run build:pages
         env:
           VITE_BASE_PATH: /Quiz-Mind-AI/
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_SUPABASE_URL: https://btsvqhlfkkgwkqsezzoq.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_0_-VQxC-t2qEMzJTy63SkQ_-BYp-ZQM
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-pages

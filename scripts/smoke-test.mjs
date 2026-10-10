@@ -20,7 +20,6 @@ for (const invalid of [{ questionCount: 101 }, { questionCount: 2.5 }, { questio
   assert.equal((await call('/api/generate-quiz', { topic: 'Aljabar', ...invalid })).status, 400);
 }
 assert.equal((await call('/api/generate-quiz', { topic: 'Aljabar', questionCount: 25, timeLimitMinutes: 0, displayMode: 'sequential', timePerQuestionSeconds: 0 })).status, 503);
-const encrypted = await (await call('/api/vault/encrypt', { text: 'Uji deployment', secret: 'test-only-secret' })).json();
-const decrypted = await (await call('/api/vault/decrypt', { encrypted: encrypted.encrypted, secret: 'test-only-secret' })).json();
-assert.equal(decrypted.decrypted, 'Uji deployment');
-console.log('PASS: halaman, aset, health, API 404, validasi, missing-key, vault round-trip');
+assert.equal((await call('/api/vault/encrypt', { text: 'Uji deployment' })).status, 404);
+assert.equal((await call('/api/vault/decrypt', { encrypted: 'test' })).status, 404);
+console.log('PASS: halaman, aset, health, API 404, validasi, legacy AI disabled, vault removed');

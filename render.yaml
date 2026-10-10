@@ -13,7 +13,3 @@ services:
         value: 24.13.1
       - key: CORS_ORIGIN
         value: https://darlayx1.github.io
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: ENCRYPTION_SECRET
-        generateValue: true

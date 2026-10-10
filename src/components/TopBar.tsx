@@ -2,7 +2,7 @@ import React from "react";
 import {
   BrainCircuit,
   Plus,
-  ShieldCheck,
+  Settings2,
   History,
   LayoutGrid,
 } from "lucide-react";
@@ -11,7 +11,8 @@ interface TopBarProps {
   activeView: "creator" | "runner" | "results" | "history";
   isBusy?: boolean;
   onNavigate: (view: "creator" | "history") => void;
-  onOpenSecurityModal: () => void;
+  onOpenSettings: () => void;
+  storageLabel: string;
   isKeyConfigured: boolean;
   onNewQuizClick: () => void;
 }
@@ -19,7 +20,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   activeView,
   isBusy,
   onNavigate,
-  onOpenSecurityModal,
+  onOpenSettings,
+  storageLabel,
   isKeyConfigured,
   onNewQuizClick,
 }) => (
@@ -56,19 +58,19 @@ export const TopBar: React.FC<TopBarProps> = ({
       </nav>
       <div className="header-actions">
         <button
-          onClick={onOpenSecurityModal}
-          className="icon-button"
-          aria-label="Privasi API key"
-          title="Privasi API key"
+          onClick={onOpenSettings}
+          className="header-settings-button"
+          aria-label="Buka Pengaturan AI"
+          title="Pengaturan AI"
         >
-          <ShieldCheck size={19} />
+          <Settings2 size={18} /><span>Pengaturan AI</span>
         </button>
         {activeView === "creator" ? (
           <span className="key-status hidden lg:flex" role="status">
             <span
               className={`status-dot ${isKeyConfigured ? "" : "inactive"}`}
             />
-            {isKeyConfigured ? "API key tersedia" : "API key belum tersedia"}
+            {storageLabel}
           </span>
         ) : (
           activeView !== "runner" && (

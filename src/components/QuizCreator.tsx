@@ -1,38 +1,48 @@
-import React, { useRef, useState } from "react";
-import { PersonalKeyManager } from "./PersonalKeyManager.js";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "./Button.js";
 import type { QuizConfig, DifficultyLevel, QuizDisplayMode } from "../types/quiz.js";
 import { AI_MODELS, DIFFICULTIES, AIModel, DEFAULT_MODEL, difficultyName, modelName } from "../models.js";
 import { durationLabel } from "../quizConfig.js";
+import type { Preferences } from '../workspace/types.js';
 import { ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, FileText, KeyRound, LayoutGrid, ListOrdered, ShieldCheck, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
 
 interface QuizCreatorProps {
   onGenerate: (config: QuizConfig) => void;
   isLoading: boolean;
   errorMessage: string | null;
-  apiKey: string;
-  onApiKeyChange: (value: string) => void;
-  requiresApiKey: boolean;
+  preferences: Preferences;
+  hasApiKey: boolean;
+  storageLabel: string;
+  onOpenSettings: () => void;
+  initialDraft?: Record<string, unknown> | null;
+  onDraft: (draft: Record<string, unknown>) => void;
 }
 const PRESETS = ["Kecerdasan Buatan", "Biologi Molekuler", "Sejarah Dunia", "Algoritma & Struktur Data"];
 const STYLES = ["Baku & akademis", "Santai & komunikatif", "Sederhana & mudah dipahami", "Profesional & ringkas"];
 
-export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, apiKey, onApiKeyChange, requiresApiKey }) => {
-  const [inputMode, setInputMode] = useState<"topic" | "material">("topic");
-  const [topic, setTopic] = useState("");
-  const [studyMaterial, setStudyMaterial] = useState("");
-  const [difficulty, setDifficulty] = useState<DifficultyLevel>("moderate");
-  const [countChoice, setCountChoice] = useState<number | "custom">(10);
-  const [customCount, setCustomCount] = useState("25");
-  const [displayMode, setDisplayMode] = useState<QuizDisplayMode>("non_sequential");
-  const [totalMinutes, setTotalMinutes] = useState("15");
-  const [perQuestionSeconds, setPerQuestionSeconds] = useState("60");
-  const [unlimited, setUnlimited] = useState(false);
-  const [language, setLanguage] = useState<"id" | "en">("id");
-  const [languageStyle, setLanguageStyle] = useState("");
-  const [additionalInstructions, setAdditionalInstructions] = useState("");
-  const [enableGrounding, setEnableGrounding] = useState(true);
-  const [model, setModel] = useState<AIModel>(DEFAULT_MODEL);
+export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, preferences, hasApiKey, storageLabel, onOpenSettings, initialDraft, onDraft }) => {
+  const restore = <T,>(field: string, fallback: T): T => (initialDraft?.[field] as T) ?? fallback;
+  const [inputMode, setInputMode] = useState<"topic" | "material">(restore('inputMode', 'topic'));
+  const [topic, setTopic] = useState(restore('topic', ''));
+  const [studyMaterial, setStudyMaterial] = useState(restore('studyMaterial', ''));
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>(restore('difficulty', 'moderate'));
+  const [countChoice, setCountChoice] = useState<number | "custom">(restore('countChoice', 10));
+  const [customCount, setCustomCount] = useState(restore('customCount', '25'));
+  const [displayMode, setDisplayMode] = useState<QuizDisplayMode>(restore('displayMode', 'non_sequential'));
+  const [totalMinutes, setTotalMinutes] = useState(restore('totalMinutes', '15'));
+  const [perQuestionSeconds, setPerQuestionSeconds] = useState(restore('perQuestionSeconds', '60'));
+  const [unlimited, setUnlimited] = useState(restore('unlimited', false));
+  const [language, setLanguage] = useState<"id" | "en">(restore('language', 'id'));
+  const [languageStyle, setLanguageStyle] = useState(restore('languageStyle', ''));
+  const [additionalInstructions, setAdditionalInstructions] = useState(restore('additionalInstructions', ''));
+  const enableGrounding = preferences.grounding;
+  const model = preferences.model;
+  const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
+  useEffect(() => {
+    const timer = setTimeout(() => draftCallback.current({ inputMode, topic, studyMaterial, difficulty, countChoice, customCount,
+      displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions }), 600);
+    return () => clearTimeout(timer);
+  }, [inputMode, topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions]);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const questionCount = countChoice === "custom" ? Number(customCount) : countChoice;
@@ -49,7 +59,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."
     : !validCount ? "Masukkan jumlah soal antara 1–100."
     : !validTimer ? `Masukkan durasi ${sequential ? "15–600 detik" : "1–120 menit"}.`
-    : requiresApiKey && !apiKey.trim() ? "Isi API key pribadi untuk membuat kuis." : "";
+    : !hasApiKey ? "Tambahkan API key melalui Pengaturan AI untuk membuat kuis." : "";
   const canGenerate = !isLoading && !missingReason;
   const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -174,13 +184,13 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
           </section>
 
           <details className="surface menu-advanced">
-            <summary><SlidersHorizontal size={18} /><span><strong>Pengaturan lanjutan</strong><small>Model AI, bahasa, dan instruksi tambahan</small></span><ChevronDown size={18} /></summary>
+            <summary><SlidersHorizontal size={18} /><span><strong>Personalisasi kuis</strong><small>Bahasa, gaya penulisan, dan instruksi tambahan</small></span><ChevronDown size={18} /></summary>
             <div className="menu-advanced-body">
               <div className="menu-setting-grid">
-                <div><label htmlFor="ai-model" className="field-label">Model AI</label><select id="ai-model" className="field-input" value={model} onChange={e => setModel(e.target.value as AIModel)}>{AI_MODELS.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="field-help">{selectedModel.description}</p></div>
+                <div><span className="field-label">Partner AI</span><button type="button" className="ai-config-shortcut" onClick={onOpenSettings}><BrainCircuit size={18} /><span>{modelName(model)}<small>Kelola di Pengaturan AI</small></span><ArrowRight size={16} /></button></div>
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
-              <label className="menu-checkbox menu-grounding"><input type="checkbox" disabled={!supportsGrounding} checked={enableGrounding && supportsGrounding} onChange={e => setEnableGrounding(e.target.checked)} /><span><strong>Gunakan referensi web</strong><small>{supportsGrounding ? "Perkaya materi dengan rujukan dari Google Search." : "Gemma menggunakan materi dan pengetahuan model tanpa Google Search."}</small></span></label>
+              <p className="field-help mt-4">Referensi web {enableGrounding && supportsGrounding ? 'aktif' : 'nonaktif'} · Ubah melalui Pengaturan AI.</p>
               <label htmlFor="language-style" className="field-label">Gaya bahasa <span className="optional-badge">Opsional</span></label>
               <input id="language-style" list="language-styles" className="field-input" maxLength={500} value={languageStyle} onChange={e => setLanguageStyle(e.target.value)} placeholder="Baku & akademis" aria-describedby="style-help" />
               <datalist id="language-styles">{STYLES.map(style => <option key={style} value={style} />)}</datalist>
@@ -190,12 +200,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             </div>
           </details>
 
-          <details className="surface menu-advanced menu-api" open={requiresApiKey || undefined}>
-            <summary><KeyRound size={18} /><span><strong>API key pribadi</strong><small>{apiKey.trim() ? "Kunci tersedia untuk sesi ini" : requiresApiKey ? "Wajib diisi sebelum membuat kuis" : "Opsional · gunakan kunci Anda sendiri"}</small></span><ChevronDown size={18} /></summary>
-            <div className="menu-advanced-body">
-              <PersonalKeyManager apiKey={apiKey} onApiKeyChange={onApiKeyChange} />
-            </div>
-          </details>
+          <section className="surface ai-connection-card"><span className={`connection-dot ${hasApiKey ? 'connected' : ''}`} /><div><strong>{hasApiKey ? 'Partner AI siap digunakan' : 'Hubungkan partner AI Anda'}</strong><p>{hasApiKey ? 'Key dan model mengikuti ruang penyimpanan aktif.' : 'Tambahkan API key tanpa perlu login.'}</p></div><button type="button" className="settings-link" onClick={onOpenSettings}>Pengaturan AI <ArrowRight size={15} /></button></section>
         </fieldset>
 
         <aside className="surface menu-summary" aria-label="Ringkasan kuis">
@@ -214,7 +219,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
           <div className="menu-summary-model"><BrainCircuit size={17} /><span>{modelName(model)}</span></div>
           <Button type="submit" label={isLoading ? "Menyiapkan kuis…" : "Buat kuis"} icon={<ArrowRight size={17} />} iconPosition="trailing" className="w-full" size="lg" disabled={!canGenerate} aria-describedby="generate-help" />
           <p id="generate-help" className="menu-submit-help" aria-live="polite">{missingReason || "Setiap soal dilengkapi pembahasan."}</p>
-          <p className="menu-privacy-note"><ShieldCheck size={14} /> Riwayat tersimpan di perangkat Anda</p>
+          <p className="menu-privacy-note"><ShieldCheck size={14} /> {storageLabel}</p>
         </aside>
       </form>
     </div>

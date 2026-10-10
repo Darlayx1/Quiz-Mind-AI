@@ -1,10 +1,8 @@
 import assets from './.worker-assets.json';
-import { generateQuizWithGemini } from './src/server/geminiService.js';
-import { encryptData, decryptData, maskSecret } from './src/server/cryptoVault.js';
 import { AI_MODELS, DEFAULT_MODEL } from './src/models.js';
 import { normalizeQuizConfig, QuizConfigError } from './src/quizConfig.js';
 
-type Environment = { GEMINI_API_KEY?: string; ENCRYPTION_SECRET?: string };
+type Environment = { GEMINI_API_KEY?: string };
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 
 export default {
@@ -17,13 +15,13 @@ export default {
         version: '1.0.0',
         model: DEFAULT_MODEL,
         models: AI_MODELS.map(model => model.id),
-        features: { deepThinking: true, googleSearchGrounding: true, serverSideProxy: true, aes256GcmVault: true },
-        security: { hasApiKey, maskedKey: hasApiKey ? maskSecret(env.GEMINI_API_KEY) : 'Belum dikonfigurasi di server', gitProtected: true },
+        features: { localWorkspace: true, accountWorkspace: true, serverSideProxy: false },
+        security: { hasApiKey: false, gitProtected: true },
         timestamp: new Date().toISOString()
       });
     }
     if (pathname.startsWith('/api/')) {
-      if (request.method !== 'POST' || !['/api/generate-quiz', '/api/vault/encrypt', '/api/vault/decrypt'].includes(pathname)) {
+      if (request.method !== 'POST' || pathname !== '/api/generate-quiz') {
         return json({ success: false, error: 'Endpoint API tidak ditemukan.' }, 404);
       }
       const declaredSize = Number(request.headers.get('content-length') || 0);
@@ -40,28 +38,10 @@ export default {
       try {
         if (pathname === '/api/generate-quiz') {
           const config = normalizeQuizConfig(body);
-          if (!env.GEMINI_API_KEY || env.GEMINI_API_KEY === 'MY_GEMINI_API_KEY') {
-            return json({ success: false, error: 'GEMINI_API_KEY belum dikonfigurasi di server. Pemilik aplikasi perlu memasangnya pada pengaturan hosting.' }, 503);
-          }
-          const quiz = await generateQuizWithGemini(config, env.GEMINI_API_KEY);
-          return json({
-            success: true,
-            quiz,
-            integrityToken: encryptData(JSON.stringify({ quizId: quiz.id, createdAt: quiz.createdAt }), env.ENCRYPTION_SECRET || env.GEMINI_API_KEY)
-          });
-        }
-        const secret = typeof body.secret === 'string' && body.secret ? body.secret : env.ENCRYPTION_SECRET || env.GEMINI_API_KEY;
-        if (pathname.endsWith('/encrypt')) {
-          if (typeof body.text !== 'string' || !body.text) return json({ error: 'Field "text" wajib diisi.' }, 400);
-          return json({ success: true, encrypted: encryptData(body.text, secret) });
-        }
-        if (pathname.endsWith('/decrypt')) {
-          if (typeof body.encrypted !== 'string' || !body.encrypted) return json({ error: 'Field "encrypted" wajib diisi.' }, 400);
-          return json({ success: true, decrypted: decryptData(body.encrypted, secret) });
+          return json({ success: false, error: 'Gunakan Pengaturan AI. Mode lokal memakai key lokal; mode akun memakai layanan Supabase terautentikasi.' }, 503);
         }
       } catch (error: any) {
         if (error instanceof QuizConfigError) return json({ success: false, error: error.message }, 400);
-        if (pathname.endsWith('/decrypt')) return json({ success: false, error: 'Dekripsi gagal atau kunci salah.' }, 400);
         const status = typeof error?.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
         const message = error instanceof Error ? error.message : String(error);
         return json({ success: false, error: message }, status);
