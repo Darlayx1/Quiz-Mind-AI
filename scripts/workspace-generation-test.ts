@@ -126,8 +126,9 @@ try {
   for (const mode of ['no-web-sources', 'no-web-query'] as const) {
     failure = mode;
     const before = requests.length;
-    await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.code === 'WEB_SEARCH_EMPTY');
-    assert.equal(requests.length - before, 1, 'Missing grounding evidence must not retry identical output');
+    const quiz = await generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
+    assert.equal(quiz.questions.length, 1); assert.ok(quiz.generationWarnings!.length);
+    assert.equal(requests.length - before, 2, 'One generation and one advisory audit, without regenerating');
   }
   failure = undefined;
   const groundedQuiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
@@ -218,8 +219,9 @@ try {
   assert.equal(accountCalls, 3, 'Account must never fall back without web');
   accountSearchQuota = false; accountNoSources = true;
   response = await handler!(request({ ...preferences, grounding: true }));
-  assert.equal(response.status, 502);
-  assert.equal((await response.json()).code, 'WEB_SEARCH_EMPTY');
+  assert.equal(response.status, 200);
+  const withoutSources = (await response.json()).quiz;
+  assert.equal(withoutSources.usedGrounding, false); assert.ok(withoutSources.generationWarnings.length);
   accountNoSources = false;
   response = await handler!(request({ ...preferences, grounding: true }));
   assert.equal(response.status, 200);

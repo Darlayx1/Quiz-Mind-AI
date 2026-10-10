@@ -69,7 +69,6 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
     model,
     provider,
     topic: body.topic.trim().slice(0, 300),
-    targetAudience: optionalText(body.targetAudience, 300) ?? 'Masyarakat umum',
     studyMaterial: optionalText(body.studyMaterial, 15000),
     difficulty: difficulty as DifficultyLevel,
     questionCount: count,

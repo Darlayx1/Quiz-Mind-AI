@@ -4,7 +4,7 @@ import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
 import { usableResearch, type ParallelResearch } from '../server/parallelSearch.js';
-import { recordGenerationFailure, needsCurrentEvidence, stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
+import { recordGenerationFailure, stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
 
 export { availableKeys } from './types.js';
 export async function invokeAccount(body: Record<string, unknown>, signal?: AbortSignal, expectedOwner?: string) {
@@ -53,8 +53,8 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   const config = normalizeQuizConfig({ ...input, model: preferences.model, enableGrounding: preferences.grounding });
   let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: structuredClone(preferences),
     questions: [], status: 'running', createdAt: new Date().toISOString() };
+  job.config = normalizeQuizConfig(job.config);
   job.status = 'running'; await checkpoint(job);
-  if (job.preferences.grounding && job.quiz?.groundingFallbackUsed && !job.parallelFallback) throw new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.');
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
   if (job.preferences.grounding && job.preferences.searchProvider === 'parallel' && repository.scope === 'guest') {
@@ -67,7 +67,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       } catch (error) {
         if (signal.aborted) throw error;
         const code = String((error as { code?: string }).code || '');
-        if (stableResearchFallbackCodes.includes(code) && !needsCurrentEvidence(job.config)) {
+        if (stableResearchFallbackCodes.includes(code)) {
           job.parallelFallback = code;
           await repository.recordKeyOutcome(searchKey.id, 'available'); await checkpoint(job);
         } else { await repository.recordKeyOutcome(searchKey.id, keyStatus(error)); throw error; }
@@ -85,9 +85,9 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
-      const state = job.attemptState?.batchOffset === job.questions.length ? job.attemptState : { batchOffset: job.questions.length, calls: 0, repeated: 0 };
+      const state = job.attemptState?.batchOffset === job.questions.length && !['QUALITY_REJECTED', 'QUALITY_REVIEW_INVALID', 'WEB_SEARCH_EMPTY', 'PARALLEL_CITATION_INVALID'].includes(job.attemptState.lastCode || '') ? job.attemptState : { batchOffset: job.questions.length, calls: 0, repeated: 0 };
       job.attemptState = state;
-      if (state.calls >= attempts || state.repeated >= 2) throw new Error('Batas percobaan batch tercapai. Periksa sumber, cakupan, dan difficulty sebelum membuat kuis baru.');
+      if (state.calls >= attempts || state.repeated >= 2) throw new Error('Batas percobaan batch tercapai. Periksa koneksi, model, atau kuota AI sebelum mencoba kembali.');
       while (state.calls < attempts) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
         state.calls++; await checkpoint(job);
@@ -96,7 +96,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
             job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined, state.correction);
           if (job.parallelFallback) {
             batch.groundingFallbackUsed = true;
-            batch.generationWarnings = ['Parallel tidak menyediakan materi yang relevan. Kuis ini dibuat tanpa referensi web dan tetap diperiksa kualitasnya.'];
+            batch.generationWarnings = [...(batch.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];
           }
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
@@ -115,6 +115,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       job.questions.push(...batch.questions);
       job.quiz = { ...batch, ...job.config, id: job.id, questions: job.questions,
         qualityReviews: [...(job.quiz?.qualityReviews || []), ...(batch.qualityReviews || [])],
+        generationWarnings: [...new Set([...(job.quiz?.generationWarnings || []), ...(batch.generationWarnings || [])])],
         generationMetrics: [...(job.quiz?.generationMetrics || []), ...(batch.generationMetrics || [])],
         groundingQueriesUsed: [...new Set([...(job.quiz?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
     }

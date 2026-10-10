@@ -1,9 +1,9 @@
-import { difficultyName, DIFFICULTIES } from './models.js';
+import { difficultyName } from './models.js';
 import { questionType } from './questionState.js';
 import type { Quiz, QuizResult, QuestionType } from './types/quiz.js';
 
 export interface CalibrationRow {
-  topic: string; audience: string; difficulty: string; target: string; mode: string; model: string; type: QuestionType;
+  topic: string; difficulty: string; mode: string; model: string; type: QuestionType;
   quizCount: number; assessed: number; correct: number; unanswered: number; pending: number; observedCorrectPercent: number | null;
 }
 /** First submission per quiz limits practice inflation. Raw success includes guessing; never infer population mastery. */
@@ -20,8 +20,7 @@ export function difficultyCalibration(history: { quiz: Quiz; lastResult?: QuizRe
     const result = [...submissions.values()].sort((a, b) => a.submission.completedAt.localeCompare(b.submission.completedAt))[0];
     if (!result?.evaluations) continue;
     const q = item.quiz;
-    const identity = { topic: q.topic, audience: q.targetAudience || 'Tidak tercatat (kuis lama)', difficulty: difficultyName(q.difficulty),
-      target: DIFFICULTIES.find(d => d.id === q.difficulty)?.successLabel || 'Tidak tercatat',
+    const identity = { topic: q.topic, difficulty: difficultyName(q.difficulty),
       mode: q.usedGrounding ? q.searchProvider || 'google' : q.groundingFallbackUsed ? 'tanpa web (fallback)' : 'tanpa web', model: q.model || 'Tidak tercatat' };
     const visited = new Set<string>();
     for (const question of q.questions) {

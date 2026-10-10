@@ -23,18 +23,20 @@ const source = { title: 'Human anatomy: structure and relationships', url: 'http
 const question = validateQuestion({ ...fixtures.single_choice, question: 'Struktur manakah yang sesuai dengan hubungan anatomis berikut?' }, 0, 'Anatomi', [])!;
 
 await test('Assessment specification and nine difficulty levels', async t => {
-  await t.test('names, backward compatibility, contiguous descending mastery ranges and audience', () => {
+  await t.test('names and backward compatibility without audience or statistical targets', () => {
     assert.deepEqual(DIFFICULTIES.map(d => d.name), ['Elementer', 'Sangat mudah', 'Mudah', 'Menengah', 'Menantang', 'Sulit', 'Sangat sulit', 'Pakar', 'Ekstrem']);
     assert.equal(difficultyName('primitive'), 'Elementer'); assert.equal(difficultyName('expert'), 'Pakar');
     assert.equal(normalizeQuizConfig({ ...base, difficulty: 'expert' }).difficulty, 'master');
-    for (let i = 1; i < 9; i++) assert.equal(DIFFICULTIES[i].successRange[1], DIFFICULTIES[i - 1].successRange[0]);
-    assert.equal(assessmentSpec(base).audience, base.targetAudience);
-    assert.notEqual(assessmentScopeKey(base), assessmentScopeKey({ ...base, targetAudience: 'Masyarakat umum' }));
+    assert.ok(DIFFICULTIES.every(d => !('successRange' in d) && !('successLabel' in d)));
+    assert.ok(!('audience' in assessmentSpec(base)));
+    assert.ok(!('targetSuccessPercent' in assessmentSpec(base).difficulty));
+    assert.equal(normalizeQuizConfig({ ...base, targetAudience: 'Legacy audience' }).targetAudience, undefined);
+    assert.equal(assessmentScopeKey(base), assessmentScopeKey({ ...base, targetAudience: 'Masyarakat umum' }));
     assert.notEqual(assessmentScopeKey(base), assessmentScopeKey({ ...base, studyMaterial: 'Hanya sistem saraf' }));
   });
   await t.test('anatomy catalogue/history regression; explicit scope remains allowed', () => {
-    assert.throws(() => assertQuestionScope({ ...question, topicCategory: 'Media Studi Anatomi', question: 'Jodohkan sarana media pembelajaran anatomi dengan bentuk medianya.' }, base), /cakupan/);
-    assert.throws(() => assertQuestionScope({ ...question, topicCategory: 'Sejarah Anatomi' }, base), /cakupan/);
+    assert.ok(assertQuestionScope({ ...question, topicCategory: 'Media Studi Anatomi', question: 'Jodohkan sarana media pembelajaran anatomi dengan bentuk medianya.' }, base));
+    assert.ok(assertQuestionScope({ ...question, topicCategory: 'Sejarah Anatomi' }, base));
     assert.doesNotThrow(() => assertQuestionScope({ ...question, topicCategory: 'Sejarah Anatomi' }, { ...base, topic: 'Sejarah anatomi' }));
     assert.equal(assessmentSpec({ ...base, additionalInstructions: 'Jangan membahas sejarah.' }).includeHistory, false);
     assert.equal(selectResearchSources([source, { ...source, title: 'Best websites and learning resources' }, { ...source, title: 'History of anatomy' }], base).length, 1);
@@ -42,25 +44,27 @@ await test('Assessment specification and nine difficulty levels', async t => {
     assert.equal(needsCurrentEvidence({ ...base, topic: 'Harga obat terbaru' }), true);
     assert.equal(needsCurrentEvidence({ ...base, topic: 'Hukum Newton' }), false);
   });
-  await t.test('audit rejects wrong difficulty, zero-probability extremes, invalid keys, ambiguity and unsupported citations', () => {
+  await t.test('audit feedback never rejects questions by difficulty, correctness or missing evidence', () => {
     const review = { questionId: question.id, relevant: true, difficultyFits: true, correct: true, unambiguous: true, evidenceSupported: true, estimatedSuccessPercent: 90, reason: 'Memerlukan pemahaman dasar.' };
     assert.equal(validateQualityReview({ reviews: [review] }, base, [question]).length, 1);
     for (const update of [{ estimatedSuccessPercent: 15 }, { relevant: false }, { correct: false }, { unambiguous: false }, { evidenceSupported: false }])
-      assert.throws(() => validateQualityReview({ reviews: [{ ...review, ...update }] }, base, [question]), (e: any) => e.code === 'QUALITY_REJECTED');
+      assert.equal(validateQualityReview({ reviews: [{ ...review, ...update }] }, base, [question]).length, 1);
     assert.throws(() => validateQualityReview({ reviews: [] }, base, [question]), (e: any) => e.code === 'QUALITY_REVIEW_INVALID');
-    assert.throws(() => validateQualityReview({ reviews: [{ ...review, estimatedSuccessPercent: 0 }] }, { ...base, difficulty: 'grand_master' }, [question]), /belum memenuhi/);
+    assert.equal(validateQualityReview({ reviews: [{ ...review, estimatedSuccessPercent: 0 }] }, { ...base, difficulty: 'grand_master' }, [question]).length, 1);
   });
-  await t.test('UI exposes renamed matrix, audience and guessing limits', () => {
+  await t.test('UI keeps levels but removes audience and detailed difficulty targets', () => {
     const html = renderToStaticMarkup(createElement(QuizCreator, { onGenerate() {}, isLoading: false, errorMessage: null, preferences: emptyWorkspace().preferences,
       hasApiKey: true, storageLabel: 'Lokal', onOpenSettings() {}, onDraft() {}, initialDraft: { topic: 'Anatomi' } }));
-    assert.ok(html.includes('Elementer') && html.includes('Ekstrem') && html.includes('quiz-audience') && html.includes('20%') && html.includes('estimasi desain'));
+    assert.ok(html.includes('Elementer') && html.includes('Ekstrem'));
+    for (const removed of ['quiz-audience', 'Peserta sasaran', '20%', 'estimasi desain', 'Target kemampuan']) assert.ok(!html.includes(removed));
   });
 });
 
 await test('Quality generation and recovery (simulated providers; no external requests)', async t => {
   const originalFetch = globalThis.fetch;
   let generations = 0, audits = 0, searches = 0;
-  let mode: 'pass' | 'reject-once' | 'reject-always' | 'reject-distinct' | 'invalid-review' | 'empty-search' | 'catalogue-search' = 'pass';
+  let mode = 'pass';
+  let auditAbort: AbortController | undefined;
   let generationPrompts: string[] = [];
   let searchBody: any;
   globalThis.fetch = async (input, init) => {
@@ -77,7 +81,11 @@ await test('Quality generation and recovery (simulated providers; no external re
     let output: unknown;
     if (audit) {
       audits++; assert.ok(!body.tools?.length, 'Audit must not issue another search');
+      if (mode === 'audit-network') throw new TypeError('fetch failed');
+      if (mode === 'audit-timeout') throw new DOMException('Deadline exceeded', 'TimeoutError');
+      if (mode === 'audit-cancel') { auditAbort!.abort(new DOMException('Cancelled', 'AbortError')); throw auditAbort!.signal.reason; }
       if (mode === 'invalid-review') output = { reviews: [] };
+      else if (mode === 'audit-json') return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: 'invalid JSON' }] } }] });
       else {
         if (mode === 'reject-always' || mode === 'reject-once' && audits === 1) { audit.reviews[0].relevant = false; audit.reviews[0].reason = 'Soal tidak menguji konsep inti anatomi.'; }
         if (mode === 'reject-distinct') { audit.reviews[0][['relevant', 'correct', 'unambiguous'][audits - 1]] = false; audit.reviews[0].reason = `Masalah kualitas berbeda pada percobaan ${audits}.`; }
@@ -86,8 +94,9 @@ await test('Quality generation and recovery (simulated providers; no external re
     } else {
       generations++; generationPrompts.push(prompt);
       const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]);
-      output = { title: 'Latihan anatomi', summary: 'Materi inti', questions: Array.from({ length: count }, (_, i) => ({ ...fixtures.single_choice,
+      output = { title: 'Latihan anatomi', summary: 'Materi inti', questions: Array.from({ length: mode === 'partial' && generations === 1 ? Math.max(1, count - 2) : count }, (_, i) => ({ ...fixtures.single_choice,
         question: `Struktur anatomi ${generations}-${i}: hubungan manakah yang tepat?`, sourceUrls: [source.url] })) };
+      if (mode === 'invalid-items' && generations === 1) { (output as any).questions[0] = null; (output as any).questions[1] = { ...fixtures.single_choice, correctAnswerIndex: 999 }; }
     }
     return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(output) }] },
       ...(body.tools?.length ? { groundingMetadata: { webSearchQueries: ['anatomical relationships'], groundingChunks: [{ web: { title: source.title, uri: source.url } }] } } : {}) }],
@@ -99,9 +108,9 @@ await test('Quality generation and recovery (simulated providers; no external re
       for (const level of DIFFICULTIES) {
         const config = { ...base, difficulty: level.id };
         const research = await searchParallel(config.topic, 'fixture-parallel-quality', undefined, config);
-        assert.ok(searchBody.objective.includes(base.targetAudience!) && searchBody.objective.includes(level.name));
+        assert.ok(!searchBody.objective.includes('targetSuccessPercent') && searchBody.objective.includes(level.name));
         assert.equal(searchBody.search_queries.length, 2); assert.ok(usableResearch(research, config.topic, config));
-        assert.ok(!usableResearch(research, config.topic, { ...config, targetAudience: 'Siswa SD' }));
+        assert.ok(usableResearch(research, config.topic, { ...config, targetAudience: 'Siswa SD' }));
         for (const mode of ['none', 'google', 'parallel']) {
           const quiz = await generateQuizBatch({ ...config, enableGrounding: mode !== 'none' }, 'fixture-quality-key', [], undefined, mode === 'parallel' ? research : undefined);
           assert.equal(quiz.difficulty, level.id); assert.equal(quiz.targetAudience, base.targetAudience);
@@ -118,32 +127,44 @@ await test('Quality generation and recovery (simulated providers; no external re
     const preferences = { ...emptyWorkspace().preferences, searchProvider: 'parallel' as const };
     let checkpoint: GenerationJob;
     const save = async (job: GenerationJob) => { checkpoint = structuredClone(job); };
-    await t.test('a quality failure changes the next prompt and reuses research', async () => {
-      reset(); mode = 'reject-once';
-      const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal);
-      assert.equal(generations, 2); assert.equal(audits, 2); assert.equal(searches, 1);
-      assert.ok(generationPrompts[1].includes('Previous attempt failed quality review') && generationPrompts[1].includes('konsep inti anatomi'));
-      assert.equal(quiz.questions.length, 1); assert.equal(checkpoint!.attemptState, undefined);
+    await t.test('negative, invalid and unavailable audits retain usable quizzes without generation retries', async () => {
+      for (const scenario of ['reject-once', 'reject-always', 'reject-distinct', 'invalid-review', 'audit-network', 'audit-timeout', 'audit-json']) {
+        reset(); mode = scenario;
+        const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal);
+        assert.equal(generations, 1); assert.equal(audits, 1); assert.equal(searches, 1);
+        assert.equal(quiz.questions.length, 1); assert.equal(checkpoint!.attemptState, undefined);
+        assert.ok(quiz.generationWarnings!.length);
+      }
     });
-    await t.test('two identical failures open the circuit; resume cannot reset the budget', async () => {
-      reset(); mode = 'reject-always';
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal), (e: any) => e.code === 'GENERATION_CIRCUIT_OPEN');
-      assert.equal(generations, 2); assert.equal(checkpoint!.attemptState!.calls, 2); assert.equal(checkpoint!.attemptState!.repeated, 2);
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal, checkpoint!), /Batas percobaan/);
-      assert.equal(generations, 2); assert.equal(searches, 1);
+    await t.test('partial batches save accepted questions and request only the missing count', async () => {
+      reset(); mode = 'partial'; const snapshots: number[] = [];
+      const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository,
+        async job => { snapshots.push(job.questions.length); await save(job); }, new AbortController().signal);
+      assert.equal(quiz.questions.length, 6); assert.equal(new Set(quiz.questions.map(q => q.question)).size, 6);
+      assert.ok(snapshots.includes(3)); assert.equal(generations, 2); assert.equal(searches, 1);
+      assert.ok(generationPrompts[1].includes('Jumlah Soal: 3'));
     });
-    await t.test('invalid audit fails closed without repeating calls', async () => {
-      reset(); mode = 'invalid-review';
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal), (e: any) => e.code === 'QUALITY_REVIEW_INVALID');
-      assert.equal(generations, 1); assert.equal(audits, 1);
+    await t.test('malformed items do not discard valid items in the same batch', async () => {
+      reset(); mode = 'invalid-items'; const snapshots: number[] = [];
+      const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository,
+        async job => { snapshots.push(job.questions.length); await save(job); }, new AbortController().signal);
+      assert.equal(quiz.questions.length, 6); assert.ok(snapshots.includes(3)); assert.equal(generations, 2);
     });
-    await t.test('distinct diagnosed failures share a three-attempt limit across resume', async () => {
-      reset(); mode = 'reject-distinct';
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal), (e: any) => e.code === 'QUALITY_REJECTED');
-      assert.equal(generations, 3); assert.equal(audits, 3); assert.equal(checkpoint!.attemptState!.calls, 3);
-      assert.equal(checkpoint!.attemptState!.repeated, 1); assert.ok(generationPrompts[2].includes('percobaan 2'));
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal, checkpoint!), /Batas percobaan/);
-      assert.equal(generations, 3);
+    await t.test('user cancellation during the advisory audit still stops generation', async () => {
+      reset(); mode = 'audit-cancel'; auditAbort = new AbortController();
+      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, auditAbort.signal), (e: any) => e.name === 'AbortError');
+      assert.equal(generations, 1); assert.equal(audits, 1); auditAbort = undefined;
+    });
+    await t.test('unusable supplied research does not prevent generation', async () => {
+      reset(); const quiz = await generateQuizBatch({ ...base, enableGrounding: true }, 'fixture-quality-key', [], undefined,
+        { provider: 'parallel', topic: 'Wrong topic', sources: [], queries: [], searchedAt: new Date().toISOString() });
+      assert.equal(quiz.questions.length, 1); assert.equal(quiz.usedGrounding, false); assert.ok(quiz.generationWarnings!.length);
+    });
+    await t.test('resume clears obsolete quality rejection without losing saved items', async () => {
+      reset(); const resumed: GenerationJob = { id: crypto.randomUUID(), config: base, preferences, questions: [], status: 'interrupted', createdAt: new Date().toISOString(),
+        attemptState: { batchOffset: 0, calls: 3, repeated: 2, lastCode: 'QUALITY_REJECTED' } };
+      const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal, resumed);
+      assert.equal(quiz.questions.length, 1); assert.equal(generations, 1);
     });
     await t.test('empty and irrelevant search fall back for stable material; warning and checkpoints survive batches', async () => {
       for (const scenario of ['empty-search', 'catalogue-search'] as const) {
@@ -154,10 +175,11 @@ await test('Quality generation and recovery (simulated providers; no external re
         assert.ok(quiz.generationWarnings![0].includes('tanpa referensi web')); assert.ok(checkpoint!.parallelFallback);
       }
     });
-    await t.test('current facts never fall back to unsupported knowledge', async () => {
+    await t.test('empty research allows generation with an explicit unverified-current-information warning', async () => {
       reset(); mode = 'empty-search';
-      await assert.rejects(generateWorkspaceQuiz({ ...base, topic: 'Pedoman terapi terbaru' }, preferences, keys, localRepository, save, new AbortController().signal), (e: any) => e.code === 'PARALLEL_SEARCH_EMPTY');
-      assert.equal(generations, 0); assert.equal(audits, 0);
+      const quiz = await generateWorkspaceQuiz({ ...base, topic: 'Pedoman terapi terbaru' }, preferences, keys, localRepository, save, new AbortController().signal);
+      assert.equal(quiz.questions.length, 1); assert.equal(quiz.usedGrounding, false);
+      assert.ok(quiz.generationWarnings!.some(w => w.includes('belum diverifikasi')));
     });
     await t.test('observed calibration separates guessing-inclusive outcomes, pending grades and repeat practice', async () => {
       reset();

@@ -4,7 +4,7 @@ import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerati
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
 import { searchParallel, usableResearch } from '../../../src/server/parallelSearch.ts';
-import { recordGenerationFailure, needsCurrentEvidence, stableResearchFallbackCodes } from '../../../src/server/assessmentPolicy.ts';
+import { recordGenerationFailure, stableResearchFallbackCodes } from '../../../src/server/assessmentPolicy.ts';
 import { normalizeQuizConfig } from '../../../src/quizConfig.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
@@ -81,7 +81,6 @@ Deno.serve(async request => {
     const { data: claimed, error: claimError } = await admin.rpc('qm_claim_job', { p_user: userId, p_id: body.operationId, p_config: body.config, p_preferences: preferences });
     if (claimError) return json({ error: claimError.code === '55P03' ? 'Batch masih diproses. Tunggu sebelum melanjutkan.' : claimError.message }, claimError.code === '55P03' ? 409 : 400);
     job = claimed;
-    if (preferences.grounding && job.result?.groundingFallbackUsed && !job.result?.generationState?.parallelFallback) throw Object.assign(new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.'), { status: 409, code: 'WEB_RESTART_REQUIRED' });
     if (job.status === 'completed') return json({ quiz: job.result, complete: true });
     const generationKeys = keys.filter(k => k.provider !== 'parallel');
     const selected = preferences.keyId ? generationKeys.find(k => k.id === preferences.keyId) : null;
@@ -108,7 +107,7 @@ Deno.serve(async request => {
           try { research = await searchParallel(batchConfig.topic, await getSecret(searchKey), cancellation.signal, fullConfig); await outcome(searchKey.id, userId, 'available'); }
           catch (error) {
             cancellation.signal.throwIfAborted();
-            if (stableResearchFallbackCodes.includes(error.code) && !needsCurrentEvidence(fullConfig)) {
+            if (stableResearchFallbackCodes.includes(error.code)) {
               generationState.parallelFallback = error.code; research = undefined;
               await outcome(searchKey.id, userId, 'available'); await persistGenerationState();
             } else { await outcome(searchKey.id, userId, statusOf(error)); throw error; }
@@ -122,9 +121,9 @@ Deno.serve(async request => {
         }
       }
       let batch; let last; let keyIndex = 0;
-      const state = generationState.attemptState?.batchOffset === previous.length ? generationState.attemptState : { batchOffset: previous.length, calls: 0, repeated: 0 };
+      const state = generationState.attemptState?.batchOffset === previous.length && !['QUALITY_REJECTED', 'QUALITY_REVIEW_INVALID', 'WEB_SEARCH_EMPTY', 'PARALLEL_CITATION_INVALID'].includes(generationState.attemptState.lastCode || '') ? generationState.attemptState : { batchOffset: previous.length, calls: 0, repeated: 0 };
       generationState.attemptState = state;
-      if (state.calls >= preferences.maxAttempts || state.repeated >= 2) throw Object.assign(new Error('Batas percobaan batch tercapai. Periksa sumber, cakupan, dan difficulty sebelum membuat kuis baru.'), { status: 422, code: 'GENERATION_CIRCUIT_OPEN' });
+      if (state.calls >= preferences.maxAttempts || state.repeated >= 2) throw Object.assign(new Error('Batas percobaan batch tercapai. Periksa koneksi, model, atau kuota AI sebelum mencoba kembali.'), { status: 422, code: 'GENERATION_CIRCUIT_OPEN' });
       while (state.calls < preferences.maxAttempts) {
         cancellation.signal.throwIfAborted();
         const key = candidates[keyIndex];
@@ -133,7 +132,7 @@ Deno.serve(async request => {
           batch = await generateQuizBatch({ ...batchConfig, enableGrounding: generationState.parallelFallback ? false : preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal, generationState.parallelFallback ? undefined : research, state.correction);
           if (generationState.parallelFallback) {
             batch.groundingFallbackUsed = true;
-            batch.generationWarnings = ['Parallel tidak menyediakan materi yang relevan. Kuis ini dibuat tanpa referensi web dan tetap diperiksa kualitasnya.'];
+            batch.generationWarnings = [...(batch.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];
           }
           cancellation.signal.throwIfAborted();
           await outcome(key.id, userId, 'available'); break;
@@ -148,9 +147,10 @@ Deno.serve(async request => {
       if (!batch) throw last || new Error('Batch gagal.');
       delete generationState.attemptState;
       cancellation.signal.throwIfAborted();
-      const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
+      const quiz = { ...batch, ...fullConfig, id: job.id, questions: [...previous, ...batch.questions],
         generationState,
         qualityReviews: [...(job.result?.qualityReviews || []), ...(batch.qualityReviews || [])],
+        generationWarnings: [...new Set([...(job.result?.generationWarnings || []), ...(batch.generationWarnings || [])])],
         generationMetrics: [...(job.result?.generationMetrics || []), ...(batch.generationMetrics || [])],
         groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
       const complete = quiz.questions.length === body.config.questionCount;

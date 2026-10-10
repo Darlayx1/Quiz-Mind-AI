@@ -27,9 +27,11 @@ export async function generateQuiz(input:QuizConfig,apiKey?:string,options:Gener
    signal.throwIfAborted();const count=Math.min(type==='essay'?2:5,remaining);
    const batch=await generateBatch({...config,questionType:type,questionCount:count,questionDistribution:{[type]:count},enableGrounding:config.enableGrounding},apiKey,{...options,signal,research});
    for(const query of batch.groundingQueriesUsed??[])groundingQueries.add(query);
-   if(batch.questions.length!==count)throw new QuizGenerationError('Jumlah soal tidak sesuai distribusi.',502,'INCOMPLETE_QUESTION_COUNT');
-   for(const q of batch.questions){const key=q.question.normalize('NFC').trim().toLocaleLowerCase();if(seen.has(key))throw new QuizGenerationError('Generator mengulang pertanyaan. Gunakan materi yang lebih beragam.',502,'DUPLICATE_QUESTION');seen.add(key);q.id='q_'+crypto.randomUUID();q.maxPoints=config.pointsByType?.[type]??1;if(q.type==='multiple_select'||q.type==='ordering')q.scoringMode=config.partialCredit?'partial':'exact';questions.push(q);}
-   generationBatches.push({provider:batch.provider,model:batch.model,questionIds:batch.questions.map(q=>q.id)});quiz??=batch;remaining-=count;options.onNotice?.(questions.length+' dari '+config.questionCount+' soal selesai.');
+   const usable=batch.questions.filter(q=>{const key=q.question.normalize('NFC').trim().toLocaleLowerCase();if(seen.has(key))return false;seen.add(key);return true;}).slice(0,count);
+   if(!usable.length)throw new QuizGenerationError('AI belum menghasilkan soal baru yang bisa digunakan.',502,'INCOMPLETE_QUESTION_COUNT');
+   batch.questions=usable;
+   for(const q of usable){q.id='q_'+crypto.randomUUID();q.maxPoints=config.pointsByType?.[type]??1;if(q.type==='multiple_select'||q.type==='ordering')q.scoringMode=config.partialCredit?'partial':'exact';questions.push(q);}
+   generationBatches.push({provider:batch.provider,model:batch.model,questionIds:batch.questions.map(q=>q.id)});quiz??=batch;remaining-=usable.length;options.onNotice?.(questions.length+' dari '+config.questionCount+' soal selesai.');
   }
  }
  if(!quiz)throw new QuizGenerationError('Komposisi soal kosong.',400,'INVALID_CONFIG');

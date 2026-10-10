@@ -14,9 +14,9 @@ const selected = value('--levels')?.split(',');
 if (selected?.some(id => !DIFFICULTIES.some(d => d.id === id))) throw new Error('ID difficulty tidak valid.');
 const levels = DIFFICULTIES.filter(d => !selected || selected.includes(d.id));
 const cases = [
-  { topic: 'Anatomi manusia: struktur, lokasi, dan hubungan antarstruktur', targetAudience: 'Mahasiswa kedokteran tahun pertama' },
-  { topic: 'Algoritma dan struktur data', targetAudience: 'Mahasiswa informatika tahun pertama' },
-  { topic: 'Sejarah Indonesia', targetAudience: 'Pelajar SMA Indonesia' },
+  { topic: 'Anatomi manusia: struktur, lokasi, dan hubungan antarstruktur' },
+  { topic: 'Algoritma dan struktur data' },
+  { topic: 'Sejarah Indonesia' },
 ];
 const tasks = cases.flatMap(topic => levels.flatMap(level => Array.from({ length: repetitions }, (_, repetition) =>
   ['parallel', 'google', 'none'].map(mode => ({ caseId: crypto.randomUUID(), repetition, mode,
@@ -26,7 +26,7 @@ const output = resolve('.qa', 'quality-benchmark');
 await mkdir(output, { recursive: true });
 await writeFile(resolve(output, 'manifest.json'), JSON.stringify({ estimateOnly: true, tasks,
   rubric: ['relevance', 'reasoningDepth', 'difficultyFit', 'answerCorrectness', 'ambiguity', 'sourceSupport'],
-  acceptance: 'Zero off-scope items for explicit scope; compare mean blinded ratings under identical topic/audience/model/type/level. Participant mastery requires real response data.' }, null, 2));
+  acceptance: 'Zero off-scope items for explicit scope; compare mean blinded ratings under identical topic/model/type/level. Participant mastery requires real response data.' }, null, 2));
 console.log(`Manifest: ${tasks.length} attempts, up to ${tasks.length * 2} model calls and ${tasks.filter(t => t.mode === 'parallel').length} searches. Output: ${output}`);
 if (args.includes('--live')) {
   const generatorKey = process.env.QUIZ_BENCHMARK_GEMINI_KEY;
@@ -43,7 +43,7 @@ if (args.includes('--live')) {
       for (const question of quiz.questions) {
         const blindId = crypto.randomUUID();
         const { groundingSources, ...content } = question;
-        blind.push({ blindId, topic: task.config.topic, audience: task.config.targetAudience, difficulty: task.config.difficulty,
+        blind.push({ blindId, topic: task.config.topic, difficulty: task.config.difficulty,
           question: content, humanRatings: { relevance: null, reasoningDepth: null, difficultyFit: null, answerCorrectness: null, ambiguity: null, comment: '' } });
         mapping.push({ blindId, caseId: task.caseId, mode: task.mode, sources: groundingSources });
       }

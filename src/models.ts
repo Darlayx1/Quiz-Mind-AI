@@ -64,70 +64,52 @@ export const DIFFICULTIES = [
   {
     id: "primitive",
     name: "Elementer",
-    successRange: [99, 100],
-    successLabel: "99–100%",
     description:
-      "Mengenali fakta paling dasar, dengan pertanyaan langsung dan opsi sederhana.",
+      "Latihan paling dasar.",
   },
   {
     id: "very_easy",
     name: "Sangat mudah",
-    successRange: [95, 99],
-    successLabel: "95–<99%",
     description:
-      "Mengingat istilah dan konsep dasar dengan konteks yang familiar.",
+      "Latihan pengenalan sederhana.",
   },
   {
     id: "easy",
     name: "Mudah",
-    successRange: [85, 95],
-    successLabel: "85–<95%",
-    description: "Memahami konsep dasar dan hubungan sederhana antaride.",
+    description: "Latihan konsep dasar.",
   },
   {
     id: "moderate",
     name: "Menengah",
-    successRange: [70, 85],
-    successLabel: "70–<85%",
-    description: "Menghubungkan dua konsep atau menerapkannya pada situasi yang familiar.",
+    description: "Latihan pemahaman umum.",
   },
   {
     id: "intermediate",
     name: "Menantang",
-    successRange: [50, 70],
-    successLabel: "50–<70%",
     description:
-      "Menghubungkan beberapa konsep dan melakukan analisis terapan.",
+      "Latihan dengan tantangan tambahan.",
   },
   {
     id: "hard",
     name: "Sulit",
-    successRange: [30, 50],
-    successLabel: "30–<50%",
-    description: "Menganalisis studi kasus dan menyelesaikan masalah bertahap.",
+    description: "Latihan tingkat lanjut.",
   },
   {
     id: "very_hard",
     name: "Sangat sulit",
-    successRange: [15, 30],
-    successLabel: "15–<30%",
-    description: "Mengevaluasi masalah kompleks dengan beberapa sudut pandang.",
+    description: "Latihan yang lebih kompleks.",
   },
   {
     id: "master",
     name: "Pakar",
-    successRange: [5, 15],
-    successLabel: "5–<15%",
     description:
-      "Mensintesis konsep tingkat pakar dengan penalaran abstrak mendalam.",
+      "Latihan pendalaman materi.",
   },
   {
     id: "grand_master",
     name: "Ekstrem",
-    successRange: [0, 5],
-    successLabel: ">0–<5%",
     description:
-      "Memecahkan persoalan orisinal tingkat kompetisi dengan sintesis lintas konsep.",
+      "Latihan dengan tantangan tertinggi.",
   },
 ] as const;
 export const difficultyName = (id: string) =>

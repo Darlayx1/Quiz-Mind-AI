@@ -55,6 +55,7 @@ export interface QuestionEvaluation {
 }
 
 export interface Quiz {
+  /** Legacy metadata only; ignored for new generation. */
   targetAudience?: string;
   qualityReviews?: import('../server/assessmentPolicy.js').QualityReviewRecord[];
   generationMetrics?: { durationMs: number; modelCalls: number; questionIds: string[]; inputTokens?: number; outputTokens?: number }[];
@@ -88,6 +89,7 @@ export interface Quiz {
 }
 
 export interface QuizConfig {
+  /** Legacy metadata only; ignored for new generation. */
   targetAudience?: string;
   questionType?: QuestionType;
   questionDistribution?: Partial<Record<QuestionType,number>>;

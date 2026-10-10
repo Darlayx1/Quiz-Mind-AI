@@ -197,10 +197,8 @@ try {
   );
 
   responseCount = 1;
-  await assert.rejects(
-    generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key"),
-    /1 soal valid dari 5/,
-  );
+  const partialQuiz = await generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key");
+  assert.equal(partialQuiz.questions.length, 1, 'Keep usable questions from a partial response');
   // One generation plus an independent audit; the outer adapter owns retries.
   calls.length = 0;
   const batch = await generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key");
@@ -213,8 +211,9 @@ try {
   assert.equal(calls[0].model, DEFAULT_MODEL);
   failAlways = false;
   calls.length = 0;
-  await assert.rejects(generateQuizBatch({ ...config, questionCount: 5 }, "test-key"), /valid|jumlah/i);
-  assert.equal(calls.length, 1);
+  const partialBatch = await generateQuizBatch({ ...config, questionCount: 5 }, "test-key");
+  assert.equal(partialBatch.questions.length, 1);
+  assert.equal(calls.length, 2, 'One generation and one advisory audit');
   console.log(
     "PASS: enam model, sembilan level, grounding, fallback, prompt personal, custom 25 soal, timer per mode, tanpa batas, konfigurasi lama, validasi jumlah hasil. Tidak ada panggilan API eksternal.",
   );

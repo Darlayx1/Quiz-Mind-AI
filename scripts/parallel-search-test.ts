@@ -115,9 +115,10 @@ await test('Parallel search integration (no external calls)', async t => {
       await generateWorkspaceQuiz(base, preferences, keys, localRepository, async () => {}, new AbortController().signal, resumed);
       assert.equal(searches, 1, 'Resume reuses successful search');
     });
-    await t.test('invalid model citations stop without repeated generation', async () => {
+    await t.test('invalid model citations are omitted without blocking generation', async () => {
       invalidCitation = true; const before = generations;
-      await assert.rejects(generateQuizBatch(base, 'fixture-google-secret', [], undefined, research), (e: any) => e.code === 'PARALLEL_CITATION_INVALID');
+      const quiz = await generateQuizBatch(base, 'fixture-google-secret', [], undefined, research);
+      assert.equal(quiz.questions.length, 1); assert.equal(quiz.questions[0].groundingSources.length, 0); assert.ok(quiz.generationWarnings!.length);
       assert.equal(generations - before, 1); invalidCitation = false;
     });
     await t.test('Gemma uses external evidence without native Google Search', async () => {
