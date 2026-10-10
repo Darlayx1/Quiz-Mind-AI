@@ -3,6 +3,7 @@ import { localCredential } from './localRepository.js';
 import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
+import { GROUNDING_FALLBACK_NOTICE } from '../generationMessages.js';
 
 export { availableKeys } from './types.js';
 export async function invokeAccount(body: Record<string, unknown>, signal?: AbortSignal, expectedOwner?: string) {
@@ -15,7 +16,7 @@ export async function invokeAccount(body: Record<string, unknown>, signal?: Abor
   });
   let result: any;
   try { result = await response.json(); } catch { throw new Error('Layanan AI akun belum merespons. Data lokal tidak digunakan sebagai cadangan.'); }
-  if (!response.ok) throw Object.assign(new Error(result.error || 'Layanan AI akun belum tersedia.'), { status: response.status });
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Layanan AI akun belum tersedia.'), { status: response.status, code: result.code });
   return result;
 }
 export async function testKey(repository: WorkspaceRepository, id: string, model: Preferences['model']) {
@@ -47,27 +48,35 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } = await import('../server/geminiService.js');
       const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
+      let enableGrounding = batchConfig.enableGrounding && !job.quiz?.groundingFallbackUsed;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
         try {
           const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(80000)]);
-          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
+          batch = await generateQuizBatch({ ...batchConfig, enableGrounding }, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;
           const classified = classifyApiError(error, job.preferences.model);
           last = classified; const status = keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
+          if (classified.status === 429 && enableGrounding && job.preferences.allowGroundingFallback !== false && attempt + 1 < attempts) {
+            enableGrounding = false; continue;
+          }
           if (!isRetryableGenerationError(classified)) break;
           if (['invalid','quota'].includes(status)) { if (keyIndex + 1 >= eligible.length) break; keyIndex++; }
           // Different eligible key or a bounded transient retry. No nested retry or model substitution.
         }
       }
       if (!batch) throw last || new Error('Batch belum berhasil.');
+      if (batchConfig.enableGrounding && !enableGrounding) {
+        batch.groundingFallbackUsed = true; batch.generationWarnings = [GROUNDING_FALLBACK_NOTICE];
+      }
       job.questions.push(...batch.questions);
       job.quiz = { ...batch, ...job.config, id: job.id, questions: job.questions,
         groundingQueriesUsed: [...new Set([...(job.quiz?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
     }
+    signal.throwIfAborted();
     job.status = job.questions.length === job.config.questionCount ? 'completed' : 'running';
     await checkpoint(job); onProgress?.(job.questions.length, job.config.questionCount);
   }

@@ -8,6 +8,7 @@ export interface ApiKeyRecord {
   priority: number; status: KeyStatus; testedAt?: string; successes: number; failures: number;
 }
 export interface Preferences {
+  allowGroundingFallback?: boolean;
   model: AIModel; keyId: string | null; grounding: boolean; maxAttempts: number; fallback: boolean;
   evaluation?: EvaluationSettings;
 }
@@ -29,7 +30,7 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
+  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, allowGroundingFallback: true, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {

@@ -16,7 +16,7 @@ const base: QuizConfig = { model: DEFAULT_MODEL, topic: 'Konsep', questionCount:
 const key = 'fixture-secret-never-display';
 const originalFetch = globalThis.fetch;
 let requests: any[] = [];
-let failure: 'network' | 'timeout' | 'cancel' | 'truncated' | 'blocked' | 'empty' | 'json' | 'count' | undefined;
+let failure: 'network' | 'timeout' | 'cancel' | 'truncated' | 'blocked' | 'empty' | 'json' | 'count' | 'search-quota' | 'all-quota' | undefined;
 const cancel = new AbortController();
 const timeout = new AbortController();
 
@@ -43,6 +43,7 @@ globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
   requests.push(body);
+  if (failure === 'all-quota' || failure === 'search-quota' && body.tools?.length) return Response.json({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota limited' } }, { status: 429 });
   if (failure === 'network') throw new TypeError('Failed to fetch');
   if (failure === 'timeout' || failure === 'cancel') {
     const controller = failure === 'timeout' ? timeout : cancel;
@@ -102,6 +103,22 @@ try {
     async () => {}, new AbortController().signal);
   assert.deepEqual(quiz.questions.map(q => q.type), ['essay', 'essay']);
   assert.equal(quiz.questions.length, 2);
+  failure = 'search-quota';
+  const start = requests.length;
+  const fallbackQuiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true },
+    await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
+  assert.equal(fallbackQuiz.questions.length, 6);
+  assert.equal(fallbackQuiz.groundingFallbackUsed, true);
+  assert.ok(fallbackQuiz.generationWarnings?.length);
+  assert.equal(fallbackQuiz.usedGrounding, false);
+  assert.deepEqual(requests.slice(start).map(r => Boolean(r.tools?.length)), [true, false, false], 'Search is tried once; later batches reuse successful no-search strategy');
+  const disabledStart = requests.length;
+  await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true, allowGroundingFallback: false }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
+  assert.equal(requests.length - disabledStart, 1);
+  failure = 'all-quota';
+  const allQuotaStart = requests.length;
+  await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
+  assert.equal(requests.length - allQuotaStart, 2, 'Fallback also respects a model-wide quota and stops');
   console.log('PASS: active generator schemas for all seven types with/without search, Gemma/custom compatibility, sparse distributions, HTTP/network diagnostics, timeout/cancel, and no repeated invalid output. No external API requests.');
 } finally {
   globalThis.fetch = originalFetch;
@@ -113,6 +130,7 @@ const priorDeno = runtime.Deno;
 let handler: (request: Request) => Promise<Response>;
 let accountCalls = 0;
 let accountFailure = false;
+let accountSearchQuota = false;
 const outcomes: string[] = [];
 const commits: any[] = [];
 const preferences = { ...emptyWorkspace().preferences, grounding: false };
@@ -135,6 +153,7 @@ const admin = {
 runtime.__accountGenerationAdmin = admin;
 runtime.__accountGenerationCall = async (params: any) => {
   accountCalls++;
+  if (accountSearchQuota && params.config.tools?.length) throw Object.assign(new Error('Quota limited'), { status: 429 });
   assert.equal(params.config.responseMimeType, 'application/json');
   assert.deepEqual(params.config.responseJsonSchema.properties.questions.items, quizSchemaFor('essay').properties.questions.items);
   const text = JSON.stringify({ title: 'Esai akun', questions: Array.from({ length: 2 }, (_, i) =>
@@ -152,9 +171,9 @@ try {
         : 'export class GoogleGenAI { constructor() { this.models = { generateContent: params => globalThis.__accountGenerationCall(params) }; } }' }));
     } }] });
   await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
-  const request = () => new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST',
+  const request = (prefs = preferences) => new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST',
     headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'generate', operationId, config: essayOnly, preferences }) });
+    body: JSON.stringify({ action: 'generate', operationId, config: essayOnly, preferences: prefs }) });
   let response = await handler!(request());
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.deepEqual((await response.json()).quiz.questions.map((q: any) => q.type), ['essay', 'essay']);
@@ -167,6 +186,14 @@ try {
   assert.equal(accountCalls, 2, 'Account must not retry identical truncated output');
   assert.equal(outcomes.at(-1), 'unavailable');
   assert.equal(commits.at(-1).p_status, 'pending');
+  accountFailure = false; accountSearchQuota = true;
+  response = await handler!(request({ ...preferences, grounding: true }));
+  assert.equal(response.status, 200);
+  const fallback = (await response.json()).quiz;
+  assert.equal(fallback.groundingFallbackUsed, true);
+  assert.equal(fallback.usedGrounding, false);
+  assert.ok(fallback.generationWarnings.length);
+  assert.equal(accountCalls, 4, 'Account uses the same two-call bounded grounding fallback');
   console.log('PASS: authenticated account handler, generated Edge engine, sparse essay distribution, correct schema, and checkpoint preserved after truncated response. No external API requests.');
 } finally {
   runtime.Deno = priorDeno;

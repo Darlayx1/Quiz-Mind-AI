@@ -27,7 +27,8 @@ export default function App() {
   const restoredScope = useRef<string | null>(null);
   const attemptedProgress = useRef('');
   useEffect(() => {
-    abort.current?.abort(); setLoading(false); setIsEvaluating(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
+    abort.current?.abort(new Error('Sesi atau ruang penyimpanan berubah. Operasi sebelumnya dihentikan.')); abort.current = null;
+    setLoading(false); setIsEvaluating(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
   }, [w.scope, w.mode]);
   useEffect(() => {
     if (!w.ready || restoredScope.current === w.scope) return;
@@ -55,20 +56,23 @@ export default function App() {
     const started = Date.now(); let currentJob: GenerationJob | undefined;
     try {
       const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
+        controller.signal.throwIfAborted();
+        if (scope.current !== origin || abort.current !== controller) throw new Error('Operasi sebelumnya sudah dihentikan.');
         currentJob = job; await w.update(d => ({ ...d, job }), origin);
-      }, controller.signal, resume, completed => { if (scope.current === origin) setGeneration({ config, completed }); });
-      controller.signal.throwIfAborted(); if (scope.current !== origin) return;
+      }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration({ config, completed }); });
+      controller.signal.throwIfAborted(); if (scope.current !== origin || abort.current !== controller) return;
       await w.update(d => ({ ...d, job: null, history: [{ quiz: generated, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
+      if (scope.current !== origin || abort.current !== controller) return;
       setQuiz(generated); setResult(null); setView('runner');
     } catch (e) {
-      if (scope.current !== origin) return;
+      if (scope.current !== origin || abort.current !== controller) return;
       const cancelled = controller.signal.aborted;
       setError(cancelled ? 'Pembuatan kuis dibatalkan. Batch yang sudah selesai tetap dicatat.' : (e as Error).message);
       await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
           detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
-    } finally { if (scope.current === origin) { setLoading(false); abort.current = null; void w.refresh(); } }
+    } finally { if (scope.current === origin && abort.current === controller) { setLoading(false); abort.current = null; void w.refresh(); } }
   };
   const saveResult = (next:QuizResult,origin=w.scope) => w.update(d=>({...d,progress:null,history:d.history.map(h=>h.quiz.id===next.quiz.id?{...h,lastResult:next,savedAt:new Date().toISOString(),attempts:[...(h.attempts??(h.lastResult?[h.lastResult]:[])).filter(r=>r.submission.completedAt!==next.submission.completedAt),next]}:h)}),origin);
   const runEvaluation = async (source:QuizResult,targets?:string[]) => {
@@ -76,11 +80,12 @@ export default function App() {
     const origin=w.scope,repository=w.repository,controller=new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
     const started=Date.now();
     try{
-      const evaluated=await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async next=>{await saveResult(next,origin);if(scope.current===origin)setResult(next);});
+      const evaluated=await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async next=>{controller.signal.throwIfAborted();if(scope.current!==origin||abort.current!==controller)return;await saveResult(next,origin);if(scope.current===origin&&abort.current===controller)setResult(next);});
+      controller.signal.throwIfAborted();if(scope.current!==origin||abort.current!==controller)return;
       const failed=Object.values(evaluated.evaluations??{}).some(e=>e.status==='failed');
       await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.model??w.data.preferences.model,status:failed?'failed' as const:'success' as const,durationMs:Date.now()-started},...d.activity].slice(0,2000)}),origin);
-    }catch(e){if(scope.current===origin)setError(controller.signal.aborted?'Evaluasi dibatalkan. Jawaban tetap tersimpan.':(e as Error).message);}
-    finally{if(scope.current===origin){setIsEvaluating(false);abort.current=null;void w.refresh();}}
+    }catch(e){if(scope.current===origin&&abort.current===controller)setError(controller.signal.aborted?'Evaluasi dibatalkan. Jawaban tetap tersimpan.':(e as Error).message);}
+    finally{if(scope.current===origin&&abort.current===controller){setIsEvaluating(false);abort.current=null;void w.refresh();}}
   };
   const finish = (submission:QuizSubmission) => {
     if(!quiz)return;const settings=quiz.evaluationSettings??w.data.preferences.evaluation;

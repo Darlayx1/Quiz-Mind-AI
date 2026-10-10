@@ -137,6 +137,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
     <div
       className={`page-shell runner-page ${sequential ? "sequential-runner" : "free-runner"}`}
     >
+      {quiz.generationWarnings?.map(message => <div key={message} className="settings-alert" role="status">{message}</div>)}
       <div className="runner-heading">
         <div>
           <div className="eyebrow">

@@ -55,6 +55,8 @@ export interface QuestionEvaluation {
 }
 
 export interface Quiz {
+  groundingFallbackUsed?: boolean;
+  generationWarnings?: string[];
   generationBatches?: {provider?:AIProvider;model?:string;questionIds:string[]}[];
   schemaVersion?: 2;
   evaluationSettings?: EvaluationSettings;

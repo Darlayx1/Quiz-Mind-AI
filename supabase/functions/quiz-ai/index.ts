@@ -2,6 +2,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../_shared/quiz-engine.ts';
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
+import { GROUNDING_FALLBACK_NOTICE } from '../../../src/generationMessages.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Content-Type': 'application/json' };
@@ -65,18 +66,25 @@ Deno.serve(async request => {
     const previous = job.result?.questions || [];
     const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
     let batch; let last; let keyIndex = 0;
+    let enableGrounding = preferences.grounding && preferences.model !== 'gemma-4-31b-it' && !job.result?.groundingFallbackUsed;
     for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
       const key = candidates[keyIndex];
       try {
-        batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding && preferences.model !== 'gemma-4-31b-it' }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
+        batch = await generateQuizBatch({ ...batchConfig, enableGrounding }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
         await outcome(key.id, userId, 'available'); break;
       } catch (error) {
         last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
+        if (last.status === 429 && enableGrounding && preferences.allowGroundingFallback !== false && attempt + 1 < preferences.maxAttempts) {
+          enableGrounding = false; continue;
+        }
         if (!isRetryableGenerationError(last)) break;
         if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
       }
     }
     if (!batch) throw last || new Error('Batch gagal.');
+    if (preferences.grounding && preferences.model !== 'gemma-4-31b-it' && !enableGrounding) {
+      batch.groundingFallbackUsed = true; batch.generationWarnings = [GROUNDING_FALLBACK_NOTICE];
+    }
     const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
       groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
     const complete = quiz.questions.length === body.config.questionCount;
@@ -86,6 +94,9 @@ Deno.serve(async request => {
   } catch (error) {
     if (job && userId) await admin.rpc('qm_commit_job', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_result: job.result, p_status: 'pending' });
     // No provider request/credentials are logged or returned.
-    const status = Number(error.status); return json({ error: error.message || 'Operasi AI belum berhasil.' }, status >= 400 && status <= 599 ? status : 502);
+    const status = Number(error.status);
+    const code = error.code || 'ACCOUNT_REQUEST_FAILED';
+    console.warn(JSON.stringify({ event: 'quiz-ai-failure', status: status >= 400 && status <= 599 ? status : 502, code }));
+    return json({ error: error.message || 'Operasi AI belum berhasil.', code }, status >= 400 && status <= 599 ? status : 502);
   }
 });
