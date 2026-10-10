@@ -6,7 +6,7 @@ import { KeyPool, PoolError, errorKind } from '../keyPool.js';
 import { geminiQuotaMessage } from '../geminiQuota.js';
 
 import { QuizGenerationError } from './generationError.js';
-export { QuizGenerationError } from './generationError.js';
+export { QuizGenerationError, isRetryableGenerationError } from './generationError.js';
 import { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, quizSchemaFor } from './quizPipeline.js';
 export { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse } from './quizPipeline.js';
 export { nextQuizBatch } from './quizPipeline.js';
@@ -39,12 +39,27 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
   const model = config.model ?? DEFAULT_MODEL;
   const gemma = model === 'gemma-4-31b-it';
   const prompt = buildPrompt(config, config.questionCount, existing);
+  const structured = modelInfo(model)?.structured === true;
+  const schema = quizSchemaFor(config.questionType);
   try {
     const response = await ai.models.generateContent({ model,
       contents: gemma ? buildGemmaPrompt(config, config.questionCount, existing) : prompt.userPrompt,
       config: { abortSignal: signal, ...(gemma ? {} : { systemInstruction: prompt.systemInstruction }),
+        ...(structured ? { responseMimeType: 'application/json', responseJsonSchema: {
+          ...schema, properties: { ...schema.properties, questions: {
+            ...schema.properties.questions, minItems: config.questionCount, maxItems: config.questionCount,
+          } },
+        } } : {}),
+        maxOutputTokens: 8192,
         ...(!gemma && config.enableGrounding ? { tools: [{ googleSearch: {} }] } : {}) },
     });
+    signal?.throwIfAborted();
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason === 'MAX_TOKENS') throw new QuizGenerationError('Respons AI terpotong sebelum kuis selesai. Kurangi jumlah soal per permintaan atau panjang materi.', 502, 'INCOMPLETE_RESPONSE');
+    if (response.promptFeedback?.blockReason || candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      throw new QuizGenerationError('Respons kuis dihentikan oleh penyedia AI. Sesuaikan topik atau materi sebelum mencoba kembali.', 422, 'RESPONSE_BLOCKED');
+    }
+    if (!response.text?.trim()) throw new QuizGenerationError('Model AI mengembalikan respons kosong. Kuis belum dapat dibuat.', 502, 'EMPTY_RESPONSE');
     const parsed = extractJsonFromResponse(response.text || '');
     const sources: GroundingSource[] = (response.candidates?.[0]?.groundingMetadata?.groundingChunks || [])
       .filter(chunk => chunk.web?.uri).map(chunk => ({ title: chunk.web!.title || 'Referensi', url: chunk.web!.uri! }));
@@ -63,7 +78,10 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       ...config, schemaVersion: 2, createdAt: new Date().toISOString(), questions, requestedModel: model, model,
       usedGrounding: !gemma && config.enableGrounding, groundingQueriesUsed: response.candidates?.[0]?.groundingMetadata?.webSearchQueries || [] };
   } catch (error) {
-    if (signal?.aborted) throw new DOMException('Operasi dibatalkan', 'AbortError');
+    if (signal?.aborted) {
+      if (signal.reason?.name === 'TimeoutError') throw classifyApiError(signal.reason, model);
+      signal.throwIfAborted();
+    }
     throw classifyApiError(error, model);
   }
 }
@@ -77,6 +95,9 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   const msg = String(err?.message || err);
+  const status = Number(err?.status ?? err?.error?.code ?? (typeof err?.code === 'number' ? err.code : undefined)
+    ?? /\b(400|401|403|404|429|500|502|503|504)\b/.exec(msg)?.[1]);
+  const code = String(err?.code ?? err?.error?.status ?? '');
   const isGemma = modelId === 'gemma-4-31b-it';
   const modelLabel = isGemma ? 'Gemma 4 31B' : 'Gemini';
 
@@ -85,12 +106,12 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
     return new QuizGenerationError(geminiQuotaMessage(err, modelId), 429, 'RATE_LIMIT_EXCEEDED');
   }
 
-  if (Number(err?.status ?? err?.error?.code) === 400 || /INVALID_ARGUMENT/.test(msg)) {
+  if (status === 400 || /INVALID_ARGUMENT/.test(msg + code)) {
     return new QuizGenerationError(`Permintaan ke ${modelLabel} tidak valid. Periksa materi dan pengaturan kuis.`, 400, 'INVALID_ARGUMENT');
   }
 
   // 401 Unauthorized
-  if (/401|API_KEY_INVALID|API key not valid|UNAUTHENTICATED/i.test(msg)) {
+  if (status === 401 || /API_KEY_INVALID|API key not valid|UNAUTHENTICATED/i.test(msg + code)) {
     return new QuizGenerationError(
       `API key tidak diterima atau tidak valid untuk ${modelLabel}. Periksa API key Anda di Google AI Studio.`,
       401,
@@ -99,7 +120,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 403 Forbidden
-  if (/403|PERMISSION_DENIED/i.test(msg)) {
+  if (status === 403 || /PERMISSION_DENIED/i.test(msg + code)) {
     return new QuizGenerationError(
       `Akses ke model ${modelLabel} ditolak (403 Forbidden). Pastikan API key Anda memiliki izin akses untuk model ini di Google AI Studio.`,
       403,
@@ -108,7 +129,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 404 Not Found
-  if (/404|NOT_FOUND|is not found|is no longer available/i.test(msg)) {
+  if (status === 404 || /NOT_FOUND|is not found|is no longer available/i.test(msg + code)) {
     return new QuizGenerationError(
       `Model ${modelLabel} (${modelId}) tidak ditemukan atau tidak tersedia untuk akun/wilayah proyek Anda (404 Not Found).`,
       404,
@@ -117,7 +138,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 503 High Demand / Service Unavailable
-  if (/503|UNAVAILABLE|high demand|overloaded/i.test(msg)) {
+  if (status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(msg + code)) {
     return new QuizGenerationError(
       `Layanan ${modelLabel} sedang mengalami lonjakan permintaan (503 Service Unavailable). Silakan klik "Coba Lagi" dalam beberapa detik.`,
       503,
@@ -126,7 +147,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 504 Deadline Exceeded / Timeout
-  if (/504|DEADLINE_EXCEEDED|timeout|ETIMEDOUT|UND_ERR_HEADERS_TIMEOUT/i.test(msg)) {
+  if (status === 504 || err?.name === 'TimeoutError' || /DEADLINE_EXCEEDED|timeout|ETIMEDOUT|UND_ERR_HEADERS_TIMEOUT/i.test(msg + code)) {
     return new QuizGenerationError(
       `Permintaan pembuatan kuis dengan ${modelLabel} melebihi batas waktu eksekusi (504 Gateway Timeout). Silakan coba lagi.`,
       504,
@@ -135,7 +156,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 500 Internal Error
-  if (/500|INTERNAL/i.test(msg)) {
+  if (status === 500 || /INTERNAL/i.test(msg + code)) {
     return new QuizGenerationError(
       `Terjadi kesalahan internal pada server Google AI saat memproses permintaan ${modelLabel} (500 Internal Server Error). Silakan coba lagi.`,
       500,
@@ -144,9 +165,9 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // Network connection error
-  if (/fetch failed|ECONNRESET|ENOTFOUND|network/i.test(msg)) {
+  if (/failed to fetch|fetch failed|load failed|NetworkError|ECONNRESET|ENOTFOUND|network/i.test(msg + code)) {
     return new QuizGenerationError(
-      `Gagal terhubung ke server Google AI saat memanggil ${modelLabel}. Periksa koneksi internet Anda.`,
+      `Gagal terhubung ke server Google AI saat memanggil ${modelLabel}. Periksa koneksi internet dan apakah browser, VPN, atau ekstensi memblokir permintaan ke Google AI.`,
       504,
       'NETWORK_ERROR'
     );

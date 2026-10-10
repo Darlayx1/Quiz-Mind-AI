@@ -1,7 +1,7 @@
 import type { GroundingSource,Item,Question,QuestionType } from './types/quiz.js';
 import { QUESTION_TYPES } from './types/quiz.js';
 const str={type:'string'},int={type:'integer'},strings={type:'array',items:str};
-const object=(properties:Record<string,unknown>)=>({type:'object',additionalProperties:false,properties,required:Object.keys(properties)});
+const object=<T extends Record<string,unknown>>(properties:T)=>({type:'object',additionalProperties:false,properties,required:Object.keys(properties)});
 const itemSchema=object({id:str,text:str});
 const items={type:'array',items:itemSchema,minItems:3,maxItems:8};
 export function questionSchema(type:QuestionType){

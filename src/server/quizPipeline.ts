@@ -9,9 +9,12 @@ import { QUESTION_TYPES } from '../types/quiz.js';
 import { questionType } from '../questionState.js';
 
 export function nextQuizBatch(config: QuizConfig, previous: Question[]): QuizConfig {
-  const type = QUESTION_TYPES.find(t => (config.questionDistribution?.[t] ?? (t === (config.questionType ?? 'single_choice') ? config.questionCount : 0)) > previous.filter(q => questionType(q) === t).length);
+  const targetCount = (type: QuestionType) => config.questionDistribution
+    ? config.questionDistribution[type] ?? 0
+    : type === (config.questionType ?? 'single_choice') ? config.questionCount : 0;
+  const type = QUESTION_TYPES.find(t => targetCount(t) > previous.filter(q => questionType(q) === t).length);
   if (!type) throw new QuizGenerationError('Komposisi soal sudah lengkap.', 400, 'INVALID_CONFIG');
-  const remaining = (config.questionDistribution?.[type] ?? config.questionCount) - previous.filter(q => questionType(q) === type).length;
+  const remaining = targetCount(type) - previous.filter(q => questionType(q) === type).length;
   const count = Math.min(type === 'essay' || config.model === 'gemma-4-31b-it' ? 2 : 5, remaining);
   return { ...config, questionType: type, questionCount: count, questionDistribution: { [type]: count } };
 }

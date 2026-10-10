@@ -1,6 +1,6 @@
 // @ts-nocheck -- Deno Edge runtime; bundled independently from the Vite application.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { generateQuizBatch, classifyApiError, nextQuizBatch } from '../_shared/quiz-engine.ts';
+import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../_shared/quiz-engine.ts';
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
@@ -72,7 +72,7 @@ Deno.serve(async request => {
         await outcome(key.id, userId, 'available'); break;
       } catch (error) {
         last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
-        if (last.status === 400 || last.status === 404) break;
+        if (!isRetryableGenerationError(last)) break;
         if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
       }
     }

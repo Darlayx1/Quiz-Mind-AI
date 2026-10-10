@@ -44,7 +44,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
       job.quiz = result.quiz; job.questions = result.quiz.questions;
     } else {
-      const { generateQuizBatch, classifyApiError, nextQuizBatch } = await import('../server/geminiService.js');
+      const { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } = await import('../server/geminiService.js');
       const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
@@ -56,9 +56,9 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;
-          last = error; const status = keyStatus(error); await repository.recordKeyOutcome(key.id, status);
-          const code = classifyApiError(error, job.preferences.model).status;
-          if (code === 400 || code === 404) break;
+          const classified = classifyApiError(error, job.preferences.model);
+          last = classified; const status = keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
+          if (!isRetryableGenerationError(classified)) break;
           if (['invalid','quota'].includes(status)) { if (keyIndex + 1 >= eligible.length) break; keyIndex++; }
           // Different eligible key or a bounded transient retry. No nested retry or model substitution.
         }
