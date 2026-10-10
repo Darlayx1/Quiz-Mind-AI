@@ -2,7 +2,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../_shared/quiz-engine.ts';
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
-import { GROUNDING_FALLBACK_NOTICE } from '../../../src/generationMessages.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Content-Type': 'application/json' };
@@ -59,6 +58,7 @@ Deno.serve(async request => {
     const { data: claimed, error: claimError } = await admin.rpc('qm_claim_job', { p_user: userId, p_id: body.operationId, p_config: body.config, p_preferences: preferences });
     if (claimError) return json({ error: claimError.code === '55P03' ? 'Batch masih diproses. Tunggu sebelum melanjutkan.' : claimError.message }, claimError.code === '55P03' ? 409 : 400);
     job = claimed;
+    if (preferences.grounding && job.result?.groundingFallbackUsed) throw Object.assign(new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.'), { status: 409, code: 'WEB_RESTART_REQUIRED' });
     if (job.status === 'completed') return json({ quiz: job.result, complete: true });
     const selected = preferences.keyId ? keys.find(k => k.id === preferences.keyId) : null;
     const candidates = preferences.keyId ? selected ? [selected, ...(preferences.fallback ? keys.filter(k => k.id !== selected.id) : [])] : [] : keys;
@@ -66,25 +66,18 @@ Deno.serve(async request => {
     const previous = job.result?.questions || [];
     const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
     let batch; let last; let keyIndex = 0;
-    let enableGrounding = preferences.grounding && preferences.model !== 'gemma-4-31b-it' && !job.result?.groundingFallbackUsed;
     for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
       const key = candidates[keyIndex];
       try {
-        batch = await generateQuizBatch({ ...batchConfig, enableGrounding }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
+        batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
         await outcome(key.id, userId, 'available'); break;
       } catch (error) {
         last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
-        if (last.status === 429 && enableGrounding && preferences.allowGroundingFallback !== false && attempt + 1 < preferences.maxAttempts) {
-          enableGrounding = false; continue;
-        }
         if (!isRetryableGenerationError(last)) break;
         if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
       }
     }
     if (!batch) throw last || new Error('Batch gagal.');
-    if (preferences.grounding && preferences.model !== 'gemma-4-31b-it' && !enableGrounding) {
-      batch.groundingFallbackUsed = true; batch.generationWarnings = [GROUNDING_FALLBACK_NOTICE];
-    }
     const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
       groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
     const complete = quiz.questions.length === body.config.questionCount;

@@ -138,6 +138,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
       className={`page-shell runner-page ${sequential ? "sequential-runner" : "free-runner"}`}
     >
       {quiz.generationWarnings?.map(message => <div key={message} className="settings-alert" role="status">{message}</div>)}
+      {quiz.usedGrounding && quiz.webCheckedAt && <div className="settings-alert" role="status">Pencarian web dilakukan pada {new Date(quiz.webCheckedAt).toLocaleString('id-ID')}. Sumber tersedia pada pembahasan soal; periksa tanggal sumber untuk fakta yang dapat berubah.</div>}
       <div className="runner-heading">
         <div>
           <div className="eyebrow">

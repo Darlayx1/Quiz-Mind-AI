@@ -16,7 +16,7 @@ const base: QuizConfig = { model: DEFAULT_MODEL, topic: 'Konsep', questionCount:
 const key = 'fixture-secret-never-display';
 const originalFetch = globalThis.fetch;
 let requests: any[] = [];
-let failure: 'network' | 'timeout' | 'cancel' | 'truncated' | 'blocked' | 'empty' | 'json' | 'count' | 'search-quota' | 'all-quota' | undefined;
+let failure: 'network' | 'timeout' | 'cancel' | 'truncated' | 'blocked' | 'empty' | 'json' | 'count' | 'search-quota' | 'all-quota' | 'no-web-sources' | 'no-web-query' | undefined;
 const cancel = new AbortController();
 const timeout = new AbortController();
 
@@ -56,6 +56,7 @@ globalThis.fetch = async (input, init) => {
   const output = { title: 'Fixture', summary: 'Latihan', questions: Array.from({ length: failure === 'count' ? 0 : count }, (_, i) =>
     ({ ...fixtures[type], question: `${type} ${requests.length} ${i}: Pertanyaan konsep?` })) };
   return Response.json({ candidates: [{ finishReason: failure === 'truncated' ? 'MAX_TOKENS' : failure === 'blocked' ? 'SAFETY' : 'STOP',
+    ...(body.tools?.length ? { groundingMetadata: { webSearchQueries: failure === 'no-web-query' ? [] : ['official concept'], groundingChunks: failure === 'no-web-sources' ? [] : [{ web: { title: 'Official fixture source', uri: 'https://example.org/reference' } }] } } : {}),
     content: { role: 'model', parts: failure === 'empty' ? [] : [{ text: failure === 'json' ? 'This is not JSON' : JSON.stringify(output) }] } }] });
 };
 
@@ -71,6 +72,9 @@ try {
         questions: { ...schema.properties.questions, minItems: 1, maxItems: 1 } } });
       assert.equal(config.maxOutputTokens, 8192);
       assert.equal(Boolean(requests.at(-1).tools?.length), grounded);
+      assert.equal(quiz.usedGrounding, grounded);
+      assert.equal(Boolean(quiz.webCheckedAt), grounded);
+      if (grounded) assert.ok(quiz.questions.every(q => q.groundingSources.some(s => s.url === 'https://example.org/reference')));
     }
   }
   await generateQuizBatch({ ...base, model: 'gemma-4-31b-it' }, key);
@@ -105,20 +109,27 @@ try {
   assert.equal(quiz.questions.length, 2);
   failure = 'search-quota';
   const start = requests.length;
-  const fallbackQuiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true },
-    await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
-  assert.equal(fallbackQuiz.questions.length, 6);
-  assert.equal(fallbackQuiz.groundingFallbackUsed, true);
-  assert.ok(fallbackQuiz.generationWarnings?.length);
-  assert.equal(fallbackQuiz.usedGrounding, false);
-  assert.deepEqual(requests.slice(start).map(r => Boolean(r.tools?.length)), [true, false, false], 'Search is tried once; later batches reuse successful no-search strategy');
+  await assert.rejects(generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true, allowGroundingFallback: true },
+    await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.code === 'WEB_SEARCH_QUOTA');
+  assert.deepEqual(requests.slice(start).map(r => Boolean(r.tools?.length)), [true], 'Legacy fallback preference must never bypass required web');
   const disabledStart = requests.length;
   await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true, allowGroundingFallback: false }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
   assert.equal(requests.length - disabledStart, 1);
   failure = 'all-quota';
   const allQuotaStart = requests.length;
   await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
-  assert.equal(requests.length - allQuotaStart, 2, 'Fallback also respects a model-wide quota and stops');
+  assert.equal(requests.length - allQuotaStart, 1, 'Required web quota rejection stops without identical retries');
+  for (const mode of ['no-web-sources', 'no-web-query'] as const) {
+    failure = mode;
+    const before = requests.length;
+    await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.code === 'WEB_SEARCH_EMPTY');
+    assert.equal(requests.length - before, 1, 'Missing grounding evidence must not retry identical output');
+  }
+  failure = undefined;
+  const groundedQuiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
+  assert.equal(groundedQuiz.questions.length, 6);
+  assert.ok(groundedQuiz.usedGrounding && groundedQuiz.webCheckedAt);
+  assert.ok(groundedQuiz.questions.every(q => q.groundingSources.length));
   console.log('PASS: active generator schemas for all seven types with/without search, Gemma/custom compatibility, sparse distributions, HTTP/network diagnostics, timeout/cancel, and no repeated invalid output. No external API requests.');
 } finally {
   globalThis.fetch = originalFetch;
@@ -131,6 +142,7 @@ let handler: (request: Request) => Promise<Response>;
 let accountCalls = 0;
 let accountFailure = false;
 let accountSearchQuota = false;
+let accountNoSources = false;
 const outcomes: string[] = [];
 const commits: any[] = [];
 const preferences = { ...emptyWorkspace().preferences, grounding: false };
@@ -158,7 +170,8 @@ runtime.__accountGenerationCall = async (params: any) => {
   assert.deepEqual(params.config.responseJsonSchema.properties.questions.items, quizSchemaFor('essay').properties.questions.items);
   const text = JSON.stringify({ title: 'Esai akun', questions: Array.from({ length: 2 }, (_, i) =>
     ({ ...fixtures.essay, question: `Esai akun ${i}: Jelaskan konsep tersebut?` })) });
-  return { text, candidates: [{ finishReason: accountFailure ? 'MAX_TOKENS' : 'STOP' }] };
+  return { text, candidates: [{ finishReason: accountFailure ? 'MAX_TOKENS' : 'STOP',
+    ...(params.config.tools?.length ? { groundingMetadata: { webSearchQueries: ['official concepts'], groundingChunks: accountNoSources ? [] : [{ web: { title: 'Official fixture', uri: 'https://example.org/account-reference' } }] } } : {}) }] };
 };
 runtime.Deno = { env: { get: () => 'https://account-fixture.invalid' }, serve: (fn: typeof handler) => { handler = fn; } };
 try {
@@ -188,12 +201,19 @@ try {
   assert.equal(commits.at(-1).p_status, 'pending');
   accountFailure = false; accountSearchQuota = true;
   response = await handler!(request({ ...preferences, grounding: true }));
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).code, 'WEB_SEARCH_QUOTA');
+  assert.equal(accountCalls, 3, 'Account must never fall back without web');
+  accountSearchQuota = false; accountNoSources = true;
+  response = await handler!(request({ ...preferences, grounding: true }));
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, 'WEB_SEARCH_EMPTY');
+  accountNoSources = false;
+  response = await handler!(request({ ...preferences, grounding: true }));
   assert.equal(response.status, 200);
-  const fallback = (await response.json()).quiz;
-  assert.equal(fallback.groundingFallbackUsed, true);
-  assert.equal(fallback.usedGrounding, false);
-  assert.ok(fallback.generationWarnings.length);
-  assert.equal(accountCalls, 4, 'Account uses the same two-call bounded grounding fallback');
+  const grounded = (await response.json()).quiz;
+  assert.ok(grounded.usedGrounding && grounded.webCheckedAt);
+  assert.ok(grounded.questions.every((q: any) => q.groundingSources.length));
   console.log('PASS: authenticated account handler, generated Edge engine, sparse essay distribution, correct schema, and checkpoint preserved after truncated response. No external API requests.');
 } finally {
   runtime.Deno = priorDeno;

@@ -25,6 +25,8 @@ try {
   assert.equal(quiz.questions.length, 10);
   assert.ok(quiz.questions.every(q => q.type === 'single_choice'));
   assert.ok(new Set(quiz.questions.map(q => q.question.toLowerCase().trim())).size === 10);
+  assert.ok(quiz.usedGrounding && quiz.webCheckedAt && !quiz.groundingFallbackUsed, 'Live canary requires real search evidence.');
+  assert.ok(quiz.questions.every(q => q.groundingSources.some(s => /^https?:\/\//i.test(s.url))), 'Sources required for every question.');
   assert.ok(providerCalls <= 6, 'At most three attempts per batch.');
   console.log(JSON.stringify({ status: 'success', questions: 10, providerCalls,
     groundingFallback: !!quiz.groundingFallbackUsed, durationMs: Date.now() - start }));

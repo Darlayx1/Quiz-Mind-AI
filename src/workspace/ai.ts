@@ -3,7 +3,6 @@ import { localCredential } from './localRepository.js';
 import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
-import { GROUNDING_FALLBACK_NOTICE } from '../generationMessages.js';
 
 export { availableKeys } from './types.js';
 export async function invokeAccount(body: Record<string, unknown>, signal?: AbortSignal, expectedOwner?: string) {
@@ -31,10 +30,11 @@ export async function testKey(repository: WorkspaceRepository, id: string, model
 export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Preferences, keys: ApiKeyRecord[], repository: WorkspaceRepository,
   checkpoint: (job: GenerationJob) => Promise<unknown>, signal: AbortSignal, resume?: GenerationJob,
   onProgress?: (count: number, total: number) => void): Promise<Quiz> {
-  const config = normalizeQuizConfig({ ...input, model: preferences.model, enableGrounding: preferences.grounding && preferences.model !== 'gemma-4-31b-it' });
+  const config = normalizeQuizConfig({ ...input, model: preferences.model, enableGrounding: preferences.grounding });
   let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: structuredClone(preferences),
     questions: [], status: 'running', createdAt: new Date().toISOString() };
   job.status = 'running'; await checkpoint(job);
+  if (job.preferences.grounding && job.quiz?.groundingFallbackUsed) throw new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.');
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
   const timeoutAt = new Date(job.createdAt).getTime() + 30 * 60 * 1000;
@@ -48,30 +48,23 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } = await import('../server/geminiService.js');
       const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
-      let enableGrounding = batchConfig.enableGrounding && !job.quiz?.groundingFallbackUsed;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
         try {
           const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(80000)]);
-          batch = await generateQuizBatch({ ...batchConfig, enableGrounding }, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
+          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;
           const classified = classifyApiError(error, job.preferences.model);
           last = classified; const status = keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
-          if (classified.status === 429 && enableGrounding && job.preferences.allowGroundingFallback !== false && attempt + 1 < attempts) {
-            enableGrounding = false; continue;
-          }
           if (!isRetryableGenerationError(classified)) break;
           if (['invalid','quota'].includes(status)) { if (keyIndex + 1 >= eligible.length) break; keyIndex++; }
           // Different eligible key or a bounded transient retry. No nested retry or model substitution.
         }
       }
       if (!batch) throw last || new Error('Batch belum berhasil.');
-      if (batchConfig.enableGrounding && !enableGrounding) {
-        batch.groundingFallbackUsed = true; batch.generationWarnings = [GROUNDING_FALLBACK_NOTICE];
-      }
       job.questions.push(...batch.questions);
       job.quiz = { ...batch, ...job.config, id: job.id, questions: job.questions,
         groundingQueriesUsed: [...new Set([...(job.quiz?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };

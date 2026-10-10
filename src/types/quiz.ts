@@ -55,6 +55,7 @@ export interface QuestionEvaluation {
 }
 
 export interface Quiz {
+  webCheckedAt?: string;
   groundingFallbackUsed?: boolean;
   generationWarnings?: string[];
   generationBatches?: {provider?:AIProvider;model?:string;questionIds:string[]}[];

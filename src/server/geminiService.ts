@@ -38,6 +38,7 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75000, retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
   const gemma = model === 'gemma-4-31b-it';
+  if (gemma && config.enableGrounding) throw new QuizGenerationError('Model Gemma tidak mendukung pencarian web. Pilih model Gemini untuk kuis dengan referensi terkini.', 400, 'WEB_SEARCH_UNSUPPORTED');
   const prompt = buildPrompt(config, config.questionCount, existing);
   const structured = modelInfo(model)?.structured === true;
   const schema = quizSchemaFor(config.questionType);
@@ -62,7 +63,9 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
     if (!response.text?.trim()) throw new QuizGenerationError('Model AI mengembalikan respons kosong. Kuis belum dapat dibuat.', 502, 'EMPTY_RESPONSE');
     const parsed = extractJsonFromResponse(response.text || '');
     const sources: GroundingSource[] = (response.candidates?.[0]?.groundingMetadata?.groundingChunks || [])
-      .filter(chunk => chunk.web?.uri).map(chunk => ({ title: chunk.web!.title || 'Referensi', url: chunk.web!.uri! }));
+      .filter(chunk => chunk.web?.uri && /^https?:\/\//i.test(chunk.web.uri)).map(chunk => ({ title: chunk.web!.title || 'Referensi', url: chunk.web!.uri! }));
+    const queries = response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.filter(q => typeof q === 'string' && q.trim()) || [];
+    if (config.enableGrounding && (!sources.length || !queries.length)) throw new QuizGenerationError('Pencarian web belum menghasilkan sumber yang dapat ditelusuri. Kuis tidak dibuat tanpa referensi web. Sesuaikan topik atau periksa akses Google Search.', 502, 'WEB_SEARCH_EMPTY');
     const previous = new Set(existing.map(q => q.trim().toLowerCase()));
     const questions: Question[] = [];
     for (const raw of Array.isArray(parsed.questions) ? parsed.questions : []) {
@@ -76,13 +79,16 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
     if (questions.length !== config.questionCount) throw new QuizGenerationError('Jumlah soal valid belum sesuai. Batch dihentikan untuk mencegah hasil tidak lengkap.', 502, 'INCOMPLETE_QUESTION_COUNT');
     return { id: crypto.randomUUID(), title: String(parsed.title || `Kuis: ${config.topic}`), summary: String(parsed.summary || ''),
       ...config, schemaVersion: 2, createdAt: new Date().toISOString(), questions, requestedModel: model, model,
-      usedGrounding: !gemma && config.enableGrounding, groundingQueriesUsed: response.candidates?.[0]?.groundingMetadata?.webSearchQueries || [] };
+      usedGrounding: config.enableGrounding && sources.length > 0 && queries.length > 0, groundingQueriesUsed: queries,
+      ...(config.enableGrounding ? { webCheckedAt: new Date().toISOString() } : {}) };
   } catch (error) {
     if (signal?.aborted) {
       if (signal.reason?.name === 'TimeoutError') throw classifyApiError(signal.reason, model);
       signal.throwIfAborted();
     }
-    throw classifyApiError(error, model);
+    const classified = classifyApiError(error, model);
+    if (config.enableGrounding && classified.status === 429) throw new QuizGenerationError('Pencarian web Google ditolak (429). Kuis tidak dilanjutkan tanpa web. Periksa kuota Google Search/Grounding pada proyek API key di Google AI Studio. ' + classified.message, 429, 'WEB_SEARCH_QUOTA');
+    throw classified;
   }
 }
 
