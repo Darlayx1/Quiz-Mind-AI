@@ -17,7 +17,8 @@ export function useWorkspace() {
   const explicitLogout = useRef(false);
   const load = useCallback(async (repository: WorkspaceRepository, expected: number) => {
     try {
-      const [snapshot, storedKeys] = await Promise.all([repository.load(), repository.keys()]);
+      const snapshot = await repository.load();
+      const storedKeys = await repository.keys();
       if (epoch.current !== expected) return;
       context.current = { epoch: expected, repository, ...snapshot }; setData(snapshot.data); setKeys(storedKeys); setReady(true); setError('');
     } catch (e) { if (epoch.current === expected) { setError((e as Error).message); setReady(false); } }

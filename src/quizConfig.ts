@@ -1,5 +1,7 @@
-import { DEFAULT_MODEL, DIFFICULTIES, isAIModel } from "./models.js";
+import { DEFAULT_MODEL, DIFFICULTIES, isProvider, modelInfo, validModelId, defaultProviderModel, normalizeModelId } from "./models.js";
 import type { DifficultyLevel, QuizConfig } from "./types/quiz.js";
+import { QUESTION_TYPES, type QuestionType } from './types/quiz.js';
+import { normalizeEvaluationSettings } from './evaluationSettings.js';
 
 export class QuizConfigError extends Error {}
 
@@ -10,8 +12,13 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
   const body = input as Record<string, unknown>;
   if (typeof body.topic !== "string" || !body.topic.trim())
     throw new QuizConfigError("Topik kuis tidak boleh kosong.");
-  const model = body.model ?? DEFAULT_MODEL;
-  if (!isAIModel(model)) throw new QuizConfigError("Model AI tidak didukung.");
+  if (body.provider !== undefined && !isProvider(body.provider)) throw new QuizConfigError('Penyedia AI tidak didukung.');
+  const rawModel = body.model ?? (isProvider(body.provider) ? defaultProviderModel(body.provider) : DEFAULT_MODEL);
+  const model = typeof rawModel === 'string' ? normalizeModelId(rawModel) : rawModel;
+  const known = modelInfo(String(model));
+  if (!validModelId(model) || (!known && !isProvider(body.provider))) throw new QuizConfigError('Model AI tidak didukung. Pilih penyedia untuk menggunakan ID model kustom.');
+  const provider = body.provider ?? known!.provider;
+  if (known && known.provider !== provider) throw new QuizConfigError('Model tidak sesuai dengan penyedia yang dipilih.');
   const difficulty =
     { beginner: "easy", advanced: "hard", expert: "master" }[
       String(body.difficulty)
@@ -25,6 +32,18 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
     throw new QuizConfigError(
       "Jumlah soal harus bilangan bulat antara 1 dan 100.",
     );
+  const type = body.questionType ?? 'single_choice';
+  if (!QUESTION_TYPES.includes(type as QuestionType)) throw new QuizConfigError('Tipe soal tidak didukung.');
+  const distribution = body.questionDistribution ?? { [String(type)]: count };
+  if (!distribution || typeof distribution !== 'object' || Array.isArray(distribution) || Object.entries(distribution).some(([key,value]) => !QUESTION_TYPES.includes(key as QuestionType) || !Number.isInteger(value) || Number(value)<0) || Object.values(distribution).reduce<number>((sum,value)=>sum+Number(value),0)!==count) throw new QuizConfigError('Jumlah per tipe harus bilangan bulat dan totalnya sesuai jumlah soal.');
+  const validateMap = (raw: unknown,min:number,max:number) => {
+    if(raw===undefined)return undefined;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.entries(raw).some(([key,value])=>!QUESTION_TYPES.includes(key as QuestionType)||!Number.isInteger(value)||Number(value)<min||Number(value)>max))throw new QuizConfigError('Bobot atau waktu per tipe tidak valid.');
+    return raw as Partial<Record<QuestionType,number>>;
+  };
+  if(body.partialCredit!==undefined&&typeof body.partialCredit!=='boolean')throw new QuizConfigError('Pengaturan kredit parsial tidak valid.');
+  let evaluationSettings;
+  try { evaluationSettings=normalizeEvaluationSettings(body.evaluationSettings); } catch { throw new QuizConfigError('Pengaturan evaluator tidak valid.'); }
   const displayMode = body.displayMode ?? "non_sequential";
   if (displayMode !== "non_sequential" && displayMode !== "sequential")
     throw new QuizConfigError("Tampilan soal tidak didukung.");
@@ -41,7 +60,14 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
       ? value.trim().slice(0, max) || undefined
       : undefined;
   return {
+    questionType: type as QuestionType,
+    questionDistribution: distribution as Partial<Record<QuestionType,number>>,
+    pointsByType: validateMap(body.pointsByType,1,20),
+    timePerQuestionByType: validateMap(body.timePerQuestionByType,0,600),
+    partialCredit:body.partialCredit===true,
+    evaluationSettings,
     model,
+    provider,
     topic: body.topic.trim().slice(0, 300),
     studyMaterial: optionalText(body.studyMaterial, 15000),
     difficulty: difficulty as DifficultyLevel,

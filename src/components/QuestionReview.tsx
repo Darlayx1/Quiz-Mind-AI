@@ -1,0 +1,15 @@
+import React from 'react';
+import type { Question,QuestionEvaluation,StoredAnswer } from '../types/quiz.js';
+import { normalizedAnswer,optionIds } from '../questionState.js';
+export function QuestionReview({question:q,answer:raw,evaluation:e}:{question:Question;answer?:StoredAnswer;evaluation:QuestionEvaluation}){
+ const a=normalizedAnswer(q,raw);
+ return <div>
+ {(q.type===undefined||q.type==='single_choice'||q.type==='multiple_select')&&<div className="grid sm:grid-cols-2 gap-2.5">{q.options.map((s,i)=>{const id=optionIds(q)[i],key=q.type==='multiple_select'?q.correctOptionIds.includes(id):i===q.correctAnswerIndex,chosen=a?.type==='single_choice'?a.selectedOptionId===id:a?.type==='multiple_select'&&a.selectedOptionIds.includes(id);return <div key={id} className={'review-option '+(key?'correct-option':chosen?'wrong-option':'')}><span className="option-letter">{String.fromCharCode(65+i)}</span><span>{s}<small>{key?'Jawaban benar':''}{chosen?' · Pilihan Anda':''}</small></span></div>;})}</div>}
+ {q.type==='true_false'&&<p>Jawaban Anda: <strong>{a?.type==='true_false'&&a.value!==null?(a.value?'Benar':'Salah'):'Belum dijawab'}</strong> · Kunci: {q.correctValue?'Benar':'Salah'}</p>}
+ {(q.type==='short_answer'||q.type==='essay')&&<><h4>Jawaban Anda</h4><p className="answer-text">{a?.type==='short_answer'||a?.type==='essay'?a.text||'Belum dijawab':'Belum dijawab'}</p><h4>Jawaban acuan</h4><p className="answer-text">{q.referenceAnswer}</p>{q.type==='essay'&&<ul className="rubric-results">{q.rubric.map(c=>{const value=e.criteria?.find(v=>v.criterionId===c.id);return <li key={c.id}><strong>{c.description} · {c.weight}%</strong>{value&&<><p>{value.level*100}% terpenuhi · {value.feedback}</p>{value.evidence&&<blockquote>“{value.evidence}”</blockquote>}</>}</li>;})}</ul>}</>}
+ {q.type==='matching'&&<div className="matching-review">{q.leftItems.map(i=><div key={i.id}><strong>{i.text}</strong><p>Anda: {a?.type==='matching'?q.rightItems.find(r=>r.id===a.pairs[i.id])?.text??'Belum dipasangkan':'Belum dipasangkan'}</p><p>Kunci: {q.rightItems.find(r=>r.id===q.correctPairs[i.id])?.text}</p></div>)}</div>}
+ {q.type==='ordering'&&<div className="ordering-review"><div><h4>Urutan Anda</h4>{a?.type==='ordering'&&a.confirmed?<ol>{a.orderedItemIds.map(id=><li key={id}>{q.items.find(i=>i.id===id)?.text}</li>)}</ol>:<p>Belum dikonfirmasi</p>}</div><div><h4>Urutan benar</h4><ol>{q.correctOrder.map(id=><li key={id}>{q.items.find(i=>i.id===id)?.text}</li>)}</ol></div></div>}
+ <div className="explanation"><h4>Pembahasan</h4><p>{q.explanation}</p>{e.method!=='deterministic'&&<><h4>Evaluasi jawaban</h4><p>{e.feedback}</p>{e.model&&<p className="field-help">{e.provider} · {e.model} · {e.evaluatedAt&&new Date(e.evaluatedAt).toLocaleString('id-ID')}</p>}</>}{e.manualReason&&<p>Disesuaikan pengguna: {e.manualReason}</p>}</div>
+ {q.groundingSources?.some(s=>/^https?:\/\//i.test(s.url))&&<div className="reference-list">{q.groundingSources.filter(s=>/^https?:\/\//i.test(s.url)).map((s,i)=><a key={i} href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a>)}</div>}
+ </div>;
+}

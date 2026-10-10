@@ -8,6 +8,8 @@ import type { ApiKeyRecord, Preferences } from '../workspace/types.js';
 import { supabase, authRedirect, accountRpc } from '../workspace/supabase.js';
 import { localImportPayload } from '../workspace/localRepository.js';
 import { testKey } from '../workspace/ai.js';
+import { AIEvaluationSettings } from './AIEvaluationSettings.js';
+import { defaultEvaluationSettings } from '../evaluationSettings.js';
 
 export type SettingsTab = 'account' | 'keys' | 'models' | 'history';
 const tabs = [{ id: 'account', label: 'Akun', icon: UserRound }, { id: 'keys', label: 'API key', icon: KeyRound },
@@ -137,6 +139,7 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
               <label className="settings-checkbox"><input type="checkbox" disabled={w.data.preferences.model === 'gemma-4-31b-it'} checked={w.data.preferences.grounding && w.data.preferences.model !== 'gemma-4-31b-it'} onChange={e => void pref({ grounding: e.target.checked })} />Gunakan referensi web jika model mendukung</label>
             </fieldset>
             <fieldset disabled={busy || !w.ready} className="settings-form settings-card"><h4>Penggunaan otomatis</h4><p className="settings-help">Key nonaktif dilewati. Key dari akun lain atau ruang lokal tidak digunakan sebagai cadangan.</p><label htmlFor="settings-attempts">Maksimal percobaan per batch</label><select id="settings-attempts" value={w.data.preferences.maxAttempts} onChange={e => void pref({ maxAttempts: Number(e.target.value) })}>{[1,2,3].map(n => <option key={n} value={n}>{n} percobaan</option>)}</select><label className="settings-checkbox"><input type="checkbox" checked={w.data.preferences.fallback} onChange={e => void pref({ fallback: e.target.checked })} />Izinkan key alternatif saat key spesifik gagal</label><p className="settings-help">Model tetap sesuai pilihan Anda. Perubahan tidak memengaruhi operasi yang sedang berjalan.</p></fieldset>
+            <AIEvaluationSettings value={w.data.preferences.evaluation ?? defaultEvaluationSettings} onSave={evaluation => w.update(d=>({...d,preferences:{...d.preferences,evaluation}})).then(()=>{})} />
             <div className="usage-grid"><div><span>Operasi berhasil</span><strong>{w.data.activity.filter(a => a.status === 'success').length}</strong></div><div><span>Operasi gagal</span><strong>{w.data.activity.filter(a => a.status === 'failed').length}</strong></div><div><span>Penggunaan token</span><strong className="usage-unavailable">Tidak tersedia</strong></div></div><p className="settings-help">Ringkasan berasal dari aktivitas ruang ini, bukan sisa kuota atau tagihan Google.</p>
           </>}
           {tab === 'history' && <>

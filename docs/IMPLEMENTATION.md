@@ -33,3 +33,9 @@ Tidak ada automation atau cron yang dibuat. Workflow GitHub hanya dipicu push ma
 ## Batas verifikasi
 
 Login dan panggilan Google dengan kredensial nyata pengguna tidak diuji; pengujian provider memakai mock dan isolasi akun memakai transaksi database dengan role pengguna. Ketersediaan model mengikuti proyek Google masing-masing. Penggunaan token/biaya ditampilkan tidak tersedia ketika tidak ada data tepercaya. Browser dapat menghapus data lokal; penyimpanan persisten tidak menjamin data bertahan setelah penghapusan data situs.
+
+## Integrasi perubahan GitHub
+
+Push pertama ditolak karena origin/main mempunyai 13 commit baru. Riwayat GitHub digabungkan, bukan ditimpa. Tujuh tipe soal, komposisi campuran, bobot, kredit parsial, timer per tipe, rubrik, tinjauan manual, dan penjelasan kuota dipertahankan. Penilaian objektif memakai modul scoring; evaluasi jawaban terbuka memakai adapter lokal/akun dengan key ruang aktif. Preferensi evaluator ditempatkan pada tab Model & penggunaan. Adapter vault dan penyimpanan key lama beserta tes khusus arsitektur tersebut digantikan oleh repository workspace; sumber data lama tetap tidak dihapus.
+
+Uji adapter workspace tambahan lulus: tujuh tipe dalam satu kuis, distribusi batch, key invalid hanya dicoba sekali sebelum memakai key alternatif pada batch berikutnya, bobot esai, dan evaluasi satu permintaan dengan mock.

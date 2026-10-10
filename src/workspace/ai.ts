@@ -44,15 +44,15 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
       job.quiz = result.quiz; job.questions = result.quiz.questions;
     } else {
-      const { generateQuizBatch, classifyApiError } = await import('../server/geminiService.js');
-      const count = Math.min(job.preferences.model === 'gemma-4-31b-it' ? 2 : 5, job.config.questionCount - job.questions.length);
+      const { generateQuizBatch, classifyApiError, nextQuizBatch } = await import('../server/geminiService.js');
+      const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
       for (let attempt = 0; attempt < attempts; attempt++) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
         try {
           const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(80000)]);
-          batch = await generateQuizBatch({ ...job.config, questionCount: count }, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
+          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), requestSignal);
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;

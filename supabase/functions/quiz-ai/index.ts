@@ -1,6 +1,7 @@
 // @ts-nocheck -- Deno Edge runtime; bundled independently from the Vite application.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { generateQuizBatch, classifyApiError } from '../_shared/quiz-engine.ts';
+import { generateQuizBatch, classifyApiError, nextQuizBatch } from '../_shared/quiz-engine.ts';
+import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Content-Type': 'application/json' };
@@ -25,7 +26,7 @@ Deno.serve(async request => {
     const { data: identity, error: authError } = await admin.auth.getUser(token);
     if (authError || !identity.user) return json({ error: 'Sesi tidak valid. Masuk kembali.' }, 401);
     userId = identity.user.id;
-    const raw = await request.text(); if (raw.length > 100000) return json({ error: 'Permintaan terlalu besar.' }, 413);
+    const raw = await request.text(); if (raw.length > 2000000) return json({ error: 'Permintaan terlalu besar.' }, 413);
     const body = JSON.parse(raw);
     const { data: keys, error: keysError } = await admin.from('qm_api_keys').select('*').eq('user_id', userId).eq('enabled', true).order('priority').order('id');
     if (keysError) throw new Error('Penyimpanan akun belum siap.');
@@ -40,6 +41,16 @@ Deno.serve(async request => {
         await outcome(key.id, userId, 'available'); return json({ success: true });
       } catch (error) { const classified = classifyApiError(error, body.model); await outcome(key.id, userId, statusOf(classified)); throw classified; }
     }
+    if (body.action === 'evaluate') {
+      const key=keys.find(k=>k.id===body.keyId); if(!key)return json({error:'Key aktif tidak tersedia pada akun ini.'},404);
+      const {data: workspace,error}=await admin.from('qm_workspaces').select('data').eq('user_id',userId).single();
+      const stored=workspace?.data?.history?.find(h=>h.quiz.id===body.input?.quiz?.id)?.lastResult;
+      if(error||!stored||stored.submission.completedAt!==body.input?.submission?.completedAt)return json({error:'Jawaban belum tersimpan pada akun aktif.'},409);
+      try{
+        const evaluations=await evaluateSingleCall({...body.input,quiz:stored.quiz,submission:stored.submission},await getSecret(key),body.model,AbortSignal.timeout(45000));
+        await outcome(key.id,userId,'available');return json({evaluations});
+      }catch(error){const classified=classifyApiError(error,body.model);await outcome(key.id,userId,statusOf(classified));throw classified;}
+    }
     if (body.action !== 'generate' || !/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
     const preferences = body.preferences;
     if (!body.config || !Number.isInteger(body.config.questionCount) || body.config.questionCount < 1 || body.config.questionCount > 100) return json({ error: 'Jumlah soal harus 1–100.' }, 400);
@@ -52,13 +63,12 @@ Deno.serve(async request => {
     const candidates = preferences.keyId ? selected ? [selected, ...(preferences.fallback ? keys.filter(k => k.id !== selected.id) : [])] : [] : keys;
     if (!candidates.length) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
     const previous = job.result?.questions || [];
-    const count = Math.min(preferences.model === 'gemma-4-31b-it' ? 2 : 5, body.config.questionCount - previous.length);
-    if (count < 1) throw Object.assign(new Error('Jumlah soal tidak valid.'), { status: 400 });
+    const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
     let batch; let last; let keyIndex = 0;
     for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
       const key = candidates[keyIndex];
       try {
-        batch = await generateQuizBatch({ ...body.config, model: preferences.model, enableGrounding: preferences.grounding && preferences.model !== 'gemma-4-31b-it', questionCount: count }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
+        batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding && preferences.model !== 'gemma-4-31b-it' }, await getSecret(key), previous.map(q => q.question), AbortSignal.timeout(40000));
         await outcome(key.id, userId, 'available'); break;
       } catch (error) {
         last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);

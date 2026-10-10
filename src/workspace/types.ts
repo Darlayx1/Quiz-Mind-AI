@@ -1,5 +1,6 @@
 import { DEFAULT_MODEL, type AIModel } from '../models.js';
-import type { Quiz, QuizConfig, QuizResult, Question } from '../types/quiz.js';
+import type { Quiz, QuizConfig, QuizResult, Question, StoredAnswer, EvaluationSettings } from '../types/quiz.js';
+import { defaultEvaluationSettings } from '../evaluationSettings.js';
 
 export type KeyStatus = 'untested' | 'available' | 'invalid' | 'quota' | 'unavailable';
 export interface ApiKeyRecord {
@@ -8,10 +9,11 @@ export interface ApiKeyRecord {
 }
 export interface Preferences {
   model: AIModel; keyId: string | null; grounding: boolean; maxAttempts: number; fallback: boolean;
+  evaluation?: EvaluationSettings;
 }
 export interface HistoryItem { quiz: Quiz; lastResult?: QuizResult; attempts?: QuizResult[]; savedAt: string }
 export interface QuizProgress {
-  quizId: string; currentIndex: number; answers: Record<string, number>; bookmarks: string[];
+  quizId: string; currentIndex: number; answers: Record<string, StoredAnswer>; bookmarks: string[]; attemptId?: string;
   startedAt: number; deadline: number;
 }
 export interface Activity {
@@ -27,7 +29,7 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, maxAttempts: 3, fallback: false },
+  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {

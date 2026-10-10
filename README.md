@@ -32,7 +32,7 @@ Data lokal bertahan setelah reload/penutupan normal, tetapi dapat hilang jika da
 - supabase/functions/quiz-ai/: layanan AI akun; handler memverifikasi token pengguna.
 - .agents/rules/anti-loop.md: aturan debugging permanen yang dipertahankan.
 
-Mode tamu memanggil Google dengan key lokal. Mode akun memanggil Supabase Edge dengan sesi pengguna; key provider tidak dikirim kembali ke browser. Penilaian pilihan ganda tetap deterministik. Token/biaya yang tidak tersedia tidak ditampilkan sebagai perkiraan.
+Mode tamu memanggil Google dengan key lokal. Mode akun memanggil Supabase Edge dengan sesi pengguna; key provider tidak dikirim kembali ke browser. Penilaian objektif tetap deterministik; isian dan esai mendukung evaluasi AI dengan rubrik serta tinjauan manual. Tujuh tipe soal dan komposisi campuran dipertahankan. Token/biaya yang tidak tersedia tidak ditampilkan sebagai perkiraan.
 
 ## Pengembangan
 
@@ -44,6 +44,8 @@ npm run dev
 npm run lint
 node --import tsx scripts/workspace-test.ts
 node --import tsx scripts/model-test.ts
+node --import tsx scripts/quiz-types-test.ts
+node --import tsx scripts/workspace-ai-test.ts
 npm run build
 node scripts/smoke-test.mjs
 ~~~

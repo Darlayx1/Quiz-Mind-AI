@@ -1,3 +1,5 @@
+import { buildResult } from './scoring.js';
+import { evaluateWorkspace } from './workspace/evaluation.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Settings2, Monitor, Cloud, ArrowRight, RefreshCw } from 'lucide-react';
 import type { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
@@ -18,13 +20,14 @@ export default function App() {
   const [view, setView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
   const [quiz, setQuiz] = useState<Quiz | null>(null); const [result, setResult] = useState<QuizResult | null>(null);
   const [settings, setSettings] = useState<SettingsTab | null>(null);
+  const [isEvaluating,setIsEvaluating]=useState(false);
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0 });
   const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
   const restoredScope = useRef<string | null>(null);
   const attemptedProgress = useRef('');
   useEffect(() => {
-    abort.current?.abort(); setLoading(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
+    abort.current?.abort(); setLoading(false); setIsEvaluating(false); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
   }, [w.scope, w.mode]);
   useEffect(() => {
     if (!w.ready || restoredScope.current === w.scope) return;
@@ -36,12 +39,12 @@ export default function App() {
   }, [w.ready, w.scope, w.data.progress, w.data.history]);
   useEffect(() => { if (w.passwordRecovery) setSettings('account'); }, [w.passwordRecovery]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
-  const persistDraft = useCallback((draft: Record<string, unknown>) => { void w.update(d => ({ ...d, draft })).catch(() => {}); }, [w.update]);
+  const persistDraft = useCallback((draft: Record<string, unknown>) => { void w.update(d => ({ ...d, draft }), w.scope).catch(() => {}); }, [w.update, w.scope]);
   const persistProgress = useCallback((progress: QuizProgress) => {
     const serialized = JSON.stringify(progress); if (attemptedProgress.current === serialized) return;
     attemptedProgress.current = serialized;
-    void w.update(d => ({ ...d, progress })).catch(() => { attemptedProgress.current = ''; });
-  }, [w.update]);
+    return w.update(d => ({ ...d, progress }), w.scope).catch(() => { attemptedProgress.current = ''; });
+  }, [w.update, w.scope]);
   const newQuiz = () => { setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
   const generate = async (config: QuizConfig, resume?: GenerationJob) => {
     if (loading || !w.ready || !w.repository) return;
@@ -67,17 +70,29 @@ export default function App() {
           detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
     } finally { if (scope.current === origin) { setLoading(false); abort.current = null; void w.refresh(); } }
   };
-  const finish = (submission: QuizSubmission) => {
-    if (!quiz) return;
-    const total = quiz.questions.length;
-    const correct = quiz.questions.filter(q => submission.userAnswers[q.id] === q.correctAnswerIndex).length;
-    const unanswered = quiz.questions.filter(q => submission.userAnswers[q.id] === undefined).length;
-    const score = Math.round(correct / total * 100);
-    const next: QuizResult = { quiz, submission, score, correctCount: correct, incorrectCount: total - correct - unanswered,
-      unansweredCount: unanswered, accuracyPercentage: score,
-      evaluationAnalysis: score >= 90 ? 'Pemahaman Anda sangat baik. Pertahankan dan lanjutkan ke materi berikutnya.' : score >= 70 ? 'Fondasi Anda sudah baik. Tinjau kembali pembahasan soal yang belum tepat.' : 'Pelajari pembahasan, lalu ulangi latihan untuk memperkuat pemahaman.' };
-    setResult(next); setView('results');
-    void w.update(d => ({ ...d, progress: null, history: d.history.map(h => h.quiz.id === quiz.id ? { ...h, lastResult: next, attempts: [...(h.attempts || (h.lastResult ? [h.lastResult] : [])), next], savedAt: new Date().toISOString() } : h) })).catch(() => {});
+  const saveResult = (next:QuizResult,origin=w.scope) => w.update(d=>({...d,progress:null,history:d.history.map(h=>h.quiz.id===next.quiz.id?{...h,lastResult:next,savedAt:new Date().toISOString(),attempts:[...(h.attempts??(h.lastResult?[h.lastResult]:[])).filter(r=>r.submission.completedAt!==next.submission.completedAt),next]}:h)}),origin);
+  const runEvaluation = async (source:QuizResult,targets?:string[]) => {
+    if(isEvaluating||loading||!w.repository||!w.ready)return;
+    const origin=w.scope,repository=w.repository,controller=new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
+    const started=Date.now();
+    try{
+      await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async next=>{await saveResult(next,origin);if(scope.current===origin)setResult(next);});
+      await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.model??w.data.preferences.model,status:'success' as const,durationMs:Date.now()-started},...d.activity].slice(0,2000)}),origin);
+    }catch(e){if(scope.current===origin)setError(controller.signal.aborted?'Evaluasi dibatalkan. Jawaban tetap tersimpan.':(e as Error).message);}
+    finally{if(scope.current===origin){setIsEvaluating(false);abort.current=null;void w.refresh();}}
+  };
+  const finish = (submission:QuizSubmission) => {
+    if(!quiz)return;const settings=quiz.evaluationSettings??w.data.preferences.evaluation;
+    const next=buildResult(quiz,submission,undefined,settings);setResult(next);setView('results');
+    void saveResult(next).then(()=>{if(settings?.enabled&&(next.pendingCount??0)>0)void runEvaluation(next);}).catch(()=>{});
+  };
+  const review = (id:string,points:number,reason:string) => {
+    if(!result||!reason.trim()||!result.evaluations?.[id])return;const before=result.evaluations[id];
+    if(!Number.isFinite(points)||points<0||points>before.maxPoints)return;
+    const {previous,...old}=before;
+    const next=buildResult(result.quiz,result.submission,{...result.evaluations,[id]:{...before,status:'graded',method:'manual',earnedPoints:points,manualReason:reason,revision:(before.revision??0)+1,previous:[...(previous??[]),old]}},result.evaluationSettings);
+    const origin=w.scope;
+    void saveResult(next,origin).then(()=>{if(scope.current===origin)setResult(next);}).catch(()=>{});
   };
   const selectQuiz = (selected: Quiz) => {
     setQuiz(selected); const saved = w.data.history.find(h => h.quiz.id === selected.id);
@@ -97,12 +112,12 @@ export default function App() {
       </> : view === 'creator' ? <>
         {w.data.job && ['running','interrupted'].includes(w.data.job.status) && <div className="page-shell !pb-0 !pt-5"><div className="resume-banner"><div><strong>Pembuatan kuis belum selesai</strong><p>{w.data.job.questions.length}/{w.data.job.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => void generate(w.data.job!.config, w.data.job!)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div></div>}
         <QuizCreator key={w.scope} onGenerate={config => void generate(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} initialDraft={w.data.draft} onDraft={persistDraft} />
-      </> : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={newQuiz} initialProgress={w.data.progress} onProgress={persistProgress} />
-      : view === 'results' && result ? <QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} />
+      </> : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
+      : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={()=>abort.current?.abort()} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
       : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}
     </main>
     <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>
-    {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || view === 'runner'} />}
+    {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
   </div>;
 }

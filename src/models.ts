@@ -1,4 +1,7 @@
-export const AI_MODELS = [
+export type AIProvider = 'gemini';
+export const isProvider = (value: unknown): value is AIProvider => value === 'gemini';
+export const providerName = (_value?: AIProvider) => 'Google Gemini';
+const GEMINI_MODELS = [
   {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
@@ -36,12 +39,27 @@ export const AI_MODELS = [
     description: "Alternatif model Gemma untuk eksplorasi dan latihan konsep.",
   },
 ] as const;
-export type AIModel = (typeof AI_MODELS)[number]["id"];
+export const AI_MODELS = [
+  ...GEMINI_MODELS.map(model => ({ ...model, provider: 'gemini' as const, grounding: model.id !== 'gemma-4-31b-it', structured: model.id !== 'gemma-4-31b-it' })),
+];
+export type AIModel = string;
 export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
+export const normalizeModelId = (id?: string): string => {
+  if (!id) return '';
+  return id.trim();
+};
 export const isAIModel = (value: unknown): value is AIModel =>
-  AI_MODELS.some((model) => model.id === value);
-export const modelName = (id?: string) =>
-  AI_MODELS.find((model) => model.id === id)?.name ?? id ?? "Gemini";
+  typeof value === 'string' && AI_MODELS.some((model) => model.id === value || model.id === normalizeModelId(value));
+export const validModelId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$/.test(value);
+export const modelInfo = (id?: string) => {
+  const norm = normalizeModelId(id);
+  return AI_MODELS.find(model => model.id === norm || model.id === id);
+};
+export const defaultProviderModel = (_provider?: AIProvider) => DEFAULT_MODEL;
+export const modelName = (id?: string) => {
+  const norm = normalizeModelId(id);
+  return AI_MODELS.find((model) => model.id === norm || model.id === id)?.name ?? norm ?? id ?? "Gemini";
+};
 export const DIFFICULTIES = [
   {
     id: "primitive",

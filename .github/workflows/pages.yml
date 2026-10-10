@@ -31,6 +31,8 @@ jobs:
       - run: npm run lint
       - run: node --import tsx scripts/model-test.ts
       - run: node --import tsx scripts/workspace-test.ts
+      - run: node --import tsx scripts/workspace-ai-test.ts
+      - run: node --import tsx scripts/quiz-types-test.ts
       - run: npm run build:pages
         env:
           VITE_BASE_PATH: /Quiz-Mind-AI/

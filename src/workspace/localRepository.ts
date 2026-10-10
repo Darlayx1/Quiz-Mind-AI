@@ -1,4 +1,6 @@
 import { openDB, type DBSchema } from 'idb';
+import { readData, migrateHistory } from '../quizStorage.js';
+import { validateCollection } from '../keyPool.js';
 import { emptyWorkspace, sanitizeWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository, type WorkspaceSnapshot, type KeyStatus } from './types.js';
 
 interface LocalDatabase extends DBSchema {
@@ -24,14 +26,26 @@ export const localRepository: WorkspaceRepository = {
     let record = await db.get('workspace', 'active');
     if (!record) {
       const data = emptyWorkspace();
+      const migrated: { metadata: ApiKeyRecord; secret: string }[] = [];
       // The legacy source remains intact. Concurrent first loads share one transaction.
       try {
         const old = globalThis.localStorage?.getItem('quizmind_ai_history_v1');
         if (old) data.history = sanitizeWorkspace({ history: JSON.parse(old) }).history.filter(item => item?.quiz?.id && Array.isArray(item.quiz.questions));
       } catch { /* Corrupt legacy data is not deleted. */ }
-      const tx = db.transaction('workspace', 'readwrite');
-      record = await tx.store.get('active');
-      if (!record) { record = { revision: 0, data }; await tx.store.put(record, 'active'); }
+      const legacyHistory = await readData<unknown>('history').catch(() => undefined);
+      if (legacyHistory !== undefined) data.history = migrateHistory(legacyHistory).map(h => ({ ...h, attempts: h.results ?? (h.lastResult ? [h.lastResult] : []) }));
+      const plain = globalThis.localStorage?.getItem('quizmind_client_keys_v1');
+      if (plain) {
+        const collection = validateCollection(JSON.parse(plain));
+        data.preferences = { ...data.preferences, model: collection.settings.preferredModel ?? data.preferences.model, evaluation: collection.settings.evaluation ?? data.preferences.evaluation };
+        for (const key of collection.keys) migrated.push({ metadata: { id:key.id,label:key.name,suffix:key.key.slice(-4),fingerprint:await fingerprint(key.key),enabled:key.enabled,priority:key.priority,status:'untested',successes:0,failures:0 },secret:key.key });
+      }
+      const tx = db.transaction(['workspace','keys','credentials'], 'readwrite');
+      record = await tx.objectStore('workspace').get('active');
+      if (!record) {
+        record = { revision: 0, data }; await tx.objectStore('workspace').put(record, 'active');
+        for (const key of migrated) { await tx.objectStore('keys').put(key.metadata); await tx.objectStore('credentials').put(key.secret,key.metadata.id); }
+      }
       await tx.done;
     }
     return { ...record, data: sanitizeWorkspace(record.data) };

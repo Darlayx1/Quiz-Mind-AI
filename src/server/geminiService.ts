@@ -1,19 +1,15 @@
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_MODEL, DIFFICULTIES } from '../models.js';
+import { DEFAULT_MODEL, DIFFICULTIES, modelInfo } from '../models.js';
 import { normalizeQuizConfig, quizTimerSeconds, durationLabel } from '../quizConfig.js';
 import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
-import { sanitizeAndParseJson } from './jsonParser.js';
+import { KeyPool, PoolError, errorKind } from '../keyPool.js';
+import { geminiQuotaMessage } from '../geminiQuota.js';
 
-export class QuizGenerationError extends Error {
-  constructor(
-    message: string,
-    public status: number = 500,
-    public code: string = 'GENERATION_ERROR'
-  ) {
-    super(message);
-    this.name = 'QuizGenerationError';
-  }
-}
+import { QuizGenerationError } from './generationError.js';
+export { QuizGenerationError } from './generationError.js';
+import { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, quizSchemaFor } from './quizPipeline.js';
+export { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse } from './quizPipeline.js';
+export { nextQuizBatch } from './quizPipeline.js';
 
 /**
  * Inisialisasi client Gemini menggunakan SDK resmi @google/genai.
@@ -31,6 +27,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
     apiKey: apiKey,
     httpOptions: {
       timeout: 180000, // 3 menit untuk penalaran mendalam Gemma & batching
+      retryOptions: { attempts: 1 }, // The application owns the shared retry budget.
     },
   });
 }
@@ -38,7 +35,7 @@ function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
 /** One bounded provider call; retry/key selection belong to the workspace orchestrator. */
 export async function generateQuizBatch(input: QuizConfig, apiKey: string, existing: string[] = [], signal?: AbortSignal): Promise<Quiz> {
   const config = normalizeQuizConfig(input);
-  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75000 } });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 75000, retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
   const gemma = model === 'gemma-4-31b-it';
   const prompt = buildPrompt(config, config.questionCount, existing);
@@ -54,14 +51,16 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
     const previous = new Set(existing.map(q => q.trim().toLowerCase()));
     const questions: Question[] = [];
     for (const raw of Array.isArray(parsed.questions) ? parsed.questions : []) {
-      const question = validateAndSanitizeQuestion(raw, questions.length, config.topic, sources);
+      const question = validateAndSanitizeQuestion(raw, questions.length, config.topic, sources, config.questionType);
       if (question && !previous.has(question.question.trim().toLowerCase())) {
-        question.id = crypto.randomUUID(); questions.push(question); previous.add(question.question.trim().toLowerCase());
+        question.id = crypto.randomUUID(); question.maxPoints = config.pointsByType?.[config.questionType!] ?? 1;
+        if (question.type === 'multiple_select' || question.type === 'ordering') question.scoringMode = config.partialCredit ? 'partial' : 'exact';
+        questions.push(question); previous.add(question.question.trim().toLowerCase());
       }
     }
     if (questions.length !== config.questionCount) throw new QuizGenerationError('Jumlah soal valid belum sesuai. Batch dihentikan untuk mencegah hasil tidak lengkap.', 502, 'INCOMPLETE_QUESTION_COUNT');
     return { id: crypto.randomUUID(), title: String(parsed.title || `Kuis: ${config.topic}`), summary: String(parsed.summary || ''),
-      ...config, createdAt: new Date().toISOString(), questions, requestedModel: model, model,
+      ...config, schemaVersion: 2, createdAt: new Date().toISOString(), questions, requestedModel: model, model,
       usedGrounding: !gemma && config.enableGrounding, groundingQueriesUsed: response.candidates?.[0]?.groundingMetadata?.webSearchQueries || [] };
   } catch (error) {
     if (signal?.aborted) throw new DOMException('Operasi dibatalkan', 'AbortError');
@@ -73,13 +72,22 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
  * Klasifikasi error API Google ke dalam HTTP status code dan pesan yang jelas.
  */
 export function classifyApiError(err: any, modelId: string): QuizGenerationError {
-  if (err instanceof QuizGenerationError) {
+  if (err instanceof QuizGenerationError || err instanceof PoolError) {
     return err;
   }
 
   const msg = String(err?.message || err);
   const isGemma = modelId === 'gemma-4-31b-it';
   const modelLabel = isGemma ? 'Gemma 4 31B' : 'Gemini';
+
+  // Use the HTTP status first: numbers inside quota values are not status codes.
+  if (errorKind(err).kind === 'quota') {
+    return new QuizGenerationError(geminiQuotaMessage(err, modelId), 429, 'RATE_LIMIT_EXCEEDED');
+  }
+
+  if (Number(err?.status ?? err?.error?.code) === 400 || /INVALID_ARGUMENT/.test(msg)) {
+    return new QuizGenerationError(`Permintaan ke ${modelLabel} tidak valid. Periksa materi dan pengaturan kuis.`, 400, 'INVALID_ARGUMENT');
+  }
 
   // 401 Unauthorized
   if (/401|API_KEY_INVALID|API key not valid|UNAUTHENTICATED/i.test(msg)) {
@@ -105,15 +113,6 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
       `Model ${modelLabel} (${modelId}) tidak ditemukan atau tidak tersedia untuk akun/wilayah proyek Anda (404 Not Found).`,
       404,
       'MODEL_NOT_FOUND'
-    );
-  }
-
-  // 429 Rate Limit / Quota
-  if (/429|RESOURCE_EXHAUSTED|quota|rate limit/i.test(msg)) {
-    return new QuizGenerationError(
-      `Batas kuota atau rate limit untuk model ${modelLabel} telah tercapai (429 Too Many Requests). Tunggu sejenak sebelum mencoba lagi.`,
-      429,
-      'RATE_LIMIT_EXCEEDED'
     );
   }
 
@@ -154,7 +153,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   return new QuizGenerationError(
-    `Gagal membuat kuis dengan ${modelLabel}: ${msg}`,
+    `Gagal membuat kuis dengan ${modelLabel}. Periksa koneksi, akses model, dan konfigurasi permintaan.`,
     502,
     'GENERATION_FAILED'
   );
@@ -221,236 +220,59 @@ async function callWithRetry<T>(
 /**
  * Validasi ketat butir soal kuis.
  */
-function validateAndSanitizeQuestion(
-  q: any,
-  idx: number,
-  topic: string,
-  extractedSources: GroundingSource[]
-): Question | null {
-  if (!q || typeof q !== 'object') return null;
-
-  const questionText = typeof q.question === 'string' ? q.question.trim() : '';
-  if (!questionText || questionText.length < 5) return null;
-
-  // Pastikan tepat 4 opsi
-  let rawOptions: string[] = [];
-  if (Array.isArray(q.options)) {
-    rawOptions = q.options.map((o: any) => String(o ?? '').trim()).filter(Boolean);
-  }
-
-  // Jika opsi kurang dari 4 atau duplikat ekstrem, tolak daripada mengarang opsi palsu
-  if (rawOptions.length < 4) return null;
-  const options = rawOptions.slice(0, 4) as [string, string, string, string];
-
-  // Validasi index jawaban benar
-  let correctIndex = Number(q.correctAnswerIndex);
-  if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) {
-    return null;
-  }
-
-  // Penjelasan faktual
-  const explanation =
-    typeof q.explanation === 'string' && q.explanation.trim().length > 0
-      ? q.explanation.trim()
-      : 'Penalaran akademis mendalam terhadap konsep butir soal.';
-
-  // Sumber referensi: HANYA sumber nyata terverifikasi (dari Google Grounding atau rujukan ilmiah spesifik)
-  // TIDAK menggunakan URL pencarian palsu atau tautan fiktif!
-  const questionSources: GroundingSource[] = [...extractedSources];
-
-  if (Array.isArray(q.groundingReferences)) {
-    for (const ref of q.groundingReferences) {
-      if (ref?.url && typeof ref.url === 'string' && /^https?:\/\//i.test(ref.url)) {
-        questionSources.push({
-          title: String(ref.title || 'Referensi Akademis'),
-          url: ref.url,
-          snippet: String(ref.title || ref.url),
-        });
-      }
-    }
-  }
-
-  if (q.referenceTitle && typeof q.referenceTitle === 'string' && q.referenceTitle.trim().length > 0) {
-    questionSources.push({
-      title: q.referenceTitle.trim(),
-      url: '',
-      snippet: `Rujukan ilmiah: ${q.referenceTitle.trim()}`,
-    });
-  }
-
-  return {
-    id: `q_${idx + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    question: questionText,
-    options,
-    correctAnswerIndex: correctIndex,
-    explanation,
-    groundingSources: questionSources.slice(0, 3),
-    topicCategory: q.topicCategory ? String(q.topicCategory).trim() : topic,
-  };
-}
-
-/**
- * Bangun prompt instruksi kuis
- */
-function buildPrompt(
-  config: QuizConfig,
-  targetCount: number,
-  existingQuestions: string[] = []
-): { systemInstruction: string; userPrompt: string } {
-  const isEn = config.language === 'en';
-  const level = DIFFICULTIES.find((item) => item.id === config.difficulty)!;
-  const difficultyDesc = `${level.name}: ${level.description}`;
-
-  const langPrompt = isEn
-    ? 'All questions, options, explanations, and summaries MUST be written in fluent, academic English.'
-    : 'Semua pertanyaan, pilihan jawaban, penjelasan, dan ringkasan WAJIB ditulis dalam Bahasa Indonesia yang baik, lugas, dan akurat.';
-
-  const systemInstruction = `Anda adalah Academic Assessment Engine tingkat tinggi.
-Tugas Anda:
-1. Menghasilkan butir soal kuis pilihan ganda yang bermutu tinggi, berbobot, presisi, dan terverifikasi secara ilmiah.
-2. Setiap butir soal WAJIB memiliki tepat 4 opsi pilihan (A, B, C, D) yang jelas, masuk akal, dan tidak ambigu, dengan 1 kunci jawaban benar dan 3 distractor (pengecoh) realistis.
-3. Hindari pertanyaan ambigu atau pilihan ganda dengan jawaban ganda.
-4. Terapkan penalaran mendalam pada bagian pembahasan (explanation): jelaskan konsep mengapa kunci jawaban benar dan mengapa opsi pengecoh keliru.
-5. ${langPrompt}
-6. JANGAN membuat URL tautan internet fiktif atau palsu. Jika ada rujukan akademis nyata (buku teks/jurnal), sebutkan judul/nama rujukan pada "referenceTitle". Jika tidak ada, kosongkan string "".
-7. Output WAJIB berupa blok JSON murni yang valid tanpa teks pembuka atau penutup di luar blok JSON.`;
-
-  let userPrompt = `Buatkan kuis pilihan ganda dengan spesifikasi berikut:
-- Topik Utama: "${config.topic}"
-- Tingkat Kesulitan: ${difficultyDesc}
-- Jumlah Soal: ${targetCount} butir soal
-- Tampilan: ${config.displayMode === 'sequential' ? 'Satu soal per langkah' : 'Semua soal dengan navigasi bebas'}
-- Durasi: ${durationLabel(quizTimerSeconds(config))}${quizTimerSeconds(config) > 0 ? (config.displayMode === 'sequential' ? ' per soal' : ' total kuis') : ''}
-- Gaya bahasa: ${config.languageStyle || 'Jelas, baku, dan akademis'}
-`;
-
-  if (existingQuestions.length > 0) {
-    userPrompt += `\nPENTING: Butir-butir soal berikut sudah dibuat sebelumnya, JANGAN membuat soal yang serupa atau berulang:\n${existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`;
-  }
-
-  if (config.additionalInstructions) {
-    userPrompt += `\nPreferensi tambahan pengguna (ikuti selama tetap sesuai topik, bahasa, tingkat kesulitan, jumlah soal, akurasi, dan format JSON di atas):\n${config.additionalInstructions}\n`;
-  }
-
-  if (config.studyMaterial && config.studyMaterial.trim().length > 0) {
-    userPrompt += `\nReferensi Catatan / Materi Bahan Bacaan Khusus:\n"""\n${config.studyMaterial.trim().slice(0, 15000)}\n"""\nGali butir-butir soal utama berdasarkan materi referensi di atas dengan ketat!\n`;
-  }
-
-  userPrompt += `
-Format respon JSON yang WAJIB dihasilkan:
-\`\`\`json
-{
-  "title": "${isEn ? 'Academic Quiz Title' : 'Judul Kuis yang Menarik dan Akademis'}",
-  "topic": "${config.topic}",
-  "summary": "${isEn ? 'Brief 1-2 sentence focus summary.' : 'Ringkasan 1-2 kalimat mengenai fokus materi kuis ini.'}",
-  "questions": [
-    {
-      "question": "Kalimat pertanyaan yang jelas, lugas, dan terstruktur?",
-      "options": [
-        "Pilihan A",
-        "Pilihan B",
-        "Pilihan C",
-        "Pilihan D"
-      ],
-      "correctAnswerIndex": 0,
-      "explanation": "Penalaran mendalam: Mengapa opsi ini benar secara faktual, dan mengapa opsi lainnya keliru atau kurang tepat.",
-      "topicCategory": "Sub-kategori topik soal",
-      "referenceTitle": ""
-    }
-  ]
-}
-\`\`\`
-Pastikan index "correctAnswerIndex" adalah angka 0, 1, 2, atau 3. Variasikan posisi kunci jawaban agar seimbang.
-Hasilkan tepat ${targetCount} butir soal sekarang.
-`;
-
-  return { systemInstruction, userPrompt };
-}
-
 /**
  * Bangun prompt instruksi khusus untuk Gemma 4 31B.
  * Menggunakan scaffolding instruksi berbahasa Inggris dengan spesifikasi bahasa konten target,
  * format skema JSON murni tanpa triple backticks dalam prompt.
  * Format ini terbukti 100% kompatibel dan tidak memicu 500 INTERNAL pada serving engine Gemma.
  */
-function buildGemmaPrompt(
-  config: QuizConfig,
-  targetCount: number,
-  existingQuestions: string[] = []
-): string {
-  const isEn = config.language === 'en';
-  const level = DIFFICULTIES.find((item) => item.id === config.difficulty)!;
-  const difficultyDesc = `${level.name}: ${level.description}`;
-
-  const langInstruction = isEn
-    ? 'All questions, options, explanations, and summaries MUST be written in fluent, academic English.'
-    : 'All questions, options, explanations, and summaries MUST be written in fluent, grammatically correct Indonesian (Bahasa Indonesia).';
-
-  let prompt = `You are an Academic Assessment Engine.
-Create ${targetCount} high-quality multiple choice quiz question(s) about the topic: "${config.topic}".
-Language requirement: ${langInstruction}
-Difficulty level: ${difficultyDesc}.
-Language style: ${config.languageStyle || 'Clear, academic, and structured'}.
-
-Requirements:
-1. Provide exactly 4 distinct options per question.
-2. Provide a single correct answer with "correctAnswerIndex" (0, 1, 2, or 3). Vary the position of the correct answer.
-3. Provide a thorough scientific/conceptual explanation for "explanation", explaining why the correct option is right and others are incorrect.
-4. Do NOT generate fake internet links or URLs. If there is a real published academic textbook or paper, provide its title in "referenceTitle", otherwise leave it as "".
-`;
-
-  if (existingQuestions.length > 0) {
-    prompt += `\nCRITICAL: Do NOT generate questions similar or redundant to these previously generated questions:\n${existingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n`;
-  }
-
-  if (config.additionalInstructions) {
-    prompt += `\nAdditional user preferences (follow these while respecting topic, language, and JSON schema):\n${config.additionalInstructions}\n`;
-  }
-
-  if (config.studyMaterial && config.studyMaterial.trim().length > 0) {
-    prompt += `\nStudy Material Reference:\n"""\n${config.studyMaterial.trim().slice(0, 10000)}\n"""\nBase the assessment questions strictly on the study material provided above.\n`;
-  }
-
-  prompt += `
-Respond strictly with valid JSON conforming to this schema:
-{
-  "title": "${isEn ? 'Academic Quiz: ' + config.topic : 'Kuis: ' + config.topic}",
-  "topic": "${config.topic}",
-  "summary": "${isEn ? 'Brief concept summary of this quiz.' : 'Ringkasan singkat konsep materi kuis ini.'}",
-  "questions": [
-    {
-      "question": "${isEn ? 'Clear question sentence?' : 'Kalimat pertanyaan yang jelas dan terstruktur dalam bahasa Indonesia?'}",
-      "options": [
-        "Option A",
-        "Option B",
-        "Option C",
-        "Option D"
-      ],
-      "correctAnswerIndex": 0,
-      "explanation": "${isEn ? 'Detailed explanation of why this answer is correct.' : 'Penjelasan detail konsep mengapa opsi ini benar.'}",
-      "topicCategory": "${config.topic}",
-      "referenceTitle": ""
-    }
-  ]
-}
-Return only valid JSON without any markdown formatting or commentary outside the JSON block. Generate exactly ${targetCount} question(s) now.`;
-
-  return prompt;
-}
+function buildGemmaPrompt(config:QuizConfig,targetCount:number,existingQuestions:string[]=[]):string { const p=buildPrompt(config,targetCount,existingQuestions); return p.systemInstruction+'\n'+p.userPrompt; }
 
 /**
  * Eksekusi generasi kuis dengan Gemma 4 31B atau Gemini
  */
-export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string): Promise<Quiz> {
+export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string, options: { pool?: KeyPool; signal?: AbortSignal; onNotice?: (message: string) => void; attemptBudget?:{calls:number} } = {}): Promise<Quiz> {
   config = normalizeQuizConfig(config);
   const selectedModel = config.model ?? DEFAULT_MODEL;
   const isGemma = selectedModel === 'gemma-4-31b-it';
-  const ai = getGeminiClient(apiKey);
+  if (config.enableGrounding && modelInfo(selectedModel)?.grounding !== true) throw new QuizGenerationError('Model pilihan tidak mendukung pencarian web. Pilih model dengan dukungan web.', 400, 'FALLBACK_CAPABILITY');
+  const ai = options.pool ? undefined : getGeminiClient(apiKey);
+  const signal = AbortSignal.any([AbortSignal.timeout(600_000), ...(options.signal ? [options.signal] : [])]);
+  let totalCalls = 0, batchCalls = 0;
+  const requestContent = async (params: Parameters<GoogleGenAI['models']['generateContent']>[0]) => {
+    signal.throwIfAborted();
+    params={...params,config:{...params.config,maxOutputTokens:8192}};
+    if (modelInfo(String(params.model))?.structured && !params.config?.tools?.length) params = { ...params, config: { ...params.config, responseMimeType: 'application/json', responseJsonSchema: quizSchemaFor(config.questionType) } };
+    if (!options.pool) {
+      if(options.attemptBudget&&options.attemptBudget.calls>=3)throw new PoolError('Batas percobaan pembuatan kuis tercapai.',503,'POOL_BUDGET');
+      if (options.attemptBudget) options.attemptBudget.calls++;
+      const callSignal = AbortSignal.any([signal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
+      return ai!.models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+    }
+    return options.pool.run(async (key, poolSignal) => {
+      if (batchCalls >= 3 || totalCalls >= Math.ceil(config.questionCount / (isGemma ? 2 : config.questionCount)) * 3 || options.attemptBudget&&options.attemptBudget.calls>=3)
+        throw new PoolError('Batas percobaan pembuatan kuis tercapai.', 503, 'POOL_BUDGET');
+      batchCalls++; totalCalls++; if (options.attemptBudget) options.attemptBudget.calls++;
+      const callSignal = AbortSignal.any([poolSignal, AbortSignal.timeout(isGemma ? 150_000 : 90_000)]);
+      try {
+        return await getGeminiClient(key).models.generateContent({ ...params, config: { ...params.config, abortSignal: callSignal } });
+      } catch (error: any) {
+        poolSignal.throwIfAborted();
+        if (callSignal.aborted) throw new QuizGenerationError('Layanan AI melewati batas waktu.', 504, 'TIMEOUT');
+        // Retain structured provider errors for retry hints; never display raw credentials.
+        throw error;
+      }
+    }, { signal, provider: 'gemini', model: String(params.model) + (params.config?.tools?.length ? ':grounding' : ''), onNotice: options.onNotice, allowKeyFallback: params.config?.tools?.length ? false : undefined, maxAttempts:Math.max(1,Math.min(params.config?.tools?.length ? 2 : modelCandidates.length > 1 && String(params.model) === selectedModel ? 2 : 3,3-(options.attemptBudget?.calls??0))) });
+  };
+  // A managed pool already bounds and cancels each attempt. Wrapping its entire retry sequence
+  // in Promise.race would leave retries running after the outer timeout has returned.
+  const callGeneration = <T>(fn: () => Promise<T>, retries: number, delay: number, model: string) =>
+    options.pool ? fn() : callWithRetry(fn, retries, delay, model);
 
   // Aturan ketat: Pemilihan Gemma 4 31B TIDAK BOLEH dialihkan diam-diam ke Gemini.
-  const modelCandidates = isGemma
+  const modelCandidates = isGemma || (options.pool && !options.pool.collection.settings.allowModelFallback)
     ? [selectedModel]
-    : [selectedModel, selectedModel === DEFAULT_MODEL ? 'gemini-3.5-flash-lite' : DEFAULT_MODEL, 'gemini-flash-latest'];
+    : [...new Set([selectedModel, options.pool?.collection.settings.modelFallbacks?.gemini ?? (selectedModel === DEFAULT_MODEL ? 'gemini-3.5-flash-lite' : DEFAULT_MODEL)])];
 
   const quizId = 'quiz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
   let quizTitle = `Kuis: ${config.topic}`;
@@ -465,24 +287,59 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
   const totalNeeded = config.questionCount;
 
   while (validQuestions.length < totalNeeded) {
+    signal.throwIfAborted();
+    batchCalls = 0;
     const remainingCount = totalNeeded - validQuestions.length;
     const currentBatchCount = Math.min(batchSize, remainingCount);
 
     let rawResponse: any = null;
     let lastError: any = null;
+    let batchGrounded = false;
     const extractedSources: GroundingSource[] = [];
 
+    if (options.pool) {
+      const grounded = config.enableGrounding && !isGemma;
+      const prompt = buildPrompt(config, currentBatchCount, validQuestions.map(q => q.question));
+      const contents = isGemma ? buildGemmaPrompt(config, currentBatchCount, validQuestions.map(q => q.question)) : prompt.userPrompt;
+      const allowWithoutWeb = options.pool.collection.settings.allowGroundingFallback;
+      const candidates = modelCandidates.flatMap(model => !grounded || modelInfo(model)?.grounding === true
+        ? [{ model, tools: grounded }]
+        : allowWithoutWeb ? [{ model, tools: false }] : []);
+      if (grounded && allowWithoutWeb) {
+        for (const model of modelCandidates) if (!candidates.some(candidate => candidate.model === model && !candidate.tools)) candidates.push({ model, tools: false });
+      }
+      const send = (model: string, tools: boolean) => requestContent({ model,
+        contents: model.startsWith('gemma') ? buildGemmaPrompt(config, currentBatchCount, validQuestions.map(q => q.question)) : contents,
+        config: model.startsWith('gemma') ? {} : { systemInstruction: prompt.systemInstruction, ...(tools ? { tools: [{ googleSearch: {} }] } : {}) } });
+      for (const [index, { model, tools }] of candidates.entries()) {
+        try {
+          rawResponse = await send(model, tools);
+          usedModelName = model; batchGrounded = tools; lastError = null; break;
+        } catch (error: any) {
+          signal.throwIfAborted(); lastError = error;
+          const modelTransient = errorKind(lastError).kind === 'temporary' || (lastError?.code === 'POOL_UNAVAILABLE' && [...options.pool.health.values()].some(h => h.scope === model + (tools ? ':grounding' : '') && h.reason === 'Layanan sementara bermasalah'));
+          const quotaLimited = lastError?.code === 'POOL_QUOTA' || lastError?.status === 429;
+          const next = candidates[index + 1];
+          if (!next || batchCalls >= 3 || (lastError?.status !== 404 && lastError?.code !== 'POOL_MODEL_ACCESS' && !modelTransient && !quotaLimited)) throw classifyApiError(lastError,model);
+          options.onNotice?.(next.tools || !grounded
+            ? quotaLimited ? 'Kuota model pilihan sedang dibatasi. Mencoba model cadangan sesuai pengaturan Anda.' : 'Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.'
+            : 'Referensi web belum tersedia. Mencoba melanjutkan tanpa referensi web sesuai pengaturan Anda.');
+        }
+      }
+      if (!rawResponse) throw lastError || new PoolError('Model pilihan belum tersedia.');
+    }
+
     // Jalur Google Search Grounding (Hanya untuk Gemini yang mendukung, bukan Gemma)
-    if (config.enableGrounding && !isGemma && validQuestions.length === 0) {
+    if (!options.pool && config.enableGrounding && !isGemma && validQuestions.length === 0) {
       const { systemInstruction, userPrompt } = buildPrompt(
         config,
         currentBatchCount,
         validQuestions.map((q) => q.question)
       );
       try {
-        rawResponse = await callWithRetry(
+        rawResponse = await callGeneration(
           () =>
-            ai.models.generateContent({
+            requestContent({
               model: selectedModel,
               contents: userPrompt,
               config: {
@@ -495,10 +352,11 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
           selectedModel
         );
         usedGrounding = true;
+        batchGrounded = true;
         usedModelName = selectedModel;
       } catch (err: any) {
-        lastError = err;
-        // Lanjut ke percobaan tanpa tool jika kuota/search grounding terkendala
+        signal.throwIfAborted();
+        throw classifyApiError(err, selectedModel);
       }
     }
 
@@ -511,9 +369,9 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
           validQuestions.map((q) => q.question)
         );
         try {
-          rawResponse = await callWithRetry(
+          rawResponse = await callGeneration(
             () =>
-              ai.models.generateContent({
+              requestContent({
                 model: selectedModel,
                 contents: gemmaPrompt,
               }),
@@ -534,9 +392,9 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         );
         for (const model of modelCandidates) {
           try {
-            rawResponse = await callWithRetry(
+            rawResponse = await callGeneration(
               () =>
-                ai.models.generateContent({
+                requestContent({
                   model: model,
                   contents: userPrompt,
                   config: { systemInstruction },
@@ -549,6 +407,8 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
             lastError = null;
             break;
           } catch (err: any) {
+            signal.throwIfAborted();
+            options.onNotice?.('Model pilihan belum tersedia. Mencoba model cadangan sesuai pengaturan Anda.');
             lastError = err;
           }
         }
@@ -559,6 +419,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       throw classifyApiError(lastError || new Error('Respons model AI kosong.'), usedModelName);
     }
 
+    if (rawResponse.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new QuizGenerationError('Respons Gemini terpotong sebelum selesai.', 502, batchGrounded ? 'WEB_SEARCH_TRUNCATED' : 'INCOMPLETE_RESPONSE');
     const rawText = rawResponse.text || '';
 
     // Ekstrak metadata grounding Google Search (jika ada pada Gemini)
@@ -579,6 +440,11 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
       }
     }
 
+    if (batchGrounded) {
+      if (!Array.isArray(groundingMetadata?.webSearchQueries) || !groundingMetadata.webSearchQueries.length || !extractedSources.length) throw new QuizGenerationError('Pencarian web Gemini tidak menghasilkan referensi yang dapat diverifikasi.', 502, 'WEB_SEARCH_EMPTY');
+      usedGrounding = true;
+    }
+
     // Parse JSON
     const parsedData = extractJsonFromResponse(rawText);
     if (parsedData.title && typeof parsedData.title === 'string') {
@@ -597,7 +463,7 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
         rawQ,
         validQuestions.length,
         config.topic,
-        extractedSources
+        extractedSources, config.questionType
       );
       if (validated) {
         // Cek duplikasi dengan soal yang sudah ada
@@ -650,24 +516,11 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
     questions: validQuestions.slice(0, totalNeeded),
     groundingQueriesUsed: allGroundingQueries,
     requestedModel: selectedModel,
+    requestedProvider: 'gemini',
+    provider: 'gemini',
     model: usedModelName,
     usedGrounding,
   };
 
   return resultQuiz;
-}
-
-/**
- * Helper untuk mengekstrak dan mem-parse JSON secara defensif dari output LLM
- */
-export function extractJsonFromResponse(text: string): any {
-  try {
-    return sanitizeAndParseJson(text);
-  } catch (err: any) {
-    throw new QuizGenerationError(
-      'Gagal mengekstrak struktur kuis JSON dari respon model AI: ' + (err?.message || String(err)),
-      502,
-      'INVALID_JSON'
-    );
-  }
 }

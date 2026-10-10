@@ -4,6 +4,8 @@ import type { QuizConfig, DifficultyLevel, QuizDisplayMode } from "../types/quiz
 import { AI_MODELS, DIFFICULTIES, AIModel, DEFAULT_MODEL, difficultyName, modelName } from "../models.js";
 import { durationLabel } from "../quizConfig.js";
 import type { Preferences } from '../workspace/types.js';
+import { QuestionComposition, defaultComposition, type Composition } from './QuestionComposition.js';
+import { defaultEvaluationSettings } from '../evaluationSettings.js';
 import { ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, FileText, KeyRound, LayoutGrid, ListOrdered, ShieldCheck, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
 
 interface QuizCreatorProps {
@@ -35,17 +37,19 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const [language, setLanguage] = useState<"id" | "en">(restore('language', 'id'));
   const [languageStyle, setLanguageStyle] = useState(restore('languageStyle', ''));
   const [additionalInstructions, setAdditionalInstructions] = useState(restore('additionalInstructions', ''));
+  const [composition, setComposition] = useState<Composition>(restore('composition', defaultComposition));
   const enableGrounding = preferences.grounding;
   const model = preferences.model;
   const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
   useEffect(() => {
     const timer = setTimeout(() => draftCallback.current({ inputMode, topic, studyMaterial, difficulty, countChoice, customCount,
-      displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions }), 600);
+      displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition }), 600);
     return () => clearTimeout(timer);
-  }, [inputMode, topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions]);
+  }, [inputMode, topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition]);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const questionCount = countChoice === "custom" ? Number(customCount) : countChoice;
+  const selectedCount = countChoice === "custom" ? Number(customCount) : countChoice;
+  const questionCount = composition.mode === 'mixed' ? Object.values(composition.distribution).reduce((n,v) => n+(v??0),0) : selectedCount;
   const validCount = Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 100;
   const sequential = displayMode === "sequential";
   const timerValue = sequential ? perQuestionSeconds : totalMinutes;
@@ -89,6 +93,9 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
       model, topic: topic.trim(),
       studyMaterial: inputMode === "material" ? studyMaterial.trim() : undefined,
       difficulty, questionCount, displayMode,
+      questionType: composition.type, questionDistribution: composition.mode === 'mixed' ? composition.distribution : { [composition.type]: questionCount },
+      pointsByType: composition.points, partialCredit: composition.partialCredit, timePerQuestionByType: sequential && !unlimited ? composition.times : undefined,
+      evaluationSettings: preferences.evaluation ?? defaultEvaluationSettings,
       timeLimitMinutes: unlimited ? 0 : sequential
         ? (Number.isInteger(Number(totalMinutes)) && Number(totalMinutes) >= 1 && Number(totalMinutes) <= 120 ? Number(totalMinutes) : 15)
         : Number(totalMinutes),
@@ -111,6 +118,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
       {errorMessage && <div role="alert" className="form-alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
       <form onSubmit={submit} className="menu-layout">
         <fieldset disabled={isLoading} className="menu-fields">
+          <QuestionComposition value={composition} onChange={setComposition} count={selectedCount} sequential={sequential && !unlimited} evaluator={preferences.evaluation ?? defaultEvaluationSettings} onOpen={onOpenSettings} />
           <section className="surface menu-section">
             <div className="menu-section-title"><BookOpen size={19} /><h2>Materi kuis</h2></div>
             <fieldset className="source-options">
