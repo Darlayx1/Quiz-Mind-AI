@@ -7,7 +7,7 @@ import { buildResult } from '../scoring.js';
 import { defaultEvaluationSettings } from '../evaluationSettings.js';
 
 export async function evaluateWorkspace(result: QuizResult, targets: string[] | undefined, preferences: Preferences, keys: ApiKeyRecord[], repository: WorkspaceRepository,
-  signal: AbortSignal, checkpoint: (result: QuizResult) => Promise<unknown>) {
+  signal: AbortSignal, checkpoint: (result: QuizResult, meta?: { completed: number; total: number; group: string[] }) => Promise<unknown>) {
   const settings=result.evaluationSettings??result.quiz.evaluationSettings??preferences.evaluation??defaultEvaluationSettings;
   if(!settings.enabled)throw new Error('Aktifkan evaluator pada Model & penggunaan, atau tinjau nilai secara manual.');
   const ids=targets??Object.entries(result.evaluations??{}).filter(([,e])=>e.earnedPoints===null&&e.status!=='needs_review').map(([id])=>id);
@@ -48,7 +48,7 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
     }
     if(!evaluations){ evaluations={};for(const id of group)evaluations[id]={...previous[id],status:'failed',earnedPoints:null,feedback:(last as Error)?.message??'Evaluasi belum berhasil.'}; }
     const next=buildResult(current.quiz,current.submission,{...previous,...evaluations},settings);
-    current=next;await checkpoint(next);
+    current=next;await checkpoint(next,{completed:cursor,total:ids.length,group});
   }
   return current;
 }

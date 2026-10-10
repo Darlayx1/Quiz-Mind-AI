@@ -2651,3 +2651,238 @@ progress::-moz-progress-bar {
 .api-monitor-events li { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid #64748b33; }
 .api-monitor-events time { font-size: .75rem; white-space: nowrap; }
 .api-monitor-events p { margin: 4px 0; font-size: .85rem; }
+
+/* ==========================================================================
+   Quiz Mind AI — Unified Processing & Loading Experience
+   ========================================================================== */
+
+.qm-processing-card {
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid var(--qm-line, #e4e9f1);
+  box-shadow: 0 10px 30px -15px rgba(35, 49, 74, 0.08);
+}
+
+.qm-processing-card .qm-eyebrow {
+  color: #2563eb !important;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.qm-processing-card .qm-title {
+  color: #0f172a !important;
+  font-weight: 700;
+}
+
+.qm-processing-card .qm-description {
+  color: #475569 !important;
+}
+
+.qm-processing-card .qm-status-text {
+  color: #1e293b !important;
+  font-weight: 600;
+}
+
+.qm-processing-card .soft-badge {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #334155 !important;
+}
+
+.qm-illustration-wrap {
+  perspective: 1000px;
+}
+
+.qm-progress-zone {
+  transition: all 0.25s ease-out;
+}
+
+.qm-cancel-btn {
+  transition: all 0.15s ease;
+}
+
+.qm-cancel-btn:hover:not(:disabled) {
+  border-color: #94a3b8;
+  color: #1e293b;
+  box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.06);
+}
+
+.qm-cancel-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Animations for Generate Illustration */
+@keyframes qm-card-settle-back {
+  0%, 100% {
+    transform: rotate(2deg) translateY(0);
+  }
+  50% {
+    transform: rotate(2deg) translateY(-2.5px);
+  }
+}
+
+@keyframes qm-card-settle-main {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3.5px);
+  }
+}
+
+@keyframes qm-sheet-settle {
+  0%, 100% {
+    transform: rotate(-5deg) translateY(0);
+  }
+  50% {
+    transform: rotate(-5deg) translateY(-2px);
+  }
+}
+
+@keyframes qm-sparkle-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+.qm-anim-card-back {
+  animation: qm-card-settle-back 4.5s ease-in-out infinite;
+  transform-origin: 110px 50px;
+}
+
+.qm-anim-card-main {
+  animation: qm-card-settle-main 3.8s ease-in-out infinite;
+}
+
+.qm-anim-sheet {
+  animation: qm-sheet-settle 5s ease-in-out infinite;
+  transform-origin: 45px 45px;
+}
+
+.qm-anim-sparkle {
+  animation: qm-sparkle-pulse 3s ease-in-out infinite;
+  transform-origin: 6px 6px;
+}
+
+.qm-anim-sparkle-subtle {
+  animation: qm-sparkle-pulse 3.5s ease-in-out infinite 1.2s;
+  transform-origin: 3px 3px;
+}
+
+/* Animations for Evaluation Illustration */
+@keyframes qm-scan-sweep {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.65;
+  }
+  50% {
+    transform: translateY(22px);
+    opacity: 1;
+  }
+}
+
+@keyframes qm-sheet-hover {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes qm-dock-hover {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.qm-anim-answer-sheet {
+  animation: qm-sheet-hover 4.5s ease-in-out infinite;
+}
+
+.qm-anim-rubric-dock {
+  animation: qm-dock-hover 4s ease-in-out infinite;
+}
+
+.qm-anim-scan-beam {
+  animation: qm-scan-sweep 3.6s ease-in-out infinite;
+}
+
+@keyframes qm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: qm-fade-in 0.22s ease-out forwards;
+}
+
+.qm-processing-shell {
+  width: 100%;
+  max-width: 640px;
+  box-sizing: border-box;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Responsive Overrides */
+@media (max-width: 640px) {
+  .qm-processing-shell {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  .qm-processing-card {
+    border-radius: 16px;
+    padding: 22px 14px !important;
+  }
+  .qm-processing-card .qm-title {
+    font-size: 1.25rem !important;
+  }
+  .qm-processing-card .qm-description {
+    font-size: 0.8125rem !important;
+  }
+  .qm-illustration-wrap svg {
+    max-width: 128px;
+  }
+  .qm-progress-zone {
+    padding: 14px 12px !important;
+  }
+}
+
+/* Reduced Motion Safety */
+@media (prefers-reduced-motion: reduce) {
+  .qm-anim-card-back,
+  .qm-anim-card-main,
+  .qm-anim-sheet,
+  .qm-anim-sparkle,
+  .qm-anim-sparkle-subtle,
+  .qm-anim-answer-sheet,
+  .qm-anim-rubric-dock,
+  .qm-anim-scan-beam,
+  .animate-fade-in {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
+

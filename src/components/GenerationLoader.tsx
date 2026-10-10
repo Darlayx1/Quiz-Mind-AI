@@ -1,62 +1,138 @@
-import React, { useEffect, useState } from "react";
-import { Loader2, Sparkles, Search, BookOpen } from "lucide-react";
-import { AIModel, modelName } from "../models.js";
-interface GenerationLoaderProps {
-  topic: string;
-  enableGrounding: boolean;
-  model: AIModel;
+import React, { useEffect, useState } from 'react';
+import { BookOpen, Sparkles, Search, Layers, BarChart2, Hash } from 'lucide-react';
+import type { QuizConfig } from '../types/quiz.js';
+import { questionLabels } from '../questionState.js';
+import { AIModel, modelName, difficultyName } from '../models.js';
+import { ProcessingLayout, ContextBadge } from './ProcessingLayout.js';
+import { GenerateIllustration } from './ProcessingIllustrations.js';
+
+export interface GenerationLoaderProps {
+  config?: QuizConfig;
+  topic?: string;
+  questionCount?: number;
+  completedCount?: number;
+  enableGrounding?: boolean;
+  model?: AIModel;
+  isSaving?: boolean;
+  isCancelling?: boolean;
+  onCancel?: () => void;
 }
+
 export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
-  topic,
-  enableGrounding,
+  config,
+  topic: rawTopic,
+  questionCount: rawQuestionCount,
+  completedCount = 0,
+  enableGrounding = false,
   model,
+  isSaving = false,
+  isCancelling = false,
+  onCancel,
 }) => {
   const [elapsed, setElapsed] = useState(0);
+
   useEffect(() => {
     const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const topic = config?.topic || rawTopic || 'Kuis Pembelajaran';
+  const totalCount = config?.questionCount || rawQuestionCount || 1;
+
+  // Determine question type label
+  let typeLabel: string | undefined;
+  if (config?.questionType) {
+    typeLabel = questionLabels[config.questionType];
+  } else if (config?.questionDistribution) {
+    const activeTypes = Object.entries(config.questionDistribution).filter(([, count]) => (count ?? 0) > 0);
+    if (activeTypes.length > 1) {
+      typeLabel = 'Campuran';
+    } else if (activeTypes.length === 1) {
+      typeLabel = questionLabels[activeTypes[0][0] as keyof typeof questionLabels];
+    }
+  }
+
+  // Build context badges
+  const contextBadges: ContextBadge[] = [
+    {
+      id: 'topic',
+      label: topic,
+      icon: <Hash size={13} />,
+    },
+    {
+      id: 'count',
+      label: `${totalCount} Soal`,
+      icon: <Layers size={13} />,
+    },
+  ];
+
+  if (typeLabel) {
+    contextBadges.push({
+      id: 'type',
+      label: typeLabel,
+      icon: <BookOpen size={13} />,
+    });
+  }
+
+  if (config?.difficulty) {
+    contextBadges.push({
+      id: 'difficulty',
+      label: difficultyName(config.difficulty),
+      icon: <BarChart2 size={13} />,
+    });
+  }
+
+  if (enableGrounding) {
+    contextBadges.push({
+      id: 'grounding',
+      label: 'Referensi Web Aktif',
+      icon: <Search size={13} />,
+    });
+  }
+
+  if (model) {
+    contextBadges.push({
+      id: 'model',
+      label: modelName(model),
+      icon: <Sparkles size={13} />,
+    });
+  }
+
+  // Determine status message and progress
+  let statusMessage = 'Menunggu respons pembuatan soal...';
+  let progressPercent: number | undefined;
+  let progressLabel: string | undefined;
+
+  if (isCancelling) {
+    statusMessage = 'Membatalkan pembuatan kuis...';
+  } else if (isSaving) {
+    statusMessage = 'Menyimpan kuis...';
+    progressPercent = 100;
+    progressLabel = 'Menyimpan ke ruang aktif';
+  } else if (completedCount > 0 && totalCount > 0) {
+    statusMessage = `${completedCount} dari ${totalCount} soal telah diterima.`;
+    progressPercent = Math.min(100, Math.round((completedCount / totalCount) * 100));
+    progressLabel = `${completedCount}/${totalCount} soal selesai`;
+  }
+
   return (
-    <div className="page-shell max-w-2xl text-center py-16">
-      <section className="surface section-pad">
-        <div className="icon-tile mx-auto mb-6 w-16 h-16">
-          <Loader2 size={28} className="animate-spin" />
-        </div>
-        <div role="status">
-          <div className="eyebrow justify-center">MENYUSUN KUIS ANDA</div>
-          <h1 className="text-2xl font-bold mt-3 mb-3">
-            Menyiapkan sesi belajar Anda
-          </h1>
-          <p className="text-sm text-slate-500 leading-relaxed">
-            <strong className="text-slate-700">{modelName(model)}</strong>{" "}
-            sedang membuat soal untuk
-            <br />
-            <span className="text-indigo-600 font-semibold">{topic}</span>.
-          </p>
-        </div>
-        <div className="flex justify-center flex-wrap gap-3 mt-7 text-xs text-slate-500">
-          <span className="soft-badge flex gap-2 items-center">
-            <Sparkles size={14} /> Soal & pilihan jawaban
-          </span>
-          {enableGrounding && (
-            <span className="soft-badge flex gap-2 items-center">
-              <Search size={14} /> Referensi web diminta
-            </span>
-          )}
-          <span className="soft-badge flex gap-2 items-center">
-            <BookOpen size={14} /> Pembahasan
-          </span>
-        </div>
-        <p className="text-xs text-slate-400 mt-8 tabular-nums">
-          {elapsed} detik berlalu · Menunggu respons AI
-        </p>
-        {elapsed >= 20 && (
-          <p className="text-xs text-slate-500 mt-3 leading-relaxed">
-            Pembuatan kuis dapat memerlukan waktu lebih lama sesuai jumlah soal
-            dan ketersediaan model.
-          </p>
-        )}
-      </section>
-    </div>
+    <ProcessingLayout
+      eyebrow="MENYUSUN SOAL"
+      title="Menyiapkan kuis Anda"
+      description="AI sedang menyusun soal dan pembahasan untuk topik yang Anda pilih."
+      illustration={<GenerateIllustration />}
+      contextBadges={contextBadges}
+      statusMessage={statusMessage}
+      progressPercent={progressPercent}
+      progressLabel={progressLabel}
+      elapsedSeconds={elapsed}
+      longWaitThreshold={20}
+      longWaitMessage="Pembuatan kuis masih berlangsung. Waktu proses dapat berbeda sesuai jumlah soal dan respons layanan AI."
+      onCancel={onCancel}
+      cancelLabel="Batalkan pembuatan"
+      cancellingLabel="Membatalkan pembuatan..."
+      isCancelling={isCancelling}
+      footerNote="Sesi dapat dibatalkan sewaktu-waktu tanpa mengurangi data kuis lainnya."
+    />
   );
 };
