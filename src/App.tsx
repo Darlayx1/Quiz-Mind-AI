@@ -45,9 +45,9 @@ export default function App() {
     attemptedProgress.current = serialized;
     return w.update(d => ({ ...d, progress }), w.scope).catch(() => { attemptedProgress.current = ''; });
   }, [w.update, w.scope]);
-  const newQuiz = () => { setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
+  const newQuiz = () => { if(isEvaluating)return; setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
   const generate = async (config: QuizConfig, resume?: GenerationJob) => {
-    if (loading || !w.ready || !w.repository) return;
+    if (loading || isEvaluating || !w.ready || !w.repository) return;
     const origin = w.scope; const repository = w.repository;
     const preferences = structuredClone(resume?.preferences || w.data.preferences);
     const controller = new AbortController(); abort.current = controller;
@@ -76,8 +76,9 @@ export default function App() {
     const origin=w.scope,repository=w.repository,controller=new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
     const started=Date.now();
     try{
-      await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async next=>{await saveResult(next,origin);if(scope.current===origin)setResult(next);});
-      await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.model??w.data.preferences.model,status:'success' as const,durationMs:Date.now()-started},...d.activity].slice(0,2000)}),origin);
+      const evaluated=await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async next=>{await saveResult(next,origin);if(scope.current===origin)setResult(next);});
+      const failed=Object.values(evaluated.evaluations??{}).some(e=>e.status==='failed');
+      await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.model??w.data.preferences.model,status:failed?'failed' as const:'success' as const,durationMs:Date.now()-started},...d.activity].slice(0,2000)}),origin);
     }catch(e){if(scope.current===origin)setError(controller.signal.aborted?'Evaluasi dibatalkan. Jawaban tetap tersimpan.':(e as Error).message);}
     finally{if(scope.current===origin){setIsEvaluating(false);abort.current=null;void w.refresh();}}
   };
@@ -98,11 +99,11 @@ export default function App() {
     setQuiz(selected); const saved = w.data.history.find(h => h.quiz.id === selected.id);
     if (saved?.lastResult) { setResult(saved.lastResult); setView('results'); } else { setResult(null); setView('runner'); }
   };
-  const retryQuiz = () => { void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
+  const retryQuiz = () => { if(isEvaluating)return; void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
   const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : `Akun · ${w.session?.user.email || 'pulihkan sesi'}`;
   const hasKey = availableKeys(w.keys, w.data.preferences).length > 0;
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
-    <TopBar activeView={view} isBusy={loading} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
+    <TopBar activeView={view} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
     <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>
     <main className="flex-1 w-full" aria-busy={loading || w.mode === 'initializing'}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span><button onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button></div></div>}
