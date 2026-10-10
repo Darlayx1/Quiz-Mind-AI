@@ -1,8 +1,10 @@
+import { qualityReviewFixture } from './quality-review-fixture.js';
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { assessmentScopeKey } from '../src/server/assessmentPolicy.js';
 import { searchParallel, parallelRelay, usableResearch } from '../src/server/parallelSearch.js';
 import { localRepository, localCredential, localImportPayload } from '../src/workspace/localRepository.js';
 import { availableKeys, emptyWorkspace, type GenerationJob } from '../src/workspace/types.js';
@@ -59,7 +61,7 @@ await test('Parallel search integration (no external calls)', async t => {
       assert.equal(success.status, 200); assert.equal(success.headers.get('cache-control'), 'no-store');
       assert.ok(!JSON.stringify(await success.json()).includes(secret));
       assert.equal((await relay('{')).status, 400);
-      assert.equal((await relay('x'.repeat(4097))).status, 413);
+      assert.equal((await relay('x'.repeat(131073))).status, 413);
       assert.equal((await relay(JSON.stringify({ topic: base.topic, secret: 'bad' }))).status, 400);
       assert.equal((await parallelRelay(new Request('https://app.example/api/parallel-search'))).status, 405);
     });
@@ -93,9 +95,12 @@ await test('Parallel search integration (no external calls)', async t => {
     let generatedRequests: any[] = [];
     const research = { provider: 'parallel' as const, topic: base.topic, searchedAt: new Date().toISOString(), queries: [base.topic], sources: [{ title: 'Primary', url: sourceUrl, snippet: 'A trustworthy concept.' }] };
     globalThis.fetch = async (input, init) => {
-      if (String(input).endsWith('/parallel-search')) { searches++; const topic = JSON.parse(String(init?.body)).topic; return Response.json({ research: { ...research, topic, queries: [topic] } }); }
-      const request = new Request(input, init); const body = await request.json(); generatedRequests.push(body); generations++;
+      if (String(input).endsWith('/parallel-search')) { searches++; const { topic, config } = JSON.parse(String(init?.body)); return Response.json({ research: { ...research, topic, queries: [topic], scopeKey: config ? assessmentScopeKey(config) : undefined } }); }
+      const request = new Request(input, init); const body = await request.json();
       const prompt = body.contents.map((c: any) => c.parts.map((p: any) => p.text || '').join('\n')).join('\n');
+      const audit = qualityReviewFixture(prompt);
+      if (audit) return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(audit) }] } }] });
+      generatedRequests.push(body); generations++;
       const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]);
       return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify({ title: 'Quiz', questions: Array.from({ length: count }, (_, i) => ({ ...fixtures.single_choice, question: `Konsep batch ${generations}, soal ${i}?`, sourceUrls: [invalidCitation ? 'https://invented.example' : sourceUrl] })) }) }] } }] });
     };

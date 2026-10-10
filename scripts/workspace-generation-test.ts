@@ -1,3 +1,4 @@
+import { qualityReviewFixture } from './quality-review-fixture.js';
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { DEFAULT_MODEL } from '../src/models.js';
@@ -42,7 +43,7 @@ assert.equal(nextQuizBatch({ ...base, questionType: 'true_false' }, []).question
 globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
-  requests.push(body);
+  if (failure) requests.push(body);
   if (failure === 'all-quota' || failure === 'search-quota' && body.tools?.length) return Response.json({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota limited' } }, { status: 429 });
   if (failure === 'network') throw new TypeError('Failed to fetch');
   if (failure === 'timeout' || failure === 'cancel') {
@@ -51,6 +52,9 @@ globalThis.fetch = async (input, init) => {
     throw controller.signal.reason;
   }
   const prompt = body.contents.map((c: any) => c.parts.map((p: any) => p.text ?? '').join('\n')).join('\n');
+  const audit = qualityReviewFixture(prompt);
+  if (audit) return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(audit) }] } }] });
+  if (!failure) requests.push(body);
   const type = /Tipe: ([a-z_]+)/.exec(prompt)?.[1] as QuestionType;
   const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]);
   const output = { title: 'Fixture', summary: 'Latihan', questions: Array.from({ length: failure === 'count' ? 0 : count }, (_, i) =>
@@ -170,6 +174,8 @@ const admin = {
 };
 runtime.__accountGenerationAdmin = admin;
 runtime.__accountGenerationCall = async (params: any) => {
+  const audit = qualityReviewFixture(params.contents);
+  if (audit) return { text: JSON.stringify(audit), candidates: [{ finishReason: 'STOP' }] };
   accountCalls++;
   if (accountSearchQuota && params.config.tools?.length) throw Object.assign(new Error('Quota limited'), { status: 429 });
   assert.equal(params.config.responseMimeType, 'application/json');

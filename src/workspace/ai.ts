@@ -4,6 +4,7 @@ import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
 import { usableResearch, type ParallelResearch } from '../server/parallelSearch.js';
+import { recordGenerationFailure, needsCurrentEvidence, stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
 
 export { availableKeys } from './types.js';
 export async function invokeAccount(body: Record<string, unknown>, signal?: AbortSignal, expectedOwner?: string) {
@@ -34,16 +35,16 @@ export async function testKey(repository: WorkspaceRepository, id: string, model
     await repository.recordKeyOutcome(id, 'available');
   } catch (e) { await repository.recordKeyOutcome(id, keyStatus(e)); throw e; }
 }
-export async function guestParallelSearch(topic: string, secret: string, signal?: AbortSignal): Promise<ParallelResearch> {
+export async function guestParallelSearch(topic: string, secret: string, signal?: AbortSignal, config?: QuizConfig): Promise<ParallelResearch> {
   const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(20000)]);
   const sameOrigin = import.meta.env?.VITE_PARALLEL_RELAY_MODE === 'same-origin';
   const endpoint = sameOrigin ? '/api/parallel-search' : `${SUPABASE_URL}/functions/v1/parallel-search`;
   const response = await fetch(endpoint, { method: 'POST', signal: bounded,
-    headers: { 'Content-Type': 'application/json', ...(!sameOrigin ? { apikey: PUBLISHABLE_KEY } : {}) }, body: JSON.stringify({ topic, secret }) });
+    headers: { 'Content-Type': 'application/json', ...(!sameOrigin ? { apikey: PUBLISHABLE_KEY } : {}) }, body: JSON.stringify({ topic, secret, config }) });
   let body;
   try { body = await response.json(); } catch { throw new Error('Relay Parallel belum tersedia pada deployment ini.'); }
   if (!response.ok) throw Object.assign(new Error(body.error || 'Pencarian Parallel gagal.'), { status: response.status, code: body.code });
-  if (!usableResearch(body.research, topic)) throw new Error('Respons pencarian Parallel tidak valid.');
+  if (!usableResearch(body.research, topic, config)) throw new Error('Respons pencarian Parallel tidak valid atau berbeda dari cakupan kuis.');
   return body.research;
 }
 export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Preferences, keys: ApiKeyRecord[], repository: WorkspaceRepository,
@@ -53,17 +54,24 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: structuredClone(preferences),
     questions: [], status: 'running', createdAt: new Date().toISOString() };
   job.status = 'running'; await checkpoint(job);
-  if (job.preferences.grounding && job.quiz?.groundingFallbackUsed) throw new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.');
+  if (job.preferences.grounding && job.quiz?.groundingFallbackUsed && !job.parallelFallback) throw new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.');
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
   if (job.preferences.grounding && job.preferences.searchProvider === 'parallel' && repository.scope === 'guest') {
     const searchKey = keys.find(k => k.provider === 'parallel' && k.enabled);
     if (!searchKey) throw new Error('Tambahkan atau aktifkan satu API key Parallel pada Pengaturan AI.');
-    if (!usableResearch(job.parallelResearch, job.config.topic)) {
+    if (!job.parallelFallback && !usableResearch(job.parallelResearch, job.config.topic, job.config)) {
       try {
-        job.parallelResearch = await guestParallelSearch(job.config.topic, await localCredential(searchKey.id), signal);
+        job.parallelResearch = await guestParallelSearch(job.config.topic, await localCredential(searchKey.id), signal, job.config);
         await repository.recordKeyOutcome(searchKey.id, 'available'); await checkpoint(job);
-      } catch (error) { if (!signal.aborted) await repository.recordKeyOutcome(searchKey.id, keyStatus(error)); throw error; }
+      } catch (error) {
+        if (signal.aborted) throw error;
+        const code = String((error as { code?: string }).code || '');
+        if (stableResearchFallbackCodes.includes(code) && !needsCurrentEvidence(job.config)) {
+          job.parallelFallback = code;
+          await repository.recordKeyOutcome(searchKey.id, 'available'); await checkpoint(job);
+        } else { await repository.recordKeyOutcome(searchKey.id, keyStatus(error)); throw error; }
+      }
     }
   }
   let keyIndex = 0;
@@ -77,16 +85,25 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       const batchConfig = nextQuizBatch(job.config, job.questions);
       let batch: Quiz | undefined; let last: unknown;
       const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
-      for (let attempt = 0; attempt < attempts; attempt++) {
+      const state = job.attemptState?.batchOffset === job.questions.length ? job.attemptState : { batchOffset: job.questions.length, calls: 0, repeated: 0 };
+      job.attemptState = state;
+      if (state.calls >= attempts || state.repeated >= 2) throw new Error('Batas percobaan batch tercapai. Periksa sumber, cakupan, dan difficulty sebelum membuat kuis baru.');
+      while (state.calls < attempts) {
         signal.throwIfAborted(); const key = eligible[keyIndex];
+        state.calls++; await checkpoint(job);
         try {
-          batch = await generateQuizBatch(batchConfig, await localCredential(key.id), job.questions.map(q => q.question), signal,
-            job.preferences.grounding && job.preferences.searchProvider === 'parallel' ? job.parallelResearch : undefined);
+          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: job.parallelFallback ? false : batchConfig.enableGrounding }, await localCredential(key.id), job.questions.map(q => q.question), signal,
+            job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined, state.correction);
+          if (job.parallelFallback) {
+            batch.groundingFallbackUsed = true;
+            batch.generationWarnings = ['Parallel tidak menyediakan materi yang relevan. Kuis ini dibuat tanpa referensi web dan tetap diperiksa kualitasnya.'];
+          }
           await repository.recordKeyOutcome(key.id, 'available'); break;
         } catch (error) {
           if (signal.aborted) throw error;
           const classified = classifyApiError(error, job.preferences.model);
-          last = classified; const status = keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
+          last = classified; const status = classified.code.startsWith('QUALITY_') ? 'available' : keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
+          try { recordGenerationFailure(state, classified); } finally { await checkpoint(job); }
           if (!isRetryableGenerationError(classified)) break;
           if ((classified.code || '').startsWith('PARALLEL_')) break;
           if (['invalid','quota'].includes(status)) { if (keyIndex + 1 >= eligible.length) break; keyIndex++; }
@@ -94,8 +111,11 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
         }
       }
       if (!batch) throw last || new Error('Batch belum berhasil.');
+      job.attemptState = undefined;
       job.questions.push(...batch.questions);
       job.quiz = { ...batch, ...job.config, id: job.id, questions: job.questions,
+        qualityReviews: [...(job.quiz?.qualityReviews || []), ...(batch.qualityReviews || [])],
+        generationMetrics: [...(job.quiz?.generationMetrics || []), ...(batch.generationMetrics || [])],
         groundingQueriesUsed: [...new Set([...(job.quiz?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
     }
     signal.throwIfAborted();

@@ -17,6 +17,7 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       insert into auth.users values('${owner}'),('${other}');`);
     await db.exec(await readFile('supabase/migrations/202610100001_workspace.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110001_parallel_search.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202610110002_generation_quality.sql', 'utf8'));
     const asUser = async uid => { await db.exec(`reset role; set role authenticated;`); await db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]); };
     const put = async (id, provider, secret = null, enabled = null) => (await db.query('select public.qm_upsert_provider_key($1,$2,$3,$4,$5,$6) as id', [id, provider + ' key', secret, enabled, 1, provider])).rows[0].id;
     await asUser(owner);
@@ -72,6 +73,16 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       const saved = (await db.query('select * from public.qm_ai_jobs where id=$1', [id])).rows[0];
       assert.equal(saved.status, 'running'); assert.equal(saved.lease_token, job.lease_token); assert.equal(saved.result.parallelResearch.provider, 'parallel');
       await assert.rejects(db.query('select public.qm_checkpoint_research($1,$2,$3,$4)', [other, id, job.lease_token, {}]), /Operasi berubah/);
+      const state = { attemptState: { batchOffset: 0, calls: 2, repeated: 1, correction: 'Gunakan konsep inti' } };
+      await db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, state]);
+      const checkpoint = (await db.query('select * from public.qm_ai_jobs where id=$1', [id])).rows[0];
+      assert.deepEqual(checkpoint.result.generationState, state);
+      assert.equal(checkpoint.lease_token, job.lease_token); assert.equal(checkpoint.status, 'running');
+      assert.equal(checkpoint.result.parallelResearch.provider, 'parallel');
+      await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [other, id, job.lease_token, state]), /Lease operasi/);
+      await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, { attemptState: { ...state.attemptState, calls: 4 } }]), /Batas percobaan/);
+      await asUser(owner);
+      await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, state]), /permission denied/);
     });
     await t.test('deletion cascades to the secret and makes a new Parallel slot available', async () => {
       await asUser(owner); await db.query('select public.qm_remove_key($1)', [parallel]);

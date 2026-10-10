@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { qualityReviewFixture } from './quality-review-fixture.js';
 import { generateQuizWithGemini, generateQuizBatch } from "../src/server/geminiService.js";
 import { AI_MODELS, DEFAULT_MODEL, DIFFICULTIES } from "../src/models.js";
 import { normalizeQuizConfig, quizTimerSeconds } from "../src/quizConfig.js";
@@ -25,6 +26,11 @@ globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
   lastPrompt = JSON.stringify(body.contents);
+  const audit = qualityReviewFixture(body.contents.map((c: any) => c.parts.map((p: any) => p.text || '').join('\n')).join('\n'));
+  if (audit) {
+    calls.push({ model: modelFromRequest(request.url), grounded: false });
+    return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(audit) }] } }] });
+  }
   if (modelFromRequest(request.url) === "gemma-4-31b-it") {
     assert.equal(body.systemInstruction, undefined);
     assert.equal(body.tools, undefined);
@@ -195,11 +201,11 @@ try {
     generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key"),
     /1 soal valid dari 5/,
   );
-  // The new workspace path performs exactly one call per batch; its outer adapter owns retries.
+  // One generation plus an independent audit; the outer adapter owns retries.
   calls.length = 0;
   const batch = await generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key");
   assert.equal(batch.questions.length, 1);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   calls.length = 0;
   failAlways = true;
   await assert.rejects(generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key"));

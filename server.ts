@@ -12,7 +12,7 @@ const app = express();
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', model: DEFAULT_MODEL,
   models: AI_MODELS.map(model => model.id), features: { localWorkspace: true, accountWorkspace: true } }));
 // AI and account writes use workspace adapters, never an anonymous shared server key.
-app.post('/api/parallel-search', express.text({ type: 'application/json', limit: '4kb' }), async (req, res) => {
+app.post('/api/parallel-search', express.text({ type: 'application/json', limit: '128kb' }), async (req, res) => {
   const controller = new AbortController();
   res.on('close', () => { if (!res.writableEnded) controller.abort(); });
   const response = await parallelRelay(new Request('http://localhost/api/parallel-search', { method: 'POST',

@@ -27,7 +27,12 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const [inputMode, setInputMode] = useState<"topic" | "material">(restore('inputMode', 'topic'));
   const [topic, setTopic] = useState(restore('topic', ''));
   const [studyMaterial, setStudyMaterial] = useState(restore('studyMaterial', ''));
-  const [difficulty, setDifficulty] = useState<DifficultyLevel>(restore('difficulty', 'moderate'));
+  const [targetAudience, setTargetAudience] = useState(restore('targetAudience', 'Masyarakat umum'));
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>(() => {
+    const saved = String(restore('difficulty', 'moderate'));
+    const id = ({ beginner: 'easy', advanced: 'hard', expert: 'master' } as Record<string, string>)[saved] || saved;
+    return DIFFICULTIES.find(level => level.id === id)?.id || 'moderate';
+  });
   const [countChoice, setCountChoice] = useState<number | "custom">(restore('countChoice', 10));
   const [customCount, setCustomCount] = useState(restore('customCount', '25'));
   const [displayMode, setDisplayMode] = useState<QuizDisplayMode>(restore('displayMode', 'non_sequential'));
@@ -42,10 +47,10 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const model = preferences.model;
   const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
   useEffect(() => {
-    const timer = setTimeout(() => draftCallback.current({ inputMode, topic, studyMaterial, difficulty, countChoice, customCount,
+    const timer = setTimeout(() => draftCallback.current({ inputMode, topic, studyMaterial, targetAudience, difficulty, countChoice, customCount,
       displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition }), 600);
     return () => clearTimeout(timer);
-  }, [inputMode, topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition]);
+  }, [inputMode, topic, studyMaterial, targetAudience, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition]);
   const [uploadError, setUploadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const selectedCount = countChoice === "custom" ? Number(customCount) : countChoice;
@@ -91,6 +96,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     if (!canGenerate) return;
     onGenerate({
       model, topic: topic.trim(),
+      targetAudience: targetAudience.trim() || 'Masyarakat umum',
       studyMaterial: inputMode === "material" ? studyMaterial.trim() : undefined,
       difficulty, questionCount, displayMode,
       questionType: composition.type, questionDistribution: composition.mode === 'mixed' ? composition.distribution : { [composition.type]: questionCount },
@@ -155,7 +161,11 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
                 <select id="quiz-difficulty" className="field-input" value={difficulty} onChange={e => setDifficulty(e.target.value as DifficultyLevel)} aria-describedby="difficulty-help">
                   {DIFFICULTIES.map((level, index) => <option key={level.id} value={level.id}>{index + 1}. {level.name}</option>)}
                 </select>
-                <p id="difficulty-help" className="field-help">{selectedDifficulty.description}</p>
+                <p id="difficulty-help" className="field-help">{selectedDifficulty.description} Target: {selectedDifficulty.successLabel} peserta sasaran mampu menjawab tanpa menebak. Ini estimasi desain, bukan jaminan statistik.</p>
+                <details className="field-help"><summary>Lihat sembilan tingkat kesulitan</summary><div className="overflow-x-auto"><table><caption>Target kemampuan menjawab berdasarkan penguasaan materi</caption><thead><tr><th>Tingkat</th><th>Target</th><th>Tuntutan soal</th></tr></thead><tbody>{DIFFICULTIES.map(level => <tr key={level.id}><td>{level.name}</td><td>{level.successLabel}</td><td>{level.description}</td></tr>)}</tbody></table></div><p>Jawaban benar akibat tebakan tidak termasuk target. Pilihan tunggal dengan lima opsi memiliki peluang tebakan 20%; benar/salah 50%. Untuk tingkat tertinggi, jawaban singkat atau esai lebih sesuai untuk mengukur penguasaan.</p></details>
+                <label htmlFor="quiz-audience" className="field-label">Peserta sasaran</label>
+                <input id="quiz-audience" className="field-input" maxLength={300} value={targetAudience} onChange={e => setTargetAudience(e.target.value)} placeholder="Contoh: mahasiswa kedokteran tahun pertama" aria-describedby="audience-help" />
+                <p id="audience-help" className="field-help">Kesulitan dinilai untuk kelompok ini. Kosong berarti masyarakat umum.</p>
               </div>
               <div>
                 <label htmlFor="quiz-count" className="field-label">Jumlah soal</label>

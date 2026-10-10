@@ -1,3 +1,4 @@
+import { qualityReviewFixture } from './quality-review-fixture.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { build } from 'esbuild';
@@ -12,6 +13,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
   const id = crypto.randomUUID(); const lease = crypto.randomUUID(); const owner = crypto.randomUUID();
   const sourceUrl = 'https://example.org/account-evidence';
   let searches = 0; let generations = 0; let failure = false; let searchStatus = 200; let enabled = true; let saved: any;
+  let rejectAudit = false; let emptySearch = false;
   const writes: any[] = []; const credentials: string[] = [];
   const config = { topic: 'Concept', model: DEFAULT_MODEL, questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: true };
   const preferences = { ...emptyWorkspace().preferences, searchProvider: 'parallel' };
@@ -27,21 +29,27 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       assert.equal(args.p_user, owner, 'Every service call pins authenticated ownership'); writes.push({ name, args });
       if (name === 'qm_service_credential') { credentials.push(args.p_key); return { data: args.p_key === 'parallel-id' ? 'fixture-parallel-account' : 'fixture-google-account' }; }
       if (name === 'qm_claim_job') return { data: { id, status: 'pending', lease_token: lease, result: saved } };
-      if (name === 'qm_checkpoint_research') saved = { questions: [], parallelResearch: args.p_research };
+      if (name === 'qm_checkpoint_research') saved = { ...(saved || {}), questions: [], parallelResearch: args.p_research };
+      if (name === 'qm_checkpoint_generation_state') saved = { ...(saved || {}), generationState: structuredClone(args.p_state) };
       if (name === 'qm_commit_job') saved = args.p_result;
       return { data: null };
     },
   };
   runtime.__parallelModelCall = async (params: any, key: string) => {
+    const audit = qualityReviewFixture(params.contents);
+    if (audit) {
+      if (rejectAudit) { audit.reviews[0].correct = false; audit.reviews[0].reason = 'Kunci tidak sesuai konsep.'; }
+      return { text: JSON.stringify(audit), candidates: [{ finishReason: 'STOP' }] };
+    }
     generations++; assert.equal(key, 'fixture-google-account'); assert.ok(!params.config.tools?.length);
-    assert.ok(params.contents.includes(sourceUrl));
-    assert.ok(writes.some(w => w.name === 'qm_checkpoint_research'), 'Evidence persisted before generation');
+    if (!emptySearch) assert.ok(params.contents.includes(sourceUrl));
+    assert.ok(writes.some(w => w.name === 'qm_checkpoint_generation_state'), 'Attempt budget persisted before generation');
     return { text: JSON.stringify({ title: 'Account quiz', questions: [{ ...fixtures.single_choice, sourceUrls: [sourceUrl] }] }), candidates: [{ finishReason: failure ? 'MAX_TOKENS' : 'STOP' }] };
   };
   runtime.Deno = { env: { get: () => 'https://fixture.invalid' }, serve: (fn: typeof handler) => { handler = fn; } };
   globalThis.fetch = async (input, init) => {
     assert.equal(input, 'https://api.parallel.ai/v1/search'); assert.equal(new Headers(init?.headers).get('x-api-key'), 'fixture-parallel-account'); searches++;
-    return Response.json({ results: [{ title: 'Primary', url: sourceUrl, excerpts: ['Concept evidence.'] }] }, { status: searchStatus });
+    return Response.json({ results: emptySearch ? [] : [{ title: 'Primary', url: sourceUrl, excerpts: ['Concept evidence.'] }] }, { status: searchStatus });
   };
   try {
     const compiled = await build({ entryPoints: ['supabase/functions/quiz-ai/index.ts'], bundle: true, write: false, format: 'esm', platform: 'node',
@@ -73,6 +81,24 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       const quiz = (await response.json()).quiz;
       assert.equal(quiz.searchProvider, 'parallel'); assert.equal(quiz.questions[0].groundingSources[0].url, sourceUrl);
       assert.equal(searches - beforeSearch, 1, 'Resume must not repeat a successful search');
+    });
+    await t.test('account quality circuit and resume preserve the attempt budget', async () => {
+      const previous = saved; saved = undefined; rejectAudit = true; const before = generations;
+      const response = await handler(request()); assert.equal(response.status, 502); assert.equal((await response.json()).code, 'GENERATION_CIRCUIT_OPEN');
+      assert.equal(generations - before, 2); assert.equal(saved.generationState.attemptState.calls, 2);
+      assert.equal((await handler(request())).status, 422); assert.equal(generations - before, 2);
+      rejectAudit = false; saved = previous;
+    });
+    await t.test('account empty-source fallback is disclosed and current facts still stop', async () => {
+      const previous = saved; saved = undefined; emptySearch = true;
+      const response = await handler(request()); assert.equal(response.status, 200);
+      const quiz = (await response.json()).quiz;
+      assert.equal(quiz.usedGrounding, false); assert.equal(quiz.groundingFallbackUsed, true); assert.ok(quiz.generationWarnings.length);
+      assert.equal(quiz.generationState.parallelFallback, 'PARALLEL_SEARCH_EMPTY');
+      saved = undefined; const before = generations;
+      const current = await handler(request({ config: { ...config, topic: 'Pedoman terapi terbaru' } }));
+      assert.equal(current.status, 502); assert.equal((await current.json()).code, 'PARALLEL_SEARCH_EMPTY'); assert.equal(generations, before);
+      emptySearch = false; saved = previous;
     });
     await t.test('manual Parallel key test searches without calling Gemini', async () => {
       const before = generations; const beforeSearch = searches;

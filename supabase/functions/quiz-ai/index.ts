@@ -4,6 +4,8 @@ import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerati
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
 import { searchParallel, usableResearch } from '../../../src/server/parallelSearch.ts';
+import { recordGenerationFailure, needsCurrentEvidence, stableResearchFallbackCodes } from '../../../src/server/assessmentPolicy.ts';
+import { normalizeQuizConfig } from '../../../src/quizConfig.ts';
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Content-Type': 'application/json' };
@@ -32,7 +34,7 @@ function watchGenerationCancellation(job, userId, requestSignal) {
     } catch { /* A transient database read failure must not override the active request. */ }
     finally { checking = false; }
   }, 2000);
-  return { signal: controller.signal, stop() { clearInterval(timer); requestSignal.removeEventListener('abort', abort); } };
+  return { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(165000)]), stop() { clearInterval(timer); requestSignal.removeEventListener('abort', abort); } };
 }
 Deno.serve(async request => {
   if (request.method === 'OPTIONS') return new Response(null, { headers });
@@ -79,48 +81,77 @@ Deno.serve(async request => {
     const { data: claimed, error: claimError } = await admin.rpc('qm_claim_job', { p_user: userId, p_id: body.operationId, p_config: body.config, p_preferences: preferences });
     if (claimError) return json({ error: claimError.code === '55P03' ? 'Batch masih diproses. Tunggu sebelum melanjutkan.' : claimError.message }, claimError.code === '55P03' ? 409 : 400);
     job = claimed;
-    if (preferences.grounding && job.result?.groundingFallbackUsed) throw Object.assign(new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.'), { status: 409, code: 'WEB_RESTART_REQUIRED' });
+    if (preferences.grounding && job.result?.groundingFallbackUsed && !job.result?.generationState?.parallelFallback) throw Object.assign(new Error('Kuis sebelumnya dibuat tanpa web. Buat kuis baru agar seluruh soal memakai pencarian web.'), { status: 409, code: 'WEB_RESTART_REQUIRED' });
     if (job.status === 'completed') return json({ quiz: job.result, complete: true });
     const generationKeys = keys.filter(k => k.provider !== 'parallel');
     const selected = preferences.keyId ? generationKeys.find(k => k.id === preferences.keyId) : null;
     const candidates = preferences.keyId ? selected ? [selected, ...(preferences.fallback ? generationKeys.filter(k => k.id !== selected.id) : [])] : [] : generationKeys;
     if (!candidates.length) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
     const previous = job.result?.questions || [];
-    const batchConfig = nextQuizBatch({ ...body.config, model: preferences.model }, previous);
+    const fullConfig = normalizeQuizConfig({ ...body.config, model: preferences.model, enableGrounding: preferences.grounding });
+    const batchConfig = nextQuizBatch(fullConfig, previous);
     const cancellation = watchGenerationCancellation(job, userId, request.signal);
     try {
       let research;
+      const generationState = job.result?.generationState || {};
+      const persistGenerationState = async () => {
+        cancellation.signal.throwIfAborted();
+        job.result = { ...(job.result || {}), questions: previous, generationState };
+        const { error } = await admin.rpc('qm_checkpoint_generation_state', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_state: generationState });
+        if (error) throw Object.assign(new Error('Checkpoint percobaan gagal atau operasi dibatalkan.'), { status: 409, code: 'GENERATION_CHECKPOINT_FAILED' });
+      };
       if (preferences.grounding && preferences.searchProvider === 'parallel') {
         const searchKey = keys.find(k => k.provider === 'parallel');
         if (!searchKey) throw Object.assign(new Error('Tambahkan atau aktifkan satu API key Parallel pada akun ini.'), { status: 400, code: 'PARALLEL_KEY_MISSING' });
         research = job.result?.parallelResearch;
-        if (!usableResearch(research, batchConfig.topic)) {
-          try { research = await searchParallel(batchConfig.topic, await getSecret(searchKey), cancellation.signal); await outcome(searchKey.id, userId, 'available'); }
-          catch (error) { if (!cancellation.signal.aborted) await outcome(searchKey.id, userId, statusOf(error)); throw error; }
+        if (!generationState.parallelFallback && !usableResearch(research, batchConfig.topic, fullConfig)) {
+          try { research = await searchParallel(batchConfig.topic, await getSecret(searchKey), cancellation.signal, fullConfig); await outcome(searchKey.id, userId, 'available'); }
+          catch (error) {
+            cancellation.signal.throwIfAborted();
+            if (stableResearchFallbackCodes.includes(error.code) && !needsCurrentEvidence(fullConfig)) {
+              generationState.parallelFallback = error.code; research = undefined;
+              await outcome(searchKey.id, userId, 'available'); await persistGenerationState();
+            } else { await outcome(searchKey.id, userId, statusOf(error)); throw error; }
+          }
           // Persist evidence before generation so a failed batch can resume without another search.
-          job.result = { ...(job.result || {}), questions: previous, parallelResearch: research };
-          const { error: researchError } = await admin.rpc('qm_checkpoint_research', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_research: research });
-          if (researchError) throw Object.assign(new Error('Checkpoint pencarian belum tersimpan atau operasi dibatalkan.'), { status: 409, code: 'PARALLEL_CHECKPOINT_FAILED' });
+          if (research) {
+            job.result = { ...(job.result || {}), questions: previous, parallelResearch: research };
+            const { error: researchError } = await admin.rpc('qm_checkpoint_research', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_research: research });
+            if (researchError) throw Object.assign(new Error('Checkpoint pencarian belum tersimpan atau operasi dibatalkan.'), { status: 409, code: 'PARALLEL_CHECKPOINT_FAILED' });
+          }
         }
       }
       let batch; let last; let keyIndex = 0;
-      for (let attempt = 0; attempt < preferences.maxAttempts; attempt++) {
+      const state = generationState.attemptState?.batchOffset === previous.length ? generationState.attemptState : { batchOffset: previous.length, calls: 0, repeated: 0 };
+      generationState.attemptState = state;
+      if (state.calls >= preferences.maxAttempts || state.repeated >= 2) throw Object.assign(new Error('Batas percobaan batch tercapai. Periksa sumber, cakupan, dan difficulty sebelum membuat kuis baru.'), { status: 422, code: 'GENERATION_CIRCUIT_OPEN' });
+      while (state.calls < preferences.maxAttempts) {
         cancellation.signal.throwIfAborted();
         const key = candidates[keyIndex];
+        state.calls++; await persistGenerationState();
         try {
-          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal, research);
+          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: generationState.parallelFallback ? false : preferences.grounding }, await getSecret(key), previous.map(q => q.question), cancellation.signal, generationState.parallelFallback ? undefined : research, state.correction);
+          if (generationState.parallelFallback) {
+            batch.groundingFallbackUsed = true;
+            batch.generationWarnings = ['Parallel tidak menyediakan materi yang relevan. Kuis ini dibuat tanpa referensi web dan tetap diperiksa kualitasnya.'];
+          }
           cancellation.signal.throwIfAborted();
           await outcome(key.id, userId, 'available'); break;
         } catch (error) {
           cancellation.signal.throwIfAborted();
-          last = classifyApiError(error, preferences.model); const status = statusOf(last); await outcome(key.id, userId, status);
+          last = classifyApiError(error, preferences.model); const status = String(last.code).startsWith('QUALITY_') ? 'available' : statusOf(last); await outcome(key.id, userId, status);
+          try { recordGenerationFailure(state, last); } finally { await persistGenerationState(); }
           if (!isRetryableGenerationError(last) || String(last.code || '').startsWith('PARALLEL_')) break;
           if (status === 'invalid' || status === 'quota') { if (keyIndex + 1 >= candidates.length) break; keyIndex++; }
         }
       }
       if (!batch) throw last || new Error('Batch gagal.');
+      delete generationState.attemptState;
       cancellation.signal.throwIfAborted();
       const quiz = { ...batch, ...body.config, id: job.id, questions: [...previous, ...batch.questions],
+        generationState,
+        qualityReviews: [...(job.result?.qualityReviews || []), ...(batch.qualityReviews || [])],
+        generationMetrics: [...(job.result?.generationMetrics || []), ...(batch.generationMetrics || [])],
         groundingQueriesUsed: [...new Set([...(job.result?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
       const complete = quiz.questions.length === body.config.questionCount;
       const { error: commitError } = await admin.rpc('qm_commit_job', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_result: quiz, p_status: complete ? 'completed' : 'pending' });

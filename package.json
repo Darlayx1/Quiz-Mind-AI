@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:quality": "node --import tsx scripts/quiz-quality-test.ts",
+    "benchmark:quality": "node --import tsx scripts/quality-benchmark.ts",
     "test:parallel": "node scripts/test-parallel.mjs",
     "build:edge": "node scripts/build-edge.mjs",
     "dev": "tsx server.ts",

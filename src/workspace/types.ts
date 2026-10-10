@@ -25,6 +25,8 @@ export interface Activity {
   durationMs: number; keyId?: string; detail?: string;
 }
 export interface GenerationJob {
+  attemptState?: import('../server/assessmentPolicy.js').GenerationAttemptState;
+  parallelFallback?: string;
   parallelResearch?: ParallelResearch;
   id: string; config: QuizConfig; preferences: Preferences; questions: Question[];
   quiz?: Quiz; status: 'running' | 'interrupted' | 'completed' | 'cancelled'; createdAt: string;

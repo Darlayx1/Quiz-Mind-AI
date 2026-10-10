@@ -63,56 +63,74 @@ export const modelName = (id?: string) => {
 export const DIFFICULTIES = [
   {
     id: "primitive",
-    name: "Primitif",
+    name: "Elementer",
+    successRange: [99, 100],
+    successLabel: "99–100%",
     description:
       "Mengenali fakta paling dasar, dengan pertanyaan langsung dan opsi sederhana.",
   },
   {
     id: "very_easy",
     name: "Sangat mudah",
+    successRange: [95, 99],
+    successLabel: "95–<99%",
     description:
       "Mengingat istilah dan konsep dasar dengan konteks yang familiar.",
   },
   {
     id: "easy",
     name: "Mudah",
+    successRange: [85, 95],
+    successLabel: "85–<95%",
     description: "Memahami konsep dasar dan hubungan sederhana antaride.",
   },
   {
     id: "moderate",
-    name: "Sedang",
-    description: "Menerapkan satu konsep pada contoh atau situasi sehari-hari.",
+    name: "Menengah",
+    successRange: [70, 85],
+    successLabel: "70–<85%",
+    description: "Menghubungkan dua konsep atau menerapkannya pada situasi yang familiar.",
   },
   {
     id: "intermediate",
-    name: "Menengah",
+    name: "Menantang",
+    successRange: [50, 70],
+    successLabel: "50–<70%",
     description:
       "Menghubungkan beberapa konsep dan melakukan analisis terapan.",
   },
   {
     id: "hard",
     name: "Sulit",
+    successRange: [30, 50],
+    successLabel: "30–<50%",
     description: "Menganalisis studi kasus dan menyelesaikan masalah bertahap.",
   },
   {
     id: "very_hard",
     name: "Sangat sulit",
+    successRange: [15, 30],
+    successLabel: "15–<30%",
     description: "Mengevaluasi masalah kompleks dengan beberapa sudut pandang.",
   },
   {
     id: "master",
-    name: "Master",
+    name: "Pakar",
+    successRange: [5, 15],
+    successLabel: "5–<15%",
     description:
       "Mensintesis konsep tingkat pakar dengan penalaran abstrak mendalam.",
   },
   {
     id: "grand_master",
-    name: "Grand master",
+    name: "Ekstrem",
+    successRange: [0, 5],
+    successLabel: ">0–<5%",
     description:
       "Memecahkan persoalan orisinal tingkat kompetisi dengan sintesis lintas konsep.",
   },
 ] as const;
 export const difficultyName = (id: string) =>
   DIFFICULTIES.find((level) => level.id === id)?.name ??
-  { beginner: "Pemula", advanced: "Mahir", expert: "Olimpiade" }[id] ??
+  { beginner: "Mudah", advanced: "Sulit", expert: "Pakar" }[id] ??
   id;
