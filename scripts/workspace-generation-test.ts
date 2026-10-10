@@ -128,7 +128,7 @@ try {
     const before = requests.length;
     const quiz = await generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
     assert.equal(quiz.questions.length, 1); assert.ok(quiz.generationWarnings!.length);
-    assert.equal(requests.length - before, 2, 'One generation and one advisory audit, without regenerating');
+    assert.equal(requests.length - before, 1, 'One generation, without regenerating');
   }
   failure = undefined;
   const groundedQuiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal);
@@ -166,10 +166,11 @@ const admin = {
     return query;
   },
   rpc: async (name: string, params: any) => {
-    if (name === 'qm_claim_job') return { data: { id: operationId, status: 'pending', lease_token: 'fixture-lease' }, error: null };
+    if (name === 'qm_claim_job') return { data: { id: params.p_id || operationId, status: 'pending', lease_token: 'fixture-lease' }, error: null };
     if (name === 'qm_service_credential') return { data: key, error: null };
     if (name === 'qm_record_outcome') outcomes.push(params.p_status);
     if (name === 'qm_commit_job') commits.push(params);
+    if (name === 'qm_reserve_dispatch') return { data: true, error: null };
     return { data: null, error: null };
   },
 };
@@ -199,7 +200,7 @@ try {
   await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
   const request = (prefs = preferences) => new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST',
     headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'generate', operationId, config: essayOnly, preferences: prefs }) });
+    body: JSON.stringify({ action: 'generate', operationId: crypto.randomUUID(), config: essayOnly, preferences: prefs }) });
   let response = await handler!(request());
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.deepEqual((await response.json()).quiz.questions.map((q: any) => q.type), ['essay', 'essay']);
@@ -211,7 +212,7 @@ try {
   assert.match((await response.json()).error, /terpotong/);
   assert.equal(accountCalls, 2, 'Account must not retry identical truncated output');
   assert.equal(outcomes.at(-1), 'unavailable');
-  assert.equal(commits.at(-1).p_status, 'pending');
+  assert.equal(commits.at(-1).p_status, 'failed_after_dispatch');
   accountFailure = false; accountSearchQuota = true;
   response = await handler!(request({ ...preferences, grounding: true }));
   assert.equal(response.status, 429);

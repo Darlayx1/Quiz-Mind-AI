@@ -114,8 +114,8 @@ await test('Quality generation and recovery (simulated providers; no external re
         for (const mode of ['none', 'google', 'parallel']) {
           const quiz = await generateQuizBatch({ ...config, enableGrounding: mode !== 'none' }, 'fixture-quality-key', [], undefined, mode === 'parallel' ? research : undefined);
           assert.equal(quiz.difficulty, level.id); assert.equal(quiz.targetAudience, base.targetAudience);
-          assert.equal(quiz.qualityReviews!.length, 1); assert.equal(quiz.qualityReviews![0].items.length, 1);
-          assert.equal(quiz.qualityReviews![0].estimateOnly, true); assert.equal(quiz.generationMetrics![0].modelCalls, 2);
+          assert.deepEqual(quiz.qualityReviews, []);
+          assert.equal(quiz.generationMetrics![0].modelCalls, 1);
           assert.equal(quiz.usedGrounding, mode !== 'none');
         }
       }
@@ -127,33 +127,33 @@ await test('Quality generation and recovery (simulated providers; no external re
     const preferences = { ...emptyWorkspace().preferences, searchProvider: 'parallel' as const };
     let checkpoint: GenerationJob;
     const save = async (job: GenerationJob) => { checkpoint = structuredClone(job); };
-    await t.test('negative, invalid and unavailable audits retain usable quizzes without generation retries', async () => {
-      for (const scenario of ['reject-once', 'reject-always', 'reject-distinct', 'invalid-review', 'audit-network', 'audit-timeout', 'audit-json']) {
-        reset(); mode = scenario;
-        const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal);
-        assert.equal(generations, 1); assert.equal(audits, 1); assert.equal(searches, 1);
-        assert.equal(quiz.questions.length, 1); assert.equal(checkpoint!.attemptState, undefined);
-        assert.ok(quiz.generationWarnings!.length);
-      }
+    await t.test('single call generates usable quizzes without audit second calls', async () => {
+      reset();
+      const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal);
+      assert.equal(generations, 1); assert.equal(audits, 0); assert.equal(searches, 1);
+      assert.equal(quiz.questions.length, 1); assert.equal(checkpoint!.attemptState, undefined);
     });
-    await t.test('partial batches save accepted questions and request only the missing count', async () => {
-      reset(); mode = 'partial'; const snapshots: number[] = [];
-      const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository,
-        async job => { snapshots.push(job.questions.length); await save(job); }, new AbortController().signal);
-      assert.equal(quiz.questions.length, 6); assert.equal(new Set(quiz.questions.map(q => q.question)).size, 6);
-      assert.ok(snapshots.includes(3)); assert.equal(generations, 2); assert.equal(searches, 1);
-      assert.ok(generationPrompts[1].includes('Jumlah Soal: 3'));
+    await t.test('partial output rejects with INCOMPLETE_QUESTION_COUNT without repair calls', async () => {
+      reset(); mode = 'partial';
+      await assert.rejects(
+        generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository, save, new AbortController().signal),
+        (e: any) => e.code === 'INCOMPLETE_QUESTION_COUNT'
+      );
+      assert.equal(generations, 1);
+      assert.equal(searches, 1);
     });
-    await t.test('malformed items do not discard valid items in the same batch', async () => {
-      reset(); mode = 'invalid-items'; const snapshots: number[] = [];
-      const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository,
-        async job => { snapshots.push(job.questions.length); await save(job); }, new AbortController().signal);
-      assert.equal(quiz.questions.length, 6); assert.ok(snapshots.includes(3)); assert.equal(generations, 2);
+    await t.test('malformed items reject without repairing calls', async () => {
+      reset(); mode = 'invalid-items';
+      await assert.rejects(
+        generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository, save, new AbortController().signal),
+        (e: any) => e.code === 'INVALID_QUESTION'
+      );
+      assert.equal(generations, 1);
     });
-    await t.test('user cancellation during the advisory audit still stops generation', async () => {
-      reset(); mode = 'audit-cancel'; auditAbort = new AbortController();
-      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, auditAbort.signal), (e: any) => e.name === 'AbortError');
-      assert.equal(generations, 1); assert.equal(audits, 1); auditAbort = undefined;
+    await t.test('user cancellation stops generation', async () => {
+      reset(); const abortCtrl = new AbortController();
+      abortCtrl.abort();
+      await assert.rejects(generateWorkspaceQuiz(base, preferences, keys, localRepository, save, abortCtrl.signal), (e: any) => e.name === 'AbortError' || /dibatalkan/i.test(e.message));
     });
     await t.test('unusable supplied research does not prevent generation', async () => {
       reset(); const quiz = await generateQuizBatch({ ...base, enableGrounding: true }, 'fixture-quality-key', [], undefined,
@@ -166,12 +166,12 @@ await test('Quality generation and recovery (simulated providers; no external re
       const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal, resumed);
       assert.equal(quiz.questions.length, 1); assert.equal(generations, 1);
     });
-    await t.test('empty and irrelevant search fall back for stable material; warning and checkpoints survive batches', async () => {
+    await t.test('empty and irrelevant search fall back for stable material; warning and checkpoints survive', async () => {
       for (const scenario of ['empty-search', 'catalogue-search'] as const) {
         reset(); mode = scenario;
         const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository, save, new AbortController().signal);
-        assert.equal(searches, 1); assert.equal(generations, 2); assert.equal(quiz.usedGrounding, false);
-        assert.equal(quiz.groundingFallbackUsed, true); assert.equal(quiz.qualityReviews!.length, 2);
+        assert.equal(searches, 1); assert.equal(generations, 1); assert.equal(quiz.usedGrounding, false);
+        assert.equal(quiz.groundingFallbackUsed, true); assert.deepEqual(quiz.qualityReviews, []);
         assert.ok(quiz.generationWarnings![0].includes('tanpa referensi web')); assert.ok(checkpoint!.parallelFallback);
       }
     });

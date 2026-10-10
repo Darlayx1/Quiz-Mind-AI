@@ -34,7 +34,7 @@ globalThis.fetch = async (input, init) => {
   if (modelFromRequest(request.url) === "gemma-4-31b-it") {
     assert.equal(body.systemInstruction, undefined);
     assert.equal(body.tools, undefined);
-    assert.equal(body.generationConfig?.thinkingConfig, undefined);
+    assert.equal(body.generationConfig?.thinkingConfig?.thinkingLevel, "HIGH");
     assert.ok(lastPrompt.includes("Academic Assessment Engine"));
   }
   const model = decodeURIComponent(
@@ -106,16 +106,15 @@ try {
 
   calls.length = 0;
   failFirst = true;
-  const fallback = await generateQuizWithGemini(
-    { ...config, model: "gemini-3.5-flash-lite" },
-    "test-key",
+  await assert.rejects(
+    generateQuizWithGemini(
+      { ...config, model: "gemini-3.5-flash-lite" },
+      "test-key",
+    ),
+    /503|UNAVAILABLE|lonjakan permintaan/i,
   );
-  assert.deepEqual(
-    calls.map((c) => c.model),
-    ["gemini-3.5-flash-lite", DEFAULT_MODEL],
-  );
-  assert.equal(fallback.requestedModel, "gemini-3.5-flash-lite");
-  assert.equal(fallback.model, DEFAULT_MODEL);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model, "gemini-3.5-flash-lite");
   failFirst = false;
 
   calls.length = 0;
@@ -197,13 +196,15 @@ try {
   );
 
   responseCount = 1;
-  const partialQuiz = await generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key");
-  assert.equal(partialQuiz.questions.length, 1, 'Keep usable questions from a partial response');
-  // One generation plus an independent audit; the outer adapter owns retries.
+  await assert.rejects(
+    generateQuizWithGemini({ ...config, questionCount: 5 }, "test-key"),
+    (e: any) => e.code === "INCOMPLETE_QUESTION_COUNT",
+  );
+  // One generation attempt with single call; no secondary audit call.
   calls.length = 0;
   const batch = await generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key");
   assert.equal(batch.questions.length, 1);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   calls.length = 0;
   failAlways = true;
   await assert.rejects(generateQuizBatch({ ...config, model: DEFAULT_MODEL }, "test-key"));
@@ -211,9 +212,11 @@ try {
   assert.equal(calls[0].model, DEFAULT_MODEL);
   failAlways = false;
   calls.length = 0;
-  const partialBatch = await generateQuizBatch({ ...config, questionCount: 5 }, "test-key");
-  assert.equal(partialBatch.questions.length, 1);
-  assert.equal(calls.length, 2, 'One generation and one advisory audit');
+  await assert.rejects(
+    generateQuizBatch({ ...config, questionCount: 5 }, "test-key"),
+    (e: any) => e.code === "INCOMPLETE_QUESTION_COUNT",
+  );
+  assert.equal(calls.length, 1, "Incomplete count rejects without secondary call");
   console.log(
     "PASS: enam model, sembilan level, grounding, fallback, prompt personal, custom 25 soal, timer per mode, tanpa batas, konfigurasi lama, validasi jumlah hasil. Tidak ada panggilan API eksternal.",
   );

@@ -10,7 +10,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
   const runtime = globalThis as any;
   const originalDeno = runtime.Deno; const originalFetch = globalThis.fetch;
   let handler: (request: Request) => Promise<Response>;
-  const id = crypto.randomUUID(); const lease = crypto.randomUUID(); const owner = crypto.randomUUID();
+  const lease = crypto.randomUUID(); const owner = crypto.randomUUID();
   const sourceUrl = 'https://example.org/account-evidence';
   let searches = 0; let generations = 0; let failure = false; let searchStatus = 200; let enabled = true; let saved: any;
   let rejectAudit = false; let emptySearch = false; let partial = false;
@@ -28,10 +28,11 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
     rpc: async (name: string, args: any) => {
       assert.equal(args.p_user, owner, 'Every service call pins authenticated ownership'); writes.push({ name, args });
       if (name === 'qm_service_credential') { credentials.push(args.p_key); return { data: args.p_key === 'parallel-id' ? 'fixture-parallel-account' : 'fixture-google-account' }; }
-      if (name === 'qm_claim_job') return { data: { id, status: 'pending', lease_token: lease, result: saved } };
+      if (name === 'qm_claim_job') return { data: { id: args.p_id, status: 'pending', lease_token: lease, result: saved } };
       if (name === 'qm_checkpoint_research') saved = { ...(saved || {}), questions: [], parallelResearch: args.p_research };
       if (name === 'qm_checkpoint_generation_state') saved = { ...(saved || {}), generationState: structuredClone(args.p_state) };
       if (name === 'qm_commit_job') saved = args.p_result;
+      if (name === 'qm_reserve_dispatch') return { data: true };
       return { data: null };
     },
   };
@@ -43,7 +44,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
     }
     generations++; assert.equal(key, 'fixture-google-account'); assert.ok(!params.config.tools?.length);
     if (!emptySearch) assert.ok(params.contents.includes(sourceUrl));
-    assert.ok(writes.some(w => w.name === 'qm_checkpoint_generation_state'), 'Attempt budget persisted before generation');
+    assert.ok(writes.some(w => w.name === 'qm_reserve_dispatch'), 'Dispatch reservation persisted before generation');
     const count = Number(/Jumlah Soal: (\d+)/.exec(params.contents)?.[1]);
     return { text: JSON.stringify({ title: 'Account quiz', questions: Array.from({ length: partial ? 1 : count }, (_, i) => ({ ...fixtures.single_choice, question: 'Question ' + generations + '-' + i, sourceUrls: [sourceUrl] })) }), candidates: [{ finishReason: failure ? 'MAX_TOKENS' : 'STOP' }] };
   };
@@ -64,7 +65,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
     await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
     const request = (body: any = {}, token = 'fixture-token') => new Request('https://fixture.invalid/quiz-ai', { method: 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'generate', operationId: id, config, preferences, ...body }) });
+      body: JSON.stringify({ action: 'generate', operationId: crypto.randomUUID(), config, preferences, ...body }) });
     await t.test('authentication is required before any credential access', async () => {
       assert.equal((await handler(request({}, 'invalid-token'))).status, 401); assert.equal(credentials.length, 0);
       assert.equal((await handler(new Request('https://fixture.invalid/quiz-ai', { method: 'POST' }))).status, 401);
@@ -74,7 +75,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       const response = await handler(request()); assert.equal(response.status, 402); assert.equal(generations, 0);
       assert.equal(writes.filter(w => w.name === 'qm_record_outcome').at(-1).args.p_key, 'parallel-id'); searchStatus = 200;
     });
-    await t.test('failed model batch retains research for a subsequent resume', async () => {
+    await t.test('failed model batch retains research for a subsequent new operation', async () => {
       failure = true; const beforeSearch = searches;
       assert.equal((await handler(request())).status, 502); assert.equal(searches - beforeSearch, 1); assert.ok(saved.parallelResearch);
       failure = false;
@@ -83,26 +84,23 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       assert.equal(quiz.searchProvider, 'parallel'); assert.equal(quiz.questions[0].groundingSources[0].url, sourceUrl);
       assert.equal(searches - beforeSearch, 1, 'Resume must not repeat a successful search');
     });
-    await t.test('account negative audit returns the quiz without retrying', async () => {
-      const previous = saved; saved = undefined; rejectAudit = true; const before = generations;
+    await t.test('account single call returns the quiz without retrying', async () => {
+      const previous = saved; saved = undefined; const before = generations;
       const response = await handler(request()); assert.equal(response.status, 200);
       const quiz = (await response.json()).quiz;
-      assert.equal(quiz.questions.length, 1); assert.ok(quiz.generationWarnings.length);
-      assert.equal(generations - before, 1); assert.equal(saved.generationState.attemptState, undefined);
-      rejectAudit = false; saved = previous;
+      assert.equal(quiz.questions.length, 1);
+      assert.equal(generations - before, 1);
+      saved = previous;
     });
-    await t.test('account partial batch commits usable items and fills the remaining count on resume', async () => {
-      const previous = saved; saved = undefined; partial = true;
+    await t.test('account generates all requested questions in a single call', async () => {
+      const previous = saved; saved = undefined;
       const body = { config: { ...config, questionCount: 3 } };
       const first = await handler(request(body)); assert.equal(first.status, 200);
-      const initial = await first.json(); assert.equal(initial.quiz.questions.length, 1); assert.equal(initial.complete, false);
-      partial = false;
-      const second = await handler(request(body)); assert.equal(second.status, 200);
-      const resumed = await second.json(); assert.equal(resumed.quiz.questions.length, 3); assert.equal(resumed.complete, true);
-      assert.equal(resumed.quiz.questions[0].id, initial.quiz.questions[0].id); saved = previous;
+      const initial = await first.json(); assert.equal(initial.quiz.questions.length, 3); assert.equal(initial.complete, true);
+      saved = previous;
     });
-    await t.test('account resume recovers obsolete quality circuits', async () => {
-      const previous = saved; saved = { questions: [], generationState: { attemptState: { batchOffset: 0, calls: 3, repeated: 2, lastCode: 'QUALITY_REJECTED' } } };
+    await t.test('account resume recovers saved research without repeating search', async () => {
+      const previous = saved; saved = { questions: [] };
       const response = await handler(request()); assert.equal(response.status, 200); assert.equal((await response.json()).quiz.questions.length, 1); saved = previous;
     });
     await t.test('account empty-source fallback is disclosed for all topics', async () => {
@@ -110,7 +108,6 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       const response = await handler(request()); assert.equal(response.status, 200);
       const quiz = (await response.json()).quiz;
       assert.equal(quiz.usedGrounding, false); assert.equal(quiz.groundingFallbackUsed, true); assert.ok(quiz.generationWarnings.length);
-      assert.equal(quiz.generationState.parallelFallback, 'PARALLEL_SEARCH_EMPTY');
       saved = undefined; const before = generations;
       const current = await handler(request({ config: { ...config, topic: 'Pedoman terapi terbaru' } }));
       assert.equal(current.status, 200); const currentQuiz = (await current.json()).quiz; assert.equal(currentQuiz.usedGrounding, false); assert.ok(currentQuiz.generationWarnings.some((w: string) => w.includes('belum diverifikasi'))); assert.equal(generations, before + 1);

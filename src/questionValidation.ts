@@ -18,6 +18,14 @@ export function questionSchema(type:QuestionType){
  return object({...common,...specific[type]});
 }
 export function quizSchemaFor(type:QuestionType='single_choice'){return object({title:str,topic:str,summary:str,questions:{type:'array',items:questionSchema(type)}});}
+export function combinedQuizSchema(types: QuestionType[]){
+  const uniqueTypes=[...new Set(types.filter(t=>QUESTION_TYPES.includes(t)))];
+  if(uniqueTypes.length<=1)return quizSchemaFor(uniqueTypes[0]??'single_choice');
+  return object({title:str,topic:str,summary:str,questions:{type:'array',items:{anyOf:uniqueTypes.map(t=>{
+    const qs=questionSchema(t);
+    return {...qs,properties:{type:{type:'string',enum:[t]},...qs.properties},required:['type',...qs.required]};
+  })}}});
+}
 export const typeInstructions:Record<QuestionType,string>={
  single_choice:'Exactly 5 unique options A–E; one correctAnswerIndex integer 0–4.',
  multiple_select:'Exactly 5 unique options A–E; correctAnswerIndices contains 2–4 unique indices 0–4. Each correct option is independently true.',

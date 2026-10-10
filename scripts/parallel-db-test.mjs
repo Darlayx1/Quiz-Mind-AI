@@ -16,8 +16,10 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       grant usage on schema auth,extensions to authenticated,service_role;
       insert into auth.users values('${owner}'),('${other}');`);
     await db.exec(await readFile('supabase/migrations/202610100001_workspace.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202610100003_remove_generation_deadline.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110001_parallel_search.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110002_generation_quality.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202610110003_single_call_high_policy.sql', 'utf8'));
     const asUser = async uid => { await db.exec(`reset role; set role authenticated;`); await db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]); };
     const put = async (id, provider, secret = null, enabled = null) => (await db.query('select public.qm_upsert_provider_key($1,$2,$3,$4,$5,$6) as id', [id, provider + ' key', secret, enabled, 1, provider])).rows[0].id;
     await asUser(owner);
@@ -83,6 +85,65 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, { attemptState: { ...state.attemptState, calls: 4 } }]), /Batas percobaan/);
       await asUser(owner);
       await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, state]), /permission denied/);
+    });
+    await t.test('single-call-high-v1: atomic dispatch reservation, permanent single-call, hardened commit and owner polling', async () => {
+      await db.exec('reset role; set role service_role');
+      const singleId = '00000000-0000-4000-8000-000000000010';
+      const config = { topic: 'Matematika', questionCount: 5 };
+      const prefs = { model: 'gemini-3.8-flash' };
+      const job = (await db.query('select public.qm_claim_job($1,$2,$3,$4) as job', [owner, singleId, config, prefs])).rows[0].job;
+      assert.equal(job.policy_version, 'single-call-high-v1');
+      assert.equal(job.model_call_count, 0);
+      assert.equal(job.dispatch_reserved_at, null);
+
+      // First reservation succeeds
+      const firstReserved = (await db.query('select public.qm_reserve_dispatch($1,$2,$3) as ok', [owner, singleId, job.lease_token])).rows[0].ok;
+      assert.equal(firstReserved, true);
+
+      // Second reservation fails
+      const secondReserved = (await db.query('select public.qm_reserve_dispatch($1,$2,$3) as ok', [owner, singleId, job.lease_token])).rows[0].ok;
+      assert.equal(secondReserved, false);
+
+      const rowAfterReserve = (await db.query('select * from public.qm_ai_jobs where id=$1', [singleId])).rows[0];
+      assert.equal(rowAfterReserve.model_call_count, 1);
+      assert.ok(rowAfterReserve.dispatch_reserved_at);
+      assert.equal(rowAfterReserve.phase, 'dispatch_reserved');
+
+      // Attempting to revert to pending after reservation is rejected
+      await assert.rejects(
+        db.query('select public.qm_commit_job($1,$2,$3,$4,$5)', [owner, singleId, job.lease_token, { questions: [] }, 'pending']),
+        /dilarang kembali ke status pending/
+      );
+
+      // Expire lease artificially and try to claim again - must be rejected!
+      await db.query("update public.qm_ai_jobs set lease_until = now() - interval '1 second' where id=$1", [singleId]);
+      await assert.rejects(
+        db.query('select public.qm_claim_job($1,$2,$3,$4)', [owner, singleId, config, prefs]),
+        /sudah pernah dikirim/
+      );
+
+      // Owner can poll status
+      await asUser(owner);
+      const poll = (await db.query('select public.qm_poll_job($1) as p', [singleId])).rows[0].p;
+      assert.equal(poll.id, singleId);
+      assert.equal(poll.modelCallCount, 1);
+      assert.equal(poll.completed, false);
+
+      // Other user cannot poll
+      await asUser(other);
+      await assert.rejects(db.query('select public.qm_poll_job($1)', [singleId]), /Operasi tidak ditemukan/);
+
+      // Commit completed works
+      await db.exec('reset role; set role service_role');
+      const fakeResult = { id: singleId, topic: 'Matematika', questions: [{ question: 'Q1' }] };
+      await db.query('select public.qm_commit_job($1,$2,$3,$4,$5)', [owner, singleId, job.lease_token, fakeResult, 'completed']);
+
+      await asUser(owner);
+      const pollCompleted = (await db.query('select public.qm_poll_job($1) as p', [singleId])).rows[0].p;
+      assert.equal(pollCompleted.completed, true);
+      assert.equal(pollCompleted.status, 'completed');
+      assert.equal(pollCompleted.phase, 'completed');
+      assert.equal(pollCompleted.result.questions.length, 1);
     });
     await t.test('deletion cascades to the secret and makes a new Parallel slot available', async () => {
       await asUser(owner); await db.query('select public.qm_remove_key($1)', [parallel]);

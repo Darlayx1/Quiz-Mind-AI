@@ -29,7 +29,10 @@ export interface GenerationJob {
   parallelFallback?: string;
   parallelResearch?: ParallelResearch;
   id: string; config: QuizConfig; preferences: Preferences; questions: Question[];
-  quiz?: Quiz; status: 'running' | 'interrupted' | 'completed' | 'cancelled'; createdAt: string;
+  quiz?: Quiz; status: 'running' | 'interrupted' | 'completed' | 'cancelled' | 'failed'; createdAt: string;
+  dispatchReservedAt?: string;
+  modelCallCount?: number;
+  policyVersion?: string;
 }
 export interface WorkspaceData {
   preferences: Preferences; history: HistoryItem[]; activity: Activity[];

@@ -4,7 +4,7 @@ import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
 import { usableResearch, type ParallelResearch } from '../server/parallelSearch.js';
-import { recordGenerationFailure, stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
+import { stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
 
 export { availableKeys } from './types.js';
 export async function invokeAccount(body: Record<string, unknown>, signal?: AbortSignal, expectedOwner?: string) {
@@ -54,6 +54,15 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: structuredClone(preferences),
     questions: [], status: 'running', createdAt: new Date().toISOString() };
   job.config = normalizeQuizConfig(job.config);
+
+  if (job.status === 'completed' && job.quiz) {
+    onProgress?.(job.questions.length, job.config.questionCount);
+    return job.quiz;
+  }
+  if (job.modelCallCount && job.modelCallCount > 0) {
+    throw new Error('Operasi ini telah dikonsumsi hak pengirimannya ke model AI.');
+  }
+
   job.status = 'running'; await checkpoint(job);
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
@@ -74,54 +83,63 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       }
     }
   }
-  let keyIndex = 0;
-  while (job.questions.length < job.config.questionCount) {
-    signal.throwIfAborted();
-    if (repository.scope !== 'guest') {
-      const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
-      job.quiz = result.quiz; job.questions = result.quiz.questions;
-    } else {
-      const { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } = await import('../server/geminiService.js');
-      const batchConfig = nextQuizBatch(job.config, job.questions);
-      let batch: Quiz | undefined; let last: unknown;
-      const attempts = Math.max(1, Math.min(3, job.preferences.maxAttempts));
-      const state = job.attemptState?.batchOffset === job.questions.length && !['QUALITY_REJECTED', 'QUALITY_REVIEW_INVALID', 'WEB_SEARCH_EMPTY', 'PARALLEL_CITATION_INVALID'].includes(job.attemptState.lastCode || '') ? job.attemptState : { batchOffset: job.questions.length, calls: 0, repeated: 0 };
-      job.attemptState = state;
-      if (state.calls >= attempts || state.repeated >= 2) throw new Error('Batas percobaan batch tercapai. Periksa koneksi, model, atau kuota AI sebelum mencoba kembali.');
-      while (state.calls < attempts) {
-        signal.throwIfAborted(); const key = eligible[keyIndex];
-        state.calls++; await checkpoint(job);
-        try {
-          batch = await generateQuizBatch({ ...batchConfig, enableGrounding: job.parallelFallback ? false : batchConfig.enableGrounding }, await localCredential(key.id), job.questions.map(q => q.question), signal,
-            job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined, state.correction);
-          if (job.parallelFallback) {
-            batch.groundingFallbackUsed = true;
-            batch.generationWarnings = [...(batch.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];
-          }
-          await repository.recordKeyOutcome(key.id, 'available'); break;
-        } catch (error) {
-          if (signal.aborted) throw error;
-          const classified = classifyApiError(error, job.preferences.model);
-          last = classified; const status = classified.code.startsWith('QUALITY_') ? 'available' : keyStatus(classified); await repository.recordKeyOutcome(key.id, status);
-          try { recordGenerationFailure(state, classified); } finally { await checkpoint(job); }
-          if (!isRetryableGenerationError(classified)) break;
-          if ((classified.code || '').startsWith('PARALLEL_')) break;
-          if (['invalid','quota'].includes(status)) { if (keyIndex + 1 >= eligible.length) break; keyIndex++; }
-          // Different eligible key or a bounded transient retry. No nested retry or model substitution.
-        }
-      }
-      if (!batch) throw last || new Error('Batch belum berhasil.');
-      job.attemptState = undefined;
-      job.questions.push(...batch.questions);
-      job.quiz = { ...batch, ...job.config, id: job.id, questions: job.questions,
-        qualityReviews: [...(job.quiz?.qualityReviews || []), ...(batch.qualityReviews || [])],
-        generationWarnings: [...new Set([...(job.quiz?.generationWarnings || []), ...(batch.generationWarnings || [])])],
-        generationMetrics: [...(job.quiz?.generationMetrics || []), ...(batch.generationMetrics || [])],
-        groundingQueriesUsed: [...new Set([...(job.quiz?.groundingQueriesUsed || []), ...(batch.groundingQueriesUsed || [])])] };
-    }
-    signal.throwIfAborted();
-    job.status = job.questions.length === job.config.questionCount ? 'completed' : 'running';
-    await checkpoint(job); onProgress?.(job.questions.length, job.config.questionCount);
+
+  signal.throwIfAborted();
+  if (repository.scope !== 'guest') {
+    const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
+    job.quiz = result.quiz;
+    job.questions = result.quiz.questions;
+    job.status = 'completed';
+    await checkpoint(job);
+    onProgress?.(job.questions.length, job.config.questionCount);
+    return job.quiz!;
   }
-  return job.quiz!;
+
+  const { generateQuizBatch, classifyApiError } = await import('../server/geminiService.js');
+  const key = eligible[0];
+  job.dispatchReservedAt = new Date().toISOString();
+  job.modelCallCount = 1;
+  await checkpoint(job);
+
+  try {
+    const fullQuiz = await generateQuizBatch(
+      { ...job.config, enableGrounding: job.parallelFallback ? false : job.config.enableGrounding },
+      await localCredential(key.id),
+      [],
+      signal,
+      job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined
+    );
+    if (job.parallelFallback) {
+      fullQuiz.groundingFallbackUsed = true;
+      fullQuiz.generationWarnings = [...(fullQuiz.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];
+    }
+    await repository.recordKeyOutcome(key.id, 'available');
+    job.quiz = {
+      ...fullQuiz,
+      ...job.config,
+      id: job.id,
+      questions: fullQuiz.questions,
+      qualityReviews: fullQuiz.qualityReviews || [],
+      generationWarnings: fullQuiz.generationWarnings || [],
+      generationMetrics: fullQuiz.generationMetrics || [],
+      groundingQueriesUsed: fullQuiz.groundingQueriesUsed || [],
+    };
+    job.questions = fullQuiz.questions;
+    job.status = 'completed';
+    await checkpoint(job);
+    onProgress?.(job.questions.length, job.config.questionCount);
+    return job.quiz;
+  } catch (error) {
+    if (signal.aborted) {
+      job.status = 'cancelled';
+      await checkpoint(job);
+      throw error;
+    }
+    const classified = classifyApiError(error, job.preferences.model);
+    const status = classified.code?.startsWith('QUALITY_') ? 'available' : keyStatus(classified);
+    await repository.recordKeyOutcome(key.id, status);
+    job.status = 'failed';
+    await checkpoint(job);
+    throw classified;
+  }
 }

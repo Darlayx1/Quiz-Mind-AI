@@ -104,14 +104,14 @@ await test('Parallel search integration (no external calls)', async t => {
       const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]);
       return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify({ title: 'Quiz', questions: Array.from({ length: count }, (_, i) => ({ ...fixtures.single_choice, question: `Konsep batch ${generations}, soal ${i}?`, sourceUrls: [invalidCitation ? 'https://invented.example' : sourceUrl] })) }) }] } }] });
     };
-    await t.test('one search across multiple batches; evidence checkpoint and valid citations survive', async () => {
+    await t.test('one search for entire quiz; evidence checkpoint and valid citations survive', async () => {
       let checkpoint: GenerationJob | undefined;
       const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, preferences, keys, localRepository, async job => { checkpoint = structuredClone(job); }, new AbortController().signal);
-      assert.equal(searches, 1); assert.equal(generations, 2); assert.equal(quiz.questions.length, 6);
+      assert.equal(searches, 1); assert.equal(generations, 1); assert.equal(quiz.questions.length, 6);
       assert.equal(quiz.searchProvider, 'parallel'); assert.equal(quiz.usedGrounding, true); assert.equal(quiz.webCheckedAt, research.searchedAt);
       assert.ok(quiz.questions.every(q => q.groundingSources[0].url === sourceUrl));
       assert.ok(checkpoint?.parallelResearch); assert.ok(generatedRequests.every(r => !r.tools?.length));
-      const resumed = { ...checkpoint!, status: 'interrupted' as const, questions: checkpoint!.questions.slice(0, 5) };
+      const resumed = { ...checkpoint!, modelCallCount: undefined, status: 'interrupted' as const, questions: [] };
       await generateWorkspaceQuiz(base, preferences, keys, localRepository, async () => {}, new AbortController().signal, resumed);
       assert.equal(searches, 1, 'Resume reuses successful search');
     });
