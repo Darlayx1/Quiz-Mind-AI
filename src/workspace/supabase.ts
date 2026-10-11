@@ -11,7 +11,17 @@ export class AccountSessionError extends Error {
   constructor() { super('Sesi akun perlu dipulihkan. Silakan masuk kembali.'); this.name = 'AccountSessionError'; }
 }
 export async function accountSession(owner: string, signal: AbortSignal) {
-  const { data, error } = await withSignal(supabase.auth.getSession(), signal);
+  let result: Awaited<ReturnType<typeof supabase.auth.getSession>>;
+  try {
+    result = await withSignal(supabase.auth.getSession(), signal);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.warn('[QuizMind storage]', { phase: 'session', outcome: 'timeout' });
+      throw new Error('Pemulihan sesi akun tidak merespons. Muat ulang halaman lalu coba kembali.');
+    }
+    throw error;
+  }
+  const { data, error } = result;
   if (error) {
     if (error.status === 401 || error.status === 403) throw new AccountSessionError();
     throw error;
@@ -35,9 +45,18 @@ export async function accountRpc(owner: string, name: string, args: Record<strin
   const signal = parentSignal ? AbortSignal.any([parentSignal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000);
   const session = await accountSession(owner, signal);
   // Pin this request to the original JWT, even when Auth changes before completion.
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: 'POST', signal,
-    headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
-  return accountResponse(response);
+  const started = Date.now();
+  try {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: 'POST', signal,
+      headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+    return await accountResponse(response);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.warn('[QuizMind storage]', { phase: 'database', operation: name, outcome: 'timeout', elapsedMs: Date.now() - started });
+      throw new Error('Layanan database akun tidak merespons. Sesi Anda tersedia, tetapi data akun belum dapat dibuka. Coba lagi setelah layanan pulih.');
+    }
+    throw error;
+  }
 }
 export function accountError(error: { message?: string; code?: string }) {
   if (/PGRST202|PGRST205|42P01/.test(error.code || '')) return new Error('Penyimpanan akun belum tersedia. Migrasi database Supabase perlu dipasang. Data lokal tetap terpisah.');
