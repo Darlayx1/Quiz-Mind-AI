@@ -20,9 +20,23 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
     await db.exec(await readFile('supabase/migrations/202610110001_parallel_search.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110002_generation_quality.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110003_single_call_high_policy.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202610110004_workspace_conflict.sql', 'utf8'));
     const asUser = async uid => { await db.exec(`reset role; set role authenticated;`); await db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]); };
     const put = async (id, provider, secret = null, enabled = null) => (await db.query('select public.qm_upsert_provider_key($1,$2,$3,$4,$5,$6) as id', [id, provider + ' key', secret, enabled, 1, provider])).rows[0].id;
     await asUser(owner);
+    await t.test('stale workspace revisions fail once with HTTP conflict and preserve data', async () => {
+      await db.query('select public.qm_load_workspace()');
+      const initial = (await db.query('select revision,data from public.qm_workspaces')).rows[0];
+      const data = { ...initial.data, draft: { topic: 'saved fixture' } };
+      const saved = (await db.query('select public.qm_save_workspace($1,$2) as revision', [data, initial.revision])).rows[0].revision;
+      await assert.rejects(db.query('select public.qm_save_workspace($1,$2)', [{ ...data, draft: { topic: 'stale fixture' } }, initial.revision]), error => error.code === 'PT409');
+      const after = (await db.query('select revision,data from public.qm_workspaces')).rows[0];
+      assert.equal(after.revision, saved); assert.deepEqual(after.data, data);
+      await asUser(other);
+      await assert.rejects(db.query('select public.qm_save_workspace($1,$2)', [data, saved]), error => error.code === 'PT409');
+      assert.equal((await db.query('select * from public.qm_workspaces')).rows.length, 0);
+      await asUser(owner);
+    });
     let parallel;
     await t.test('migrations execute; first key is saved and a disabled slot still counts', async () => {
       parallel = await put(null, 'parallel', 'fixture-parallel-account', false);

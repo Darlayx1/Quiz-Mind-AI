@@ -25,7 +25,7 @@ runtime.__workspaceAuth = {
   signOut: async () => { identity = null; listener('SIGNED_OUT', null); return { error: null }; },
 };
 runtime.__workspaceLocal = { scope: 'guest', load: async () => ({ revision: 0, data: { ...emptyWorkspace(), draft: { topic: 'local' } } }), keys: async () => [] };
-const compiled = await build({ stdin: { contents: "export { useWorkspace } from './src/workspace/useWorkspace.js'; export { accountSession } from './src/workspace/supabase.js';", resolveDir: process.cwd() },
+const compiled = await build({ stdin: { contents: "export { useWorkspace } from './src/workspace/useWorkspace.js'; export { accountSession, accountResponse } from './src/workspace/supabase.js';", resolveDir: process.cwd() },
   bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'workspace-host', setup(p) {
     p.onResolve({ filter: /^react$|^@supabase\/supabase-js$|localRepository\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
     p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => ({ contents: path === 'react'
@@ -33,7 +33,7 @@ const compiled = await build({ stdin: { contents: "export { useWorkspace } from 
       : path === '@supabase/supabase-js' ? 'export const createClient=()=>({auth:globalThis.__workspaceAuth});'
       : 'export const localRepository=globalThis.__workspaceLocal;' }));
   } }] });
-const { useWorkspace, accountSession } = await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const { useWorkspace, accountSession, accountResponse } = await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const originals = { fetch: globalThis.fetch, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, BroadcastChannel: globalThis.BroadcastChannel };
 const timers = new Map<number, { delay: number; fn: () => void }>(); let timerId = 0;
 globalThis.setTimeout = ((fn: () => void, delay: number) => { const id = ++timerId; timers.set(id, { delay, fn }); return id; }) as any;
@@ -50,6 +50,7 @@ function reply(request: Pending, data: any, status = 200) { request.resolve(new 
 const snapshot = (topic: string) => ({ revision: 1, data: { ...emptyWorkspace(), draft: { topic } } });
 function cleanup() { slots.filter(slot => slot?.effect).forEach(slot => slot.cleanup?.()); slots = []; effects = []; timers.clear(); requests.length = 0; identity = null; }
 try {
+  await assert.rejects(accountResponse(new Response(JSON.stringify({ code: 'PT409', message: 'Data berubah di perangkat lain' }), { status: 409 })), /Muat ulang sebelum menyimpan/);
   render(); emit('INITIAL_SESSION', 'A'); await settle();
   let w = render(); assert.equal(w.storageLoading, true); assert.equal(w.ready, false); assert.equal(w.error, '');
   assert.equal(requests.length, 1); assert.match(requests[0].url, /qm_load_workspace/);

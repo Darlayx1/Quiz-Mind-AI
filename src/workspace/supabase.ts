@@ -60,6 +60,6 @@ export async function accountRpc(owner: string, name: string, args: Record<strin
 }
 export function accountError(error: { message?: string; code?: string }) {
   if (/PGRST202|PGRST205|42P01/.test(error.code || '')) return new Error('Penyimpanan akun belum tersedia. Migrasi database Supabase perlu dipasang. Data lokal tetap terpisah.');
-  if (error.code === '40001') return new Error('Data akun berubah di perangkat lain. Muat ulang sebelum menyimpan.');
+  if (error.code === 'PT409' || error.code === '40001') return new Error('Data akun berubah di perangkat lain. Muat ulang sebelum menyimpan.');
   return new Error(error.message || 'Data akun belum berhasil disimpan.');
 }

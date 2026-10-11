@@ -28,23 +28,26 @@ Supabase requires a Personal Access Token to allow automated deployment:
 // 3. Run database migration via Supabase Management API
 console.log(`\n2. Applying database migration to project ${projectRef}...`);
 try {
-  const migrationSql = readFileSync('supabase/migrations/202610110003_single_call_high_policy.sql', 'utf8');
-  const response = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ query: migrationSql })
-  });
-  if (response.ok) {
-    console.log('✅ Database migration applied successfully!');
-  } else {
-    const errorText = await response.text();
-    console.warn(`⚠️ Note on migration via API (${response.status}): ${errorText}`);
-  }
-} catch (e) {
-  console.warn('⚠️ Note on migration execution:', e.message);
+  for (const migration of ['202610110003_single_call_high_policy.sql', '202610110004_workspace_conflict.sql']) {
+    const migrationSql = readFileSync(`supabase/migrations/${migration}`, 'utf8');
+    const response = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(30000),
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ query: migrationSql })
+    });
+    if (response.ok) {
+      console.log(`✅ Database migration applied: ${migration}`);
+    } else {
+      throw new Error(`Database migration ${migration} failed (HTTP ${response.status}). Deployment stopped.`);
+    }
+    }
+  } catch (e) {
+  console.error('❌ Database migration failed:', e.message);
+  process.exit(1);
 }
 
 // Helper: deploy function directly via Supabase Management API
