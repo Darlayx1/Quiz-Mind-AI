@@ -27,11 +27,13 @@ async function outcome(id, userId, status) {
   if (error) throw new Error('Status key belum berhasil disimpan.');
 }
 
-function watchGenerationCancellation(job, userId, requestSignal) {
+function watchGenerationCancellation(job, userId, requestSignal, isBackground = false) {
   const controller = new AbortController();
   const abort = () => controller.abort(new DOMException('Pembuatan kuis dibatalkan.', 'AbortError'));
-  requestSignal.addEventListener('abort', abort, { once: true });
-  if (requestSignal.aborted) abort();
+  if (!isBackground && requestSignal) {
+    requestSignal.addEventListener('abort', abort, { once: true });
+    if (requestSignal.aborted) abort();
+  }
   let checking = false;
   const timer = setInterval(async () => {
     if (checking || controller.signal.aborted) return;
@@ -44,7 +46,12 @@ function watchGenerationCancellation(job, userId, requestSignal) {
   }, 2000);
   return {
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(145000)]),
-    stop() { clearInterval(timer); requestSignal.removeEventListener('abort', abort); }
+    stop() {
+      clearInterval(timer);
+      if (!isBackground && requestSignal) {
+        requestSignal.removeEventListener('abort', abort);
+      }
+    }
   };
 }
 
@@ -161,8 +168,8 @@ Deno.serve(async request => {
 
     const fullConfig = normalizeQuizConfig({ ...body.config, model: preferences?.model, enableGrounding: preferences?.grounding });
 
-    const executeGeneration = async () => {
-      const cancellation = watchGenerationCancellation(job, userId, request.signal);
+    const executeGeneration = async (isBackground = false) => {
+      const cancellation = watchGenerationCancellation(job, userId, request.signal, isBackground);
       try {
         let research = job.result?.parallelResearch;
         const generationState = job.result?.generationState || {};
@@ -243,17 +250,38 @@ Deno.serve(async request => {
         if (commitError) throw new Error('Operasi berubah atau dibatalkan. Hasil kuis tidak dapat disimpan.');
 
         return json({ quiz, complete: true });
+      } catch (error) {
+        if (job && userId) {
+          const isReserved = Boolean(job.dispatch_reserved_at || (job.model_call_count && job.model_call_count > 0));
+          const targetStatus = error?.name === 'AbortError' || cancellation.signal.aborted
+            ? 'cancelled'
+            : (isReserved ? 'failed_after_dispatch' : 'failed_preflight');
+          try {
+            await admin.rpc('qm_commit_job', {
+              p_user: userId,
+              p_id: job.id,
+              p_lease: job.lease_token,
+              p_result: { ...(job.result || {}), error: error?.message || 'Operasi gagal.' },
+              p_status: targetStatus
+            });
+          } catch { /* Best effort commit */ }
+        }
+        throw error;
       } finally {
         cancellation.stop();
       }
     };
 
     if (body.action === 'start' && typeof globalThis.EdgeRuntime?.waitUntil === 'function') {
-      globalThis.EdgeRuntime.waitUntil(executeGeneration());
+      globalThis.EdgeRuntime.waitUntil(
+        executeGeneration(true).catch(err => {
+          console.warn(JSON.stringify({ event: 'background-generation-failed', error: err?.message || String(err) }));
+        })
+      );
       return json({ operationId: job.id, policyVersion: 'single-call-high-v1', status: 'accepted' }, 202);
     }
 
-    return await executeGeneration();
+    return await executeGeneration(false);
 
   } catch (error) {
     if (job && userId) {

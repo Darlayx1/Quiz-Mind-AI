@@ -86,7 +86,72 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
 
   signal.throwIfAborted();
   if (repository.scope !== 'guest') {
-    const result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
+    let result: any;
+    try {
+      const startRes = await invokeAccount(
+        { action: 'start', operationId: job.id, config: job.config, preferences: job.preferences },
+        signal,
+        repository.scope
+      );
+      if (startRes.complete && startRes.quiz) {
+        result = startRes;
+      } else {
+        const startTime = Date.now();
+        const maxWaitMs = 180000;
+        while (true) {
+          signal.throwIfAborted();
+          if (Date.now() - startTime > maxWaitMs) {
+            throw new Error('Waktu tunggu pembuatan kuis habis (180 detik). Silakan coba lagi.');
+          }
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 2500 + Math.random() * 500);
+            signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(signal.reason || new DOMException('Operasi dibatalkan', 'AbortError'));
+            }, { once: true });
+          });
+          signal.throwIfAborted();
+
+          const pollRes = await invokeAccount(
+            { action: 'status', operationId: job.id },
+            signal,
+            repository.scope
+          );
+
+          if (pollRes.complete && pollRes.quiz) {
+            result = pollRes;
+            break;
+          }
+          if (pollRes.error || ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(pollRes.status)) {
+            throw Object.assign(new Error(pollRes.error || 'Operasi pembuatan kuis di server belum berhasil.'), {
+              code: 'GENERATION_FAILED',
+              status: 502
+            });
+          }
+          if (pollRes.status === 'cancelled') {
+            throw Object.assign(new Error('Pembuatan kuis dibatalkan.'), { code: 'CANCELLED', status: 409 });
+          }
+        }
+      }
+    } catch (err: any) {
+      if (signal.aborted || err?.name === 'AbortError') {
+        try {
+          await invokeAccount({ action: 'cancel', operationId: job.id }, undefined, repository.scope);
+        } catch { /* best effort cancel */ }
+        job.status = 'cancelled';
+        await checkpoint(job);
+        throw err;
+      }
+      if (err?.status === 400 && String(err.message).includes('Operasi tidak valid')) {
+        // Fallback for older backend deployments where action 'start' is not recognized
+        result = await invokeAccount({ action: 'generate', operationId: job.id, config: job.config, preferences: job.preferences }, signal, repository.scope);
+      } else {
+        job.status = 'failed';
+        await checkpoint(job);
+        throw err;
+      }
+    }
+
     job.quiz = result.quiz;
     job.questions = result.quiz.questions;
     job.status = 'completed';
