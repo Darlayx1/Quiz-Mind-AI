@@ -51,9 +51,9 @@ export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): Workspa
 export interface WorkspaceSnapshot { revision: number; data: WorkspaceData }
 export interface WorkspaceRepository {
   scope: string;
-  load(): Promise<WorkspaceSnapshot>;
+  load(signal?: AbortSignal): Promise<WorkspaceSnapshot>;
   save(data: WorkspaceData, revision: number): Promise<number>;
-  keys(): Promise<ApiKeyRecord[]>;
+  keys(signal?: AbortSignal): Promise<ApiKeyRecord[]>;
   putKey(input: { id?: string; label: string; secret?: string; enabled?: boolean; priority?: number; provider?: 'gemini' | 'parallel' }): Promise<void>;
   removeKey(id: string): Promise<void>;
   recordKeyOutcome(id: string, status: KeyStatus): Promise<void>;

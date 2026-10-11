@@ -42,6 +42,15 @@ function find(tree: any, type: string): any { if (!tree) return; if (Array.isArr
   if (tree.type === type) return tree; return find(tree.props?.children, type); }
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 render();
+runtime.__workspace.ready = false; runtime.__workspace.storageLoading = true;
+assert.ok(JSON.stringify(render()).includes('Memuat penyimpanan akun'), 'Account loading must have a loading screen');
+assert.ok(!JSON.stringify(render()).includes('Penyimpanan perlu diperiksa'), 'Loading must not show a storage failure');
+runtime.__workspace.storageLoading = false; runtime.__workspace.error = 'Fixture storage failure';
+assert.ok(JSON.stringify(render()).includes('Penyimpanan perlu diperiksa'), 'Settled failure has a recovery screen');
+runtime.__workspace.mode = 'initializing'; runtime.__workspace.error = 'Fixture startup timeout';
+assert.ok(JSON.stringify(render()).includes('Fixture startup timeout'));
+assert.ok(!JSON.stringify(render()).includes('Memulihkan ruang penyimpanan'), 'Startup timeout must exit the loading screen');
+runtime.__workspace.mode = 'account'; runtime.__workspace.ready = true; runtime.__workspace.error = '';
 find(render(), 'QuizCreator').props.onGenerate({ topic: 'First', questionCount: 1 });
 assert.ok(find(render(), 'GenerationLoader'));
 runtime.__workspace.mode = 'reauth_required'; runtime.__workspace.ready = false; render();

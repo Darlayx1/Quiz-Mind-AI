@@ -81,8 +81,8 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
           <div className="settings-storage"><span className="storage-icon">{w.mode === 'guest' ? <Monitor size={17} /> : <Cloud size={17} />}</span><strong>{w.mode === 'guest' ? 'Penyimpanan lokal' : 'Penyimpanan akun'}</strong><p>{w.mode === 'guest' ? 'Data bertahan di browser ini.' : 'Data hanya milik akun aktif.'}</p></div>
         </aside>
         <section id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="settings-content">
-          <div className="settings-scope"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{scopeLabel}</span><span role="status">{busy || w.saving ? 'Menyimpan / memproses…' : w.ready ? 'Penyimpanan siap' : 'Penyimpanan belum siap'}</span></div>
-          {(error || w.error) && <div role="alert" className="settings-alert error">{error || w.error}<button onClick={() => act(w.refresh)} disabled={busy}>Muat ulang data</button></div>}
+          <div className="settings-scope"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{scopeLabel}</span><span role="status">{busy || w.saving ? 'Menyimpan / memproses…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : w.ready ? 'Penyimpanan siap' : 'Penyimpanan belum siap'}</span></div>
+          {(error || w.error) && <div role="alert" className="settings-alert error">{error || w.error}{w.mode !== 'reauth_required' && <button onClick={() => act(w.refresh)} disabled={busy || w.storageLoading}>Muat ulang data</button>}</div>}
           {message && <div role="status" className="settings-alert success"><Check size={16} />{message}</div>}
           {tab === 'account' && <>
             <div className="settings-heading"><h3>Akun</h3><p>Gunakan secara lokal, atau masuk untuk menyimpan data ke akun Anda.</p></div>

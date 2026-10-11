@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { withSignal } from './request.js';
 
 export const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || 'https://btsvqhlfkkgwkqsezzoq.supabase.co';
 export const PUBLISHABLE_KEY = import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_0_-VQxC-t2qEMzJTy63SkQ_-BYp-ZQM';
@@ -6,16 +7,37 @@ export const supabase = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
 });
 export const authRedirect = () => `${location.origin}${import.meta.env.BASE_URL}`;
-export async function accountRpc(owner: string, name: string, args: Record<string, unknown> = {}) {
-  const { data } = await supabase.auth.getSession();
-  const session = data.session;
-  if (!session || session.user.id !== owner) throw new Error('Identitas akun berubah. Operasi dihentikan.');
-  // Pin this request to the original JWT, even when Auth changes before completion.
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: 'POST', signal: AbortSignal.timeout(20000),
-    headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
-  const result = response.status === 204 ? null : await response.json();
-  if (!response.ok) throw accountError(result);
+export class AccountSessionError extends Error {
+  constructor() { super('Sesi akun perlu dipulihkan. Silakan masuk kembali.'); this.name = 'AccountSessionError'; }
+}
+export async function accountSession(owner: string, signal: AbortSignal) {
+  const { data, error } = await withSignal(supabase.auth.getSession(), signal);
+  if (error) {
+    if (error.status === 401 || error.status === 403) throw new AccountSessionError();
+    throw error;
+  }
+  if (!data.session) throw new AccountSessionError();
+  if (data.session.user.id !== owner) throw new Error('Identitas akun berubah. Operasi dihentikan.');
+  return data.session;
+}
+export async function accountResponse(response: Response) {
+  if (response.status === 401) throw new AccountSessionError();
+  const text = await response.text();
+  let result: any = null;
+  try { result = text ? JSON.parse(text) : null; }
+  catch { throw new Error(`Respons penyimpanan tidak valid (HTTP ${response.status}). Periksa koneksi lalu muat ulang.`); }
+  if (!response.ok) {
+    throw accountError(result || {});
+  }
   return result;
+}
+export async function accountRpc(owner: string, name: string, args: Record<string, unknown> = {}, parentSignal?: AbortSignal) {
+  const signal = parentSignal ? AbortSignal.any([parentSignal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000);
+  const session = await accountSession(owner, signal);
+  // Pin this request to the original JWT, even when Auth changes before completion.
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: 'POST', signal,
+    headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+  return accountResponse(response);
 }
 export function accountError(error: { message?: string; code?: string }) {
   if (/PGRST202|PGRST205|42P01/.test(error.code || '')) return new Error('Penyimpanan akun belum tersedia. Migrasi database Supabase perlu dipasang. Data lokal tetap terpisah.');

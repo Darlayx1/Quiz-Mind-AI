@@ -1,23 +1,25 @@
-import { supabase, accountError, accountRpc, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
+import { accountSession, accountResponse, accountRpc, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
 import { sanitizeWorkspace, type ApiKeyRecord, type WorkspaceRepository } from './types.js';
 
 export function accountRepository(userId: string): WorkspaceRepository {
   return {
     scope: userId,
-    async load() {
-      const data = await accountRpc(userId, 'qm_load_workspace');
+    async load(signal) {
+      const data = await accountRpc(userId, 'qm_load_workspace', {}, signal);
+      if (!data || !Number.isSafeInteger(data.revision) || !data.data || typeof data.data !== 'object' || Array.isArray(data.data)) throw new Error('Data penyimpanan akun tidak valid. Muat ulang atau periksa layanan penyimpanan.');
       return { revision: data.revision, data: sanitizeWorkspace(data.data) };
     },
     async save(value, revision) {
       return accountRpc(userId, 'qm_save_workspace', { p_data: value, p_revision: revision });
     },
-    async keys() {
-      const { data: identity } = await supabase.auth.getSession();
-      if (identity.session?.user.id !== userId) throw new Error('Identitas akun berubah.');
+    async keys(parentSignal) {
+      const signal = parentSignal ? AbortSignal.any([parentSignal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000);
+      const session = await accountSession(userId, signal);
       const response = await fetch(`${SUPABASE_URL}/rest/v1/qm_api_keys?select=*&user_id=eq.${userId}&order=priority.asc,id.asc`, {
-        signal: AbortSignal.timeout(20000), headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${identity.session.access_token}` } });
-      const data = await response.json(); if (!response.ok) throw accountError(data);
-      return (data || []).map((k: Record<string, any>) => ({ id: k.id, provider: k.provider ?? 'gemini', label: k.label, suffix: k.suffix, fingerprint: k.fingerprint,
+        signal, headers: { apikey: PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}` } });
+      const data = await accountResponse(response);
+      if (!Array.isArray(data)) throw new Error('Daftar API key akun tidak valid. Silakan muat ulang.');
+      return data.map((k: Record<string, any>) => ({ id: k.id, provider: k.provider ?? 'gemini', label: k.label, suffix: k.suffix, fingerprint: k.fingerprint,
         enabled: k.enabled, priority: k.priority, status: k.status, testedAt: k.tested_at,
         successes: k.successes, failures: k.failures })) as ApiKeyRecord[];
     },
