@@ -117,6 +117,9 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
             signal,
             repository.scope
           );
+          if (Number.isInteger(pollRes.receivedQuestionCount) && pollRes.receivedQuestionCount > 0) {
+            onProgress?.(Math.min(pollRes.receivedQuestionCount, job.config.questionCount), job.config.questionCount);
+          }
 
           if (pollRes.complete && pollRes.quiz) {
             result = pollRes;
@@ -172,7 +175,9 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
       await localCredential(key.id),
       [],
       signal,
-      job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined
+      job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined,
+      undefined,
+      { stream: true, onProgress: count => onProgress?.(Math.min(count, job.config.questionCount), job.config.questionCount) }
     );
     if (job.parallelFallback) {
       fullQuiz.groundingFallbackUsed = true;

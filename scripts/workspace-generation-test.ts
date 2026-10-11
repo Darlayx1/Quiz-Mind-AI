@@ -1,4 +1,5 @@
 import { qualityReviewFixture } from './quality-review-fixture.js';
+import { streamingFixtureFetch } from './stream-fixture.js';
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { DEFAULT_MODEL } from '../src/models.js';
@@ -64,6 +65,7 @@ globalThis.fetch = async (input, init) => {
     content: { role: 'model', parts: failure === 'empty' ? [] : [{ text: failure === 'json' ? 'This is not JSON' : JSON.stringify(output) }] } }] });
 };
 
+globalThis.fetch = streamingFixtureFetch(globalThis.fetch);
 try {
   for (const type of QUESTION_TYPES) {
     for (const grounded of [false, true]) {
@@ -145,6 +147,8 @@ const runtime = globalThis as any;
 const priorDeno = runtime.Deno;
 let handler: (request: Request) => Promise<Response>;
 let accountCalls = 0;
+let accountKeyReads = 0;
+const accountProgressWrites: { data: any; filters: Record<string, unknown> }[] = [];
 let accountFailure = false;
 let accountSearchQuota = false;
 let accountNoSources = false;
@@ -156,8 +160,13 @@ let cancelledInDatabase = false;
 const admin = {
   auth: { getUser: async () => ({ data: { user: { id: 'account-fixture' } }, error: null }) },
   from: (table: string) => {
+    if (table === 'qm_api_keys') accountKeyReads++;
     if (table === 'qm_ai_jobs') {
-      const query: any = { select: () => query, eq: () => query,
+      let progressWrite: typeof accountProgressWrites[number] | undefined;
+      const query: any = { select: () => query,
+        eq: (field: string, value: unknown) => { if (progressWrite) progressWrite.filters[field] = value; return query; },
+        update: (data: unknown) => { progressWrite = { data, filters: {} }; accountProgressWrites.push(progressWrite); return query; },
+        then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
         single: async () => ({ data: { status: cancelledInDatabase ? 'cancelled' : 'running', lease_token: 'fixture-lease' }, error: null }) };
       return query;
     }
@@ -195,16 +204,30 @@ try {
       plugin.onResolve({ filter: /^npm:@google\/genai/ }, () => ({ path: 'genai', namespace: 'fixtures' }));
       plugin.onLoad({ filter: /.*/, namespace: 'fixtures' }, args => ({ contents: args.path === 'supabase'
         ? 'export const createClient = () => globalThis.__accountGenerationAdmin;'
-        : 'export class GoogleGenAI { constructor() { this.models = { generateContent: params => globalThis.__accountGenerationCall(params) }; } }' }));
+        : 'export class GoogleGenAI { constructor() { this.models = { generateContent: params => globalThis.__accountGenerationCall(params), generateContentStream: async function*(params) { yield await globalThis.__accountGenerationCall(params); } }; } }' }));
     } }] });
   await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
   const request = (prefs = preferences) => new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST',
     headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'generate', operationId: crypto.randomUUID(), config: essayOnly, preferences: prefs }) });
+  for (const action of ['status', 'cancel']) {
+    const control = await handler!(new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST',
+      headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, operationId }) }));
+    assert.equal(control.status, 200);
+    assert.equal(accountKeyReads, 0, 'Status/cancel must not load API keys');
+    assert.equal(accountCalls, 0, 'Status/cancel must not dispatch AI');
+  }
   let response = await handler!(request());
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.deepEqual((await response.json()).quiz.questions.map((q: any) => q.type), ['essay', 'essay']);
   assert.equal(accountCalls, 1);
+  assert.equal(accountProgressWrites[0].data.cursor, 2);
+  for (const write of accountProgressWrites) {
+    assert.equal(write.filters.user_id, 'account-fixture', 'Progress is pinned to the authenticated owner');
+    assert.equal(write.filters.lease_token, 'fixture-lease');
+    assert.equal(write.filters.status, 'running', 'Late progress cannot overwrite a completed/cancelled job');
+  }
   assert.equal(commits.at(-1).p_status, 'completed');
   accountFailure = true;
   response = await handler!(request());

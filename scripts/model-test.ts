@@ -25,7 +25,8 @@ const config: QuizConfig = {
 globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const body = await request.json();
-  lastPrompt = JSON.stringify(body.contents);
+  // Difficulty guidance may live in the system instruction; inspect all model context.
+  lastPrompt = JSON.stringify({ contents: body.contents, systemInstruction: body.systemInstruction });
   const audit = qualityReviewFixture(body.contents.map((c: any) => c.parts.map((p: any) => p.text || '').join('\n')).join('\n'));
   if (audit) {
     calls.push({ model: modelFromRequest(request.url), grounded: false });

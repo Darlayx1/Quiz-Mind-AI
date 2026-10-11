@@ -71,8 +71,13 @@ Deno.serve(async request => {
     if (raw.length > 2000000) return json({ error: 'Permintaan terlalu besar.' }, 413);
     const body = JSON.parse(raw);
 
-    const { data: keys, error: keysError } = await admin.from('qm_api_keys').select('*').eq('user_id', userId).eq('enabled', true).order('priority').order('id');
-    if (keysError) throw new Error('Penyimpanan akun belum siap.');
+    // Status/cancel never dispatch AI. Avoid loading keys on every polling request.
+    let keys = [];
+    if (!['status', 'cancel'].includes(body.action)) {
+      const { data, error } = await admin.from('qm_api_keys').select('*').eq('user_id', userId).eq('enabled', true).order('priority').order('id');
+      if (error) throw new Error('Penyimpanan akun belum siap.');
+      keys = data;
+    }
     const getSecret = async key => {
       const { data, error } = await admin.rpc('qm_service_credential', { p_user: userId, p_key: key.id });
       if (error || !data) throw new Error('Key tidak tersedia pada akun ini.');
@@ -113,12 +118,13 @@ Deno.serve(async request => {
 
     if (body.action === 'status') {
       if (!/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
-      const { data: jobRow, error: pollError } = await admin.from('qm_ai_jobs').select('*').eq('id', body.operationId).eq('user_id', userId).single();
+      const { data: jobRow, error: pollError } = await admin.from('qm_ai_jobs').select('id,status,phase,cursor,policy_version,result').eq('id', body.operationId).eq('user_id', userId).single();
       if (pollError || !jobRow) return json({ error: 'Operasi tidak ditemukan.' }, 404);
       return json({
         id: jobRow.id,
         status: jobRow.status,
         phase: jobRow.phase,
+        receivedQuestionCount: jobRow.cursor || 0,
         policyVersion: jobRow.policy_version,
         complete: jobRow.status === 'completed',
         quiz: jobRow.status === 'completed' ? jobRow.result : undefined,
@@ -215,7 +221,25 @@ Deno.serve(async request => {
 
         cancellation.signal.throwIfAborted();
 
-        // Exactly one model call for the entire quiz with high reasoning
+        // Coalesce progress writes without blocking token reception. Progress is
+        // advisory; only the final atomic commit publishes a validated quiz.
+        let latestProgress = 0;
+        let progressWrite;
+        const onProgress = count => {
+          latestProgress = Math.min(count, fullConfig.questionCount);
+          if (progressWrite) return;
+          progressWrite = (async () => {
+            let saved = 0;
+            while (saved < latestProgress && !cancellation.signal.aborted) {
+              saved = latestProgress;
+              const { error } = await admin.from('qm_ai_jobs').update({ cursor: saved, phase: 'receiving' })
+                .eq('id', job.id).eq('user_id', userId).eq('lease_token', job.lease_token).eq('status', 'running');
+              if (error) return;
+            }
+          })().catch(() => { /* A progress write failure must not discard valid output. */ })
+            .finally(() => { progressWrite = undefined; });
+        };
+        // Exactly one model stream for the entire quiz with high reasoning.
         let quiz;
         try {
           quiz = await generateQuizBatch(
@@ -223,7 +247,9 @@ Deno.serve(async request => {
             await getSecret(selectedKey),
             [],
             cancellation.signal,
-            generationState.parallelFallback ? undefined : research
+            generationState.parallelFallback ? undefined : research,
+            undefined,
+            { stream: true, onProgress }
           );
           if (generationState.parallelFallback) {
             quiz.groundingFallbackUsed = true;

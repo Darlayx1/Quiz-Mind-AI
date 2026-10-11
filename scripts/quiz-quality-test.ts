@@ -17,6 +17,7 @@ import { buildResult } from '../src/scoring.js';
 import { QuizCreator } from '../src/components/QuizCreator.js';
 import { fixtures } from './assessment-fixtures.js';
 import { qualityReviewFixture } from './quality-review-fixture.js';
+import { streamingFixtureFetch } from './stream-fixture.js';
 
 const base = normalizeQuizConfig({ topic: 'Anatomi', targetAudience: 'Mahasiswa kedokteran tahun pertama', difficulty: 'easy', questionCount: 1, enableGrounding: false, timeLimitMinutes: 0 });
 const source = { title: 'Human anatomy: structure and relationships', url: 'https://example.org/anatomy', snippet: 'The heart contains four chambers. Anatomical structures have spatial relationships.' };
@@ -102,6 +103,7 @@ await test('Quality generation and recovery (simulated providers; no external re
       ...(body.tools?.length ? { groundingMetadata: { webSearchQueries: ['anatomical relationships'], groundingChunks: [{ web: { title: source.title, uri: source.url } }] } } : {}) }],
       usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 } });
   };
+  globalThis.fetch = streamingFixtureFetch(globalThis.fetch);
   const reset = () => { generations = 0; audits = 0; searches = 0; generationPrompts = []; mode = 'pass'; };
   try {
     await t.test('three research modes use the same fixed specification at all nine levels', async () => {

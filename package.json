@@ -6,6 +6,8 @@
   "scripts": {
     "test:quality": "node --import tsx scripts/quiz-quality-test.ts",
     "benchmark:quality": "node --import tsx scripts/quality-benchmark.ts",
+    "test:generation": "node --import tsx scripts/quiz-stream-test.ts && node --import tsx scripts/generation-efficiency-test.ts && node --import tsx scripts/generation-quality-gate-test.ts",
+    "benchmark:generation": "node --import tsx scripts/generation-comparison.ts",
     "test:parallel": "node scripts/test-parallel.mjs",
     "build:edge": "node scripts/build-edge.mjs",
     "deploy:edge": "node scripts/deploy-supabase.mjs",

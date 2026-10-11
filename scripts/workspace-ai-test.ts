@@ -8,6 +8,7 @@ import { QUESTION_TYPES } from '../src/types/quiz.js';
 import { buildResult } from '../src/scoring.js';
 import { fixtures } from './assessment-fixtures.js';
 import { qualityReviewFixture } from './quality-review-fixture.js';
+import { streamingFixtureFetch } from './stream-fixture.js';
 
 const originalFetch=globalThis.fetch;
 let rejectedKeyCalls=0,acceptedCalls=0,generatedCalls=0;
@@ -31,6 +32,7 @@ globalThis.fetch=async(input,init)=>{
  }
  return Response.json({candidates:[{content:{role:'model',parts:[{text:JSON.stringify(output)}]}}]});
 };
+globalThis.fetch=streamingFixtureFetch(globalThis.fetch);
 try{
  const prefs={...emptyWorkspace().preferences,grounding:false};
  const config={topic:'Konsep',difficulty:'easy' as const,questionCount:7,questionDistribution:Object.fromEntries(QUESTION_TYPES.map(t=>[t,1])),timeLimitMinutes:0,language:'id' as const,enableGrounding:false,pointsByType:{essay:5}};

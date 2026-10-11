@@ -1,4 +1,5 @@
 import { qualityReviewFixture } from './quality-review-fixture.js';
+import { streamingFixtureFetch } from './stream-fixture.js';
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -104,6 +105,7 @@ await test('Parallel search integration (no external calls)', async t => {
       const count = Number(/Jumlah Soal: (\d+)/.exec(prompt)?.[1]);
       return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify({ title: 'Quiz', questions: Array.from({ length: count }, (_, i) => ({ ...fixtures.single_choice, question: `Konsep batch ${generations}, soal ${i}?`, sourceUrls: [invalidCitation ? 'https://invented.example' : sourceUrl] })) }) }] } }] });
     };
+    globalThis.fetch = streamingFixtureFetch(globalThis.fetch);
     await t.test('one search for entire quiz; evidence checkpoint and valid citations survive', async () => {
       let checkpoint: GenerationJob | undefined;
       const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6 }, preferences, keys, localRepository, async job => { checkpoint = structuredClone(job); }, new AbortController().signal);

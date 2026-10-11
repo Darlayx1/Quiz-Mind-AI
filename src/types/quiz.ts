@@ -58,7 +58,10 @@ export interface Quiz {
   /** Legacy metadata only; ignored for new generation. */
   targetAudience?: string;
   qualityReviews?: import('../server/assessmentPolicy.js').QualityReviewRecord[];
-  generationMetrics?: { durationMs: number; modelCalls: number; questionIds: string[]; inputTokens?: number; outputTokens?: number }[];
+  generationMetrics?: { durationMs: number; modelCalls: number; questionIds: string[]; inputTokens?: number; outputTokens?: number;
+    providerDurationMs?: number; validationDurationMs?: number; thinkingLevel?: 'HIGH' | 'MEDIUM'; promptCharacters?: number;
+    strategy?: import('../server/generationStrategy.js').GenerationVariant;
+    thinkingTokens?: number; totalTokens?: number; firstTextMs?: number; transport?: 'stream' | 'response' }[];
   searchProvider?: 'google' | 'parallel';
   parallelResearch?: import('../server/parallelSearch.js').ParallelResearch;
   webCheckedAt?: string;

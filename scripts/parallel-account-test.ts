@@ -20,7 +20,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
   runtime.__parallelAdmin = {
     auth: { getUser: async (token: string) => token === 'fixture-token' ? { data: { user: { id: owner } } } : { data: {}, error: true } },
     from: () => {
-      const query: any = { select: () => query, eq: () => query, order: () => query,
+      const query: any = { select: () => query, update: () => query, eq: () => query, order: () => query,
         then: (resolve: any) => Promise.resolve({ data: [{ id: 'parallel-id', provider: 'parallel', enabled }, { id: 'gemini-id', provider: 'gemini', enabled: true }].filter(k => k.enabled) }).then(resolve),
         single: async () => ({ data: { status: 'running', lease_token: lease } }) };
       return query;
@@ -60,7 +60,7 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
         plugin.onResolve({ filter: /^npm:@google\/genai/ }, () => ({ path: 'google', namespace: 'fixture' }));
         plugin.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({ contents: args.path === 'supabase'
           ? 'export const createClient = () => globalThis.__parallelAdmin;'
-          : 'export class GoogleGenAI { constructor({apiKey}) { this.models = {generateContent: params => globalThis.__parallelModelCall(params,apiKey)}; } }' }));
+          : 'export class GoogleGenAI { constructor({apiKey}) { this.models = {generateContent: params => globalThis.__parallelModelCall(params,apiKey), generateContentStream: async function*(params) { yield await globalThis.__parallelModelCall(params,apiKey); }}; } }' }));
       } }] });
     await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
     const request = (body: any = {}, token = 'fixture-token') => new Request('https://fixture.invalid/quiz-ai', { method: 'POST',

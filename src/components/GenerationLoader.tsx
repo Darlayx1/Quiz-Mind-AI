@@ -112,7 +112,7 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   } else if (completedCount > 0 && totalCount > 0) {
     statusMessage = `${completedCount} dari ${totalCount} soal telah diterima.`;
     progressPercent = Math.min(100, Math.round((completedCount / totalCount) * 100));
-    progressLabel = `${completedCount}/${totalCount} soal selesai`;
+    progressLabel = `${completedCount}/${totalCount} soal diterima · menunggu validasi lengkap`;
   }
 
   return (

@@ -226,7 +226,7 @@ export default function App() {
           isCancelling={cancelling}
         />
         <div className="generation-controls" style={{ display: 'none' }}>
-          <span>{generation.completed}/{generation.config.questionCount} soal selesai</span>
+          <span>{generation.completed}/{generation.config.questionCount} soal diterima</span>
           <button className="settings-secondary" disabled={cancelling} onClick={cancelGeneration}>{cancelling ? 'Membatalkan…' : 'Batalkan pembuatan'}</button>
         </div>
       </> : isEvaluating && result && activeEvaluation ? (
