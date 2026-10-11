@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { emptyWorkspace } from '../src/workspace/types.js';
+import { emptyWorkspace, type WorkspaceData } from '../src/workspace/types.js';
 
 // Exercise the real hook, account repository and request adapter without real credentials.
 const runtime = globalThis as any;
@@ -47,7 +47,8 @@ type Pending = { url: string; options: RequestInit; resolve: (value: Response) =
 const requests: Pending[] = [];
 globalThis.fetch = ((url: string, options: RequestInit) => new Promise<Response>((resolve, reject) => requests.push({ url, options, resolve, reject }))) as any;
 function reply(request: Pending, data: any, status = 200) { request.resolve(new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })); }
-const snapshot = (topic: string) => ({ revision: 1, data: { ...emptyWorkspace(), draft: { topic } } });
+const snapshot = (topic: string) => ({ revision: 1, data: { ...emptyWorkspace(), draft: { topic, studyMaterial: 'Context ' + topic,
+  attachments: [{ id: 'file-' + topic, name: topic + '.txt', kind: 'text', status: 'ready', text: 'Material ' + topic, size: 10, fingerprint: topic }] } } });
 function cleanup() { slots.filter(slot => slot?.effect).forEach(slot => slot.cleanup?.()); slots = []; effects = []; timers.clear(); requests.length = 0; identity = null; }
 try {
   await assert.rejects(accountResponse(new Response(JSON.stringify({ code: 'PT409', message: 'Data berubah di perangkat lain' }), { status: 409 })), /Muat ulang sebelum menyimpan/);
@@ -59,6 +60,7 @@ try {
   reply(requests[0], snapshot('A')); await settle(); assert.equal(requests.length, 2);
   assert.match(requests[1].url, /qm_api_keys/); reply(requests[1], []); await settle();
   w = render(); assert.equal(w.ready, true, 'An account without keys is ready'); assert.equal(w.storageLoading, false);
+  assert.equal(w.data.draft.attachments[0].text, 'Material A');
   emit('USER_UPDATED', 'A'); await settle(); assert.equal(requests.length, 2);
   const firstRefresh = w.refresh(); const secondRefresh = w.refresh(); await settle();
   assert.equal(requests.length, 3, 'Concurrent refresh clicks share a single load');
@@ -74,6 +76,7 @@ try {
   emit('SIGNED_IN', 'B'); await settle(); assert.equal(requests.length, 6, 'Auth events must not loop after a storage failure');
   const recover = w.refresh(); await settle(); reply(requests[6], snapshot('B')); await settle(); reply(requests[7], []); await recover;
   w = render(); assert.equal(w.ready, true); assert.equal(w.data.draft.topic, 'B');
+  assert.equal(w.data.draft.attachments[0].name, 'B.txt'); assert.equal(w.data.draft.studyMaterial, 'Context B');
 
   const expired = w.refresh(); await settle(); reply(requests[8], { message: 'JWT expired' }, 401); await expired;
   w = render(); assert.equal(w.mode, 'reauth_required'); assert.equal(w.session, null); assert.equal(w.ready, false); assert.equal(w.data.draft, null);
@@ -97,6 +100,14 @@ try {
   const malformed = w.refresh(); await settle(); reply(requests[3], null); await malformed; w = render(); assert.match(w.error, /tidak valid/);
   authLookup = async () => ({ data: { session: null }, error: new Error('Authentication network unavailable') });
   await w.refresh(); w = render(); assert.equal(w.mode, 'account'); assert.equal(w.ready, true); assert.match(w.error, /network unavailable/);
+  authLookup = async () => ({ data: { session: identity }, error: null });
+  const saveDraft = w.update((d: WorkspaceData) => ({ ...d, draft: { ...d.draft, studyMaterial: 'Updated C context' } }), 'C');
+  await settle();
+  const saveRequest = requests.at(-1)!; assert.match(saveRequest.url, /qm_save_workspace/);
+  const payload = JSON.parse(String(saveRequest.options.body));
+  assert.equal(payload.p_data.draft.attachments[0].text, 'Material C');
+  reply(saveRequest, 2); await saveDraft; w = render(); assert.equal(w.data.draft.studyMaterial, 'Updated C context');
+  await assert.rejects(w.update((d: WorkspaceData) => d, 'A'), /Ruang penyimpanan berubah/);
   authLookup = async () => ({ data: { session: { user: { id: 'other' } } }, error: null });
   await assert.rejects(accountSession('C', AbortSignal.timeout(20000)), /Identitas akun berubah/);
   const controller = new AbortController(); authLookup = () => new Promise(() => {});

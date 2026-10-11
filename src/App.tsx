@@ -15,10 +15,11 @@ import { useWorkspace } from './workspace/useWorkspace.js';
 import { availableKeys, generateWorkspaceQuiz } from './workspace/ai.js';
 import { accountRpc } from './workspace/supabase.js';
 import type { GenerationJob, QuizProgress } from './workspace/types.js';
+import { resumableQuiz } from './resumableSession.js';
 
 export default function App() {
   const w = useWorkspace();
-  const [view, setView] = useState<'creator' | 'runner' | 'results' | 'history'>('creator');
+  const [view, setView] = useState<'creator' | 'configuration' | 'runner' | 'results' | 'history'>('creator');
   const [quiz, setQuiz] = useState<Quiz | null>(null); const [result, setResult] = useState<QuizResult | null>(null);
   const [settings, setSettings] = useState<SettingsTab | null>(null);
   const [isEvaluating,setIsEvaluating]=useState(false);
@@ -46,13 +47,13 @@ export default function App() {
     if (!w.ready || restoredScope.current === w.scope) return;
     restoredScope.current = w.scope;
     if (w.data.progress) {
-      const saved = w.data.history.find(item => item.quiz.id === w.data.progress!.quizId);
-      if (saved) { setQuiz(saved.quiz); setView('runner'); }
+      const saved = resumableQuiz(w.data.history, w.data.progress);
+      if (saved) { setQuiz(saved); setView('runner'); }
     }
   }, [w.ready, w.scope, w.data.progress, w.data.history]);
   useEffect(() => { if (w.passwordRecovery) setSettings('account'); }, [w.passwordRecovery]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
-  const persistDraft = useCallback((draft: Record<string, unknown>) => { void w.update(d => ({ ...d, draft }), w.scope).catch(() => {}); }, [w.update, w.scope]);
+  const persistDraft = useCallback((draft: Record<string, unknown>) => w.update(d => ({ ...d, draft }), w.scope), [w.update, w.scope]);
   const persistProgress = useCallback((progress: QuizProgress) => {
     const serialized = JSON.stringify(progress); if (attemptedProgress.current === serialized) return;
     attemptedProgress.current = serialized;
@@ -60,7 +61,7 @@ export default function App() {
   }, [w.update, w.scope]);
   const newQuiz = () => { if(isEvaluating)return; setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
   const generate = async (config: QuizConfig, resume?: GenerationJob) => {
-    if (loading || isEvaluating || !w.ready || !w.repository) return;
+    if (scope.current !== w.scope || abort.current || loading || isEvaluating || !w.ready || !w.repository) return;
     const origin = w.scope; const repository = w.repository;
     const preferences = structuredClone(resume?.preferences || w.data.preferences);
     const controller = new AbortController(); abort.current = controller;
@@ -211,11 +212,21 @@ export default function App() {
   const retryQuiz = () => { if(isEvaluating)return; void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
   const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : `Akun · ${w.session?.user.email || 'pulihkan sesi'}`;
   const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled));
+  const resumable = resumableQuiz(w.data.history, w.data.progress);
+  const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
     <TopBar activeView={view} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
     <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>
     <main className="flex-1 w-full" aria-busy={loading || w.storageLoading}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span>{w.mode !== 'reauth_required' && <button disabled={w.storageLoading} onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button>}</div></div>}
+      {w.ready && <div hidden={loading || isEvaluating || !['creator', 'configuration'].includes(view)}>
+        <QuizCreator key={`${w.scope}:${w.mode}`} stage={view === 'configuration' ? 'configuration' : 'creator'} onNavigate={setView} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} onOpenModelSettings={() => setSettings('models')} initialDraft={w.data.draft} onDraft={persistDraft}
+          continueLearning={(resumable || interrupted || w.data.progress) && <section className="continue-learning" aria-labelledby="continue-title"><div className="home-section-heading"><h2 id="continue-title">Lanjutkan belajar</h2><span>Ruang aktif Anda</span></div>
+            {resumable ? <div className="continue-row"><span className="continue-symbol"><ArrowRight size={20} /></span><div><strong>{resumable.title}</strong><p>Sesi belum selesai · jawaban, penanda, dan waktu tetap tersimpan.</p></div><button className="settings-secondary" onClick={() => { setQuiz(resumable); setResult(null); setView('runner'); }}>Lanjutkan<ArrowRight size={16} /></button></div>
+              : w.data.progress && <p className="composer-notice" role="status">Sesi tersimpan tidak dapat dilanjutkan. Periksa Riwayat; salinan data tetap dipertahankan.</p>}
+            {interrupted && <div className="continue-row"><span className="continue-symbol"><RefreshCw size={20} /></span><div><strong>Pembuatan kuis belum selesai</strong><p>{interrupted.questions.length}/{interrupted.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => startGeneration(interrupted.config, interrupted)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div>}
+          </section>} />
+      </div>}
       {(w.mode === 'initializing' && !w.error) || (w.storageLoading && !w.ready) ? <div className="workspace-loading" role="status">{w.mode === 'account' ? 'Memuat penyimpanan akun…' : 'Memulihkan ruang penyimpanan…'}</div> : !w.ready ? <div className="workspace-loading"><h1>{w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : 'Penyimpanan perlu diperiksa'}</h1><p>Data lokal dan akun tetap terpisah. {w.mode === 'reauth_required' ? 'Masuk kembali untuk membuka data akun Anda.' : 'Periksa pesan kesalahan di atas lalu coba muat ulang data.'}</p><button className="settings-primary" onClick={() => setSettings('account')}>Buka pengaturan akun</button></div> : loading ? <>
         <GenerationLoader
           config={generation.config}
@@ -237,10 +248,7 @@ export default function App() {
           isCancelling={cancellingEvaluation}
           error={error}
         />
-      ) : view === 'creator' ? <>
-        {w.data.job && ['running','interrupted'].includes(w.data.job.status) && <div className="page-shell !pb-0 !pt-5"><div className="resume-banner"><div><strong>Pembuatan kuis belum selesai</strong><p>{w.data.job.questions.length}/{w.data.job.config.questionCount} soal tersimpan. Melanjutkan memakai kuota AI.</p></div><button className="settings-secondary" onClick={() => startGeneration(w.data.job!.config, w.data.job!)}>Lanjutkan</button><button className="settings-link" onClick={() => void w.update(d => ({ ...d, job: null })).catch(() => {})}>Abaikan</button></div></div>}
-        <QuizCreator key={w.scope} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} initialDraft={w.data.draft} onDraft={persistDraft} />
-      </> : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
+      ) : view === 'creator' || view === 'configuration' ? null : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
       : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={cancelEvaluation} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
       : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}

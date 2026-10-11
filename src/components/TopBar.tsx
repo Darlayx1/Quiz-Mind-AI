@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "./Button.js";
 interface TopBarProps {
-  activeView: "creator" | "runner" | "results" | "history";
+  activeView: "creator" | "configuration" | "runner" | "results" | "history";
   isBusy?: boolean;
   onNavigate: (view: "creator" | "history") => void;
   onOpenSettings: () => void;
@@ -29,8 +29,8 @@ export const TopBar: React.FC<TopBarProps> = ({
     <div className="header-inner">
       <button
         className="brand"
-        onClick={onNewQuizClick}
-        disabled={isBusy || activeView === "runner"}
+        onClick={() => onNavigate("creator")}
+        disabled={isBusy}
         aria-label="QuizMind AI · Menu utama"
       >
         <span className="brand-mark">
@@ -42,11 +42,11 @@ export const TopBar: React.FC<TopBarProps> = ({
       </button>
       <nav aria-label="Navigasi utama" className="header-nav">
         <button
-          aria-current={activeView === "creator" ? "page" : undefined}
-          disabled={isBusy || activeView === "runner"}
+          aria-current={activeView === "creator" || activeView === "configuration" ? "page" : undefined}
+          disabled={isBusy}
           onClick={() => onNavigate("creator")}
         >
-          <LayoutGrid size={16} /> Buat kuis
+          <LayoutGrid size={16} /> Beranda
         </button>
         <button
           aria-current={activeView === "history" ? "page" : undefined}

@@ -1,155 +1,95 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Button } from "./Button.js";
 import type { QuizConfig, DifficultyLevel, QuizDisplayMode } from "../types/quiz.js";
-import { AI_MODELS, DIFFICULTIES, AIModel, DEFAULT_MODEL, difficultyName, modelName } from "../models.js";
-import { durationLabel } from "../quizConfig.js";
+import { DIFFICULTIES, difficultyName, modelName } from "../models.js";
+import { durationLabel, normalizeQuizConfig } from "../quizConfig.js";
 import type { Preferences } from '../workspace/types.js';
-import { QuestionComposition, defaultComposition, type Composition } from './QuestionComposition.js';
+import { QuestionComposition } from './QuestionComposition.js';
 import { defaultEvaluationSettings } from '../evaluationSettings.js';
-import { ArrowRight, BookOpen, BrainCircuit, Check, ChevronDown, FileText, KeyRound, LayoutGrid, ListOrdered, ShieldCheck, SlidersHorizontal, Sparkles, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, BrainCircuit, Check, LayoutGrid, ListOrdered, ShieldCheck, SlidersHorizontal, Sparkles, Zap, GraduationCap, Lightbulb } from "lucide-react";
+import { QuizComposer } from './QuizComposer.js';
+import { useComposerDraft } from './useComposerDraft.js';
+import { applyQuickStart, composerSources, QUICK_STARTS } from '../composerDraft.js';
 
 interface QuizCreatorProps {
-  onGenerate: (config: QuizConfig) => void;
-  isLoading: boolean;
-  errorMessage: string | null;
-  preferences: Preferences;
-  hasApiKey: boolean;
-  storageLabel: string;
-  onOpenSettings: () => void;
-  initialDraft?: Record<string, unknown> | null;
-  onDraft: (draft: Record<string, unknown>) => void;
+  onGenerate: (config: QuizConfig) => void; isLoading: boolean; errorMessage: string | null;
+  preferences: Preferences; hasApiKey: boolean; storageLabel: string; onOpenSettings: () => void;
+  onOpenModelSettings?: () => void;
+  initialDraft?: Record<string, unknown> | null; onDraft: (draft: Record<string, unknown>) => Promise<unknown> | void;
+  stage?: 'creator' | 'configuration'; onNavigate?: (stage: 'creator' | 'configuration') => void;
+  continueLearning?: React.ReactNode;
 }
-const PRESETS = ["Kecerdasan Buatan", "Biologi Molekuler", "Sejarah Dunia", "Algoritma & Struktur Data"];
 const STYLES = ["Baku & akademis", "Santai & komunikatif", "Sederhana & mudah dipahami", "Profesional & ringkas"];
-
-export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, preferences, hasApiKey, storageLabel, onOpenSettings, initialDraft, onDraft }) => {
-  const restore = <T,>(field: string, fallback: T): T => (initialDraft?.[field] as T) ?? fallback;
-  const [inputMode, setInputMode] = useState<"topic" | "material">(restore('inputMode', 'topic'));
-  const [topic, setTopic] = useState(restore('topic', ''));
-  const [studyMaterial, setStudyMaterial] = useState(restore('studyMaterial', ''));
-  const [difficulty, setDifficulty] = useState<DifficultyLevel>(() => {
-    const saved = String(restore('difficulty', 'moderate'));
-    const id = ({ beginner: 'easy', advanced: 'hard', expert: 'master' } as Record<string, string>)[saved] || saved;
-    return DIFFICULTIES.find(level => level.id === id)?.id || 'moderate';
-  });
-  const [countChoice, setCountChoice] = useState<number | "custom">(restore('countChoice', 10));
-  const [customCount, setCustomCount] = useState(restore('customCount', '25'));
-  const [displayMode, setDisplayMode] = useState<QuizDisplayMode>(restore('displayMode', 'non_sequential'));
-  const [totalMinutes, setTotalMinutes] = useState(restore('totalMinutes', '15'));
-  const [perQuestionSeconds, setPerQuestionSeconds] = useState(restore('perQuestionSeconds', '60'));
-  const [unlimited, setUnlimited] = useState(restore('unlimited', false));
-  const [language, setLanguage] = useState<"id" | "en">(restore('language', 'id'));
-  const [languageStyle, setLanguageStyle] = useState(restore('languageStyle', ''));
-  const [additionalInstructions, setAdditionalInstructions] = useState(restore('additionalInstructions', ''));
-  const [composition, setComposition] = useState<Composition>(restore('composition', defaultComposition));
-  const enableGrounding = preferences.grounding;
-  const model = preferences.model;
-  const draftCallback = useRef(onDraft); draftCallback.current = onDraft;
-  useEffect(() => {
-    const timer = setTimeout(() => draftCallback.current({ inputMode, topic, studyMaterial, difficulty, countChoice, customCount,
-      displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition }), 600);
-    return () => clearTimeout(timer);
-  }, [inputMode, topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition]);
-  const [uploadError, setUploadError] = useState("");
-  const fileInput = useRef<HTMLInputElement>(null);
-  const selectedCount = countChoice === "custom" ? Number(customCount) : countChoice;
+export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, preferences, hasApiKey, storageLabel, onOpenSettings, onOpenModelSettings = onOpenSettings, initialDraft, onDraft, stage = 'configuration', onNavigate, continueLearning }) => {
+  const { draft, patch, flush, saveError, saving, pending, latest } = useComposerDraft(initialDraft, onDraft);
+  const { topic, studyMaterial, difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition } = draft;
+  const setDifficulty = (difficulty: DifficultyLevel) => patch({ difficulty, preset: undefined });
+  const setCountChoice = (countChoice: number | 'custom') => patch({ countChoice, preset: undefined });
+  const setCustomCount = (customCount: string) => patch({ customCount, preset: undefined });
+  const setDisplayMode = (displayMode: QuizDisplayMode) => patch({ displayMode, preset: undefined });
+  const setTotalMinutes = (totalMinutes: string) => patch({ totalMinutes, preset: undefined });
+  const setPerQuestionSeconds = (perQuestionSeconds: string) => patch({ perQuestionSeconds, preset: undefined });
+  const setUnlimited = (unlimited: boolean) => patch({ unlimited, preset: undefined });
+  const setLanguage = (language: 'id' | 'en') => patch({ language });
+  const setLanguageStyle = (languageStyle: string) => patch({ languageStyle });
+  const setAdditionalInstructions = (additionalInstructions: string) => patch({ additionalInstructions });
+  const setComposition = (composition: typeof draft.composition) => patch({ composition, preset: undefined });
+  const [transitioning, setTransitioning] = useState(false), [validationError, setValidationError] = useState('');
+  const guard = useRef(false), heading = useRef<HTMLHeadingElement>(null), previousStage = useRef(stage);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { if (previousStage.current !== stage) { previousStage.current = stage; heading.current?.focus(); } }, [stage]);
+  const sources = composerSources(draft), enableGrounding = preferences.grounding, model = preferences.model;
+  const selectedCount = countChoice === 'custom' ? Number(customCount) : countChoice;
   const questionCount = composition.mode === 'mixed' ? Object.values(composition.distribution).reduce((n,v) => n+(v??0),0) : selectedCount;
   const validCount = Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 100;
-  const sequential = displayMode === "sequential";
-  const timerValue = sequential ? perQuestionSeconds : totalMinutes;
-  const timerNumber = Number(timerValue);
+  const sequential = displayMode === 'sequential', timerValue = sequential ? perQuestionSeconds : totalMinutes, timerNumber = Number(timerValue);
   const validTimer = unlimited || (Number.isInteger(timerNumber) && timerNumber >= (sequential ? 15 : 1) && timerNumber <= (sequential ? 600 : 120));
-  const timerLabel = unlimited ? "Tanpa batas" : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : "—";
-  const supportsGrounding = model !== "gemma-4-31b-it" || preferences.searchProvider === 'parallel';
-  const selectedModel = AI_MODELS.find(item => item.id === model)!;
-  const missingReason = !topic.trim() ? "Isi topik kuis untuk melanjutkan."
-    : inputMode === "material" && !studyMaterial.trim() ? "Tempel atau unggah materi belajar."
-    : !validCount ? "Masukkan jumlah soal antara 1–100."
-    : !validTimer ? `Masukkan durasi ${sequential ? "15–600 detik" : "1–120 menit"}.`
-    : !hasApiKey ? "Tambahkan API key melalui Pengaturan AI untuk membuat kuis." : "";
+  const timerLabel = unlimited ? 'Tanpa batas' : validTimer ? durationLabel(sequential ? timerNumber : timerNumber * 60) : '—';
+  const supportsGrounding = model !== 'gemma-4-31b-it' || preferences.searchProvider === 'parallel';
+  const missingReason = sources.error || (!validCount ? 'Masukkan jumlah soal antara 1–100.' : !validTimer ? 'Masukkan durasi ' + (sequential ? '15–600 detik.' : '1–120 menit.') : !hasApiKey ? 'Tambahkan API key melalui Pengaturan AI untuk membuat kuis.' : '');
   const canGenerate = !isLoading && !missingReason;
-  const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!/\.(txt|md|text|csv)$/i.test(file.name)) {
-      setUploadError("Gunakan file .txt, .md, .text, atau .csv.");
-      return;
-    }
-    if (file.size > 2 * 1024 * 1024) {
-      setUploadError("Ukuran file maksimal 2 MB.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setStudyMaterial(String(reader.result).slice(0, 15000));
-      setUploadError("");
-      if (!topic.trim()) setTopic(file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").slice(0, 300));
-    };
-    reader.onerror = () => setUploadError("File belum berhasil dibaca. Silakan coba kembali.");
-    reader.readAsText(file);
+  const navigate = async (next: 'creator' | 'configuration') => {
+    if (guard.current || (next === 'configuration' && sources.error)) return;
+    guard.current = true; setTransitioning(true); setValidationError('');
+    try { await flush(); if (alive.current) onNavigate?.(next); } catch { /* Save error is visible; keep current stage. */ }
+    finally { guard.current = false; if (alive.current) setTransitioning(false); }
   };
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!canGenerate) return;
-    onGenerate({
-      model, topic: topic.trim(),
-      studyMaterial: inputMode === "material" ? studyMaterial.trim() : undefined,
-      difficulty, questionCount, displayMode,
-      questionType: composition.type, questionDistribution: composition.mode === 'mixed' ? composition.distribution : { [composition.type]: questionCount },
-      pointsByType: composition.points, partialCredit: composition.partialCredit, timePerQuestionByType: sequential && !unlimited ? composition.times : undefined,
-      evaluationSettings: preferences.evaluation ?? defaultEvaluationSettings,
-      timeLimitMinutes: unlimited ? 0 : sequential
-        ? (Number.isInteger(Number(totalMinutes)) && Number(totalMinutes) >= 1 && Number(totalMinutes) <= 120 ? Number(totalMinutes) : 15)
-        : Number(totalMinutes),
-      timePerQuestionSeconds: sequential ? unlimited ? 0 : Number(perQuestionSeconds) : undefined,
-      language, languageStyle: languageStyle.trim() || undefined,
-      additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding: enableGrounding && supportsGrounding,
-    });
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); if (!canGenerate || guard.current || stage !== 'configuration') return;
+    guard.current = true; setTransitioning(true); setValidationError('');
+    try {
+      await flush(); if (!alive.current) return;
+      const currentSources = composerSources(latest.current);
+      const { difficulty, countChoice, customCount, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, languageStyle, additionalInstructions, composition } = latest.current;
+      const sequential = displayMode === 'sequential';
+      const questionCount = composition.mode === 'mixed' ? Object.values(composition.distribution).reduce((n,v) => n+(v??0),0) : countChoice === 'custom' ? Number(customCount) : countChoice;
+      if (currentSources.error) throw new Error(currentSources.error);
+      onGenerate(normalizeQuizConfig({ model, topic: currentSources.topic, studyMaterial: currentSources.material || undefined,
+        difficulty, questionCount, displayMode, questionType: composition.type, questionDistribution: composition.mode === 'mixed' ? composition.distribution : { [composition.type]: questionCount },
+        pointsByType: composition.points, partialCredit: composition.partialCredit, timePerQuestionByType: sequential && !unlimited ? composition.times : undefined,
+        evaluationSettings: preferences.evaluation ?? defaultEvaluationSettings,
+        timeLimitMinutes: unlimited ? 0 : sequential ? (Number.isInteger(Number(totalMinutes)) && Number(totalMinutes) >= 1 && Number(totalMinutes) <= 120 ? Number(totalMinutes) : 15) : Number(totalMinutes),
+        timePerQuestionSeconds: sequential ? unlimited ? 0 : Number(perQuestionSeconds) : undefined, language, languageStyle: languageStyle.trim() || undefined,
+        additionalInstructions: additionalInstructions.trim() || undefined, enableGrounding: enableGrounding && supportsGrounding }));
+    } catch (error) { if (alive.current) setValidationError((error as Error).message); }
+    finally { guard.current = false; if (alive.current) setTransitioning(false); }
   };
-
-  return (
-    <div className="page-shell menu-page">
-      <div className="menu-heading">
-        <div>
-          <div className="eyebrow">RUANG BELAJAR</div>
-          <h1>Buat kuis baru</h1>
-          <p>Pilih materi, sesuaikan latihan, dan mulai belajar.</p>
-        </div>
-        <span className="menu-heading-note"><Sparkles size={16} /> Dibantu AI</span>
-      </div>
-      {errorMessage && <div role="alert" className="form-alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
-      <form onSubmit={submit} className="menu-layout">
-        <fieldset disabled={isLoading} className="menu-fields">
-          <QuestionComposition value={composition} onChange={setComposition} count={selectedCount} sequential={sequential && !unlimited} evaluator={preferences.evaluation ?? defaultEvaluationSettings} onOpen={onOpenSettings} />
-          <section className="surface menu-section">
-            <div className="menu-section-title"><BookOpen size={19} /><h2>Materi kuis</h2></div>
-            <fieldset className="source-options">
-              <legend className="sr-only">Sumber materi</legend>
-              {([{ id: "topic", label: "Topik bebas", icon: BookOpen }, { id: "material", label: "Materi sendiri", icon: FileText }] as const).map(({ id, label, icon: Icon }) => (
-                <label key={id} className="source-option">
-                  <input type="radio" name="input-mode" value={id} checked={inputMode === id} onChange={() => setInputMode(id)} />
-                  <Icon size={16} /><span>{label}</span>
-                </label>
-              ))}
-            </fieldset>
-            <label htmlFor="quiz-topic" className="field-label">Topik kuis <span className="required-dot">*</span></label>
-            <input id="quiz-topic" required maxLength={300} value={topic} onChange={e => setTopic(e.target.value)} placeholder="Contoh: sistem tata surya" className="field-input" />
-            {inputMode === "topic" ? (
-              <div className="menu-presets"><span>Ide topik</span>{PRESETS.map(preset => <button type="button" className="topic-chip" key={preset} onClick={() => setTopic(preset)}>{preset}</button>)}</div>
-            ) : (
-              <div className="material-field">
-                <div className="material-label"><label htmlFor="study-material" className="field-label">Materi belajar <span className="required-dot">*</span></label>
-                  <button type="button" className="upload-button" onClick={() => fileInput.current?.click()}><Upload size={14} /> Unggah teks</button>
-                  <input ref={fileInput} type="file" accept=".txt,.md,.text,.csv" onChange={upload} className="sr-only" tabIndex={-1} aria-label="File materi belajar" />
-                </div>
-                <textarea id="study-material" className="field-input resize-y" rows={5} required maxLength={15000} value={studyMaterial} onChange={e => setStudyMaterial(e.target.value)} placeholder="Tempel catatan atau materi belajar di sini…" aria-describedby="material-help" />
-                <p id="material-help" className="field-help material-help"><span>TXT, MD, TEXT, CSV · Maks. 2 MB</span><span>{studyMaterial.length.toLocaleString("id-ID")} / 15.000</span></p>
-                {uploadError && <p role="alert" className="text-sm text-red-600 mt-2">{uploadError}</p>}
-              </div>
-            )}
-          </section>
-
+  if (stage === 'creator') return <div className="page-shell smart-home">
+    <div className="home-heading"><div className="eyebrow"><span className="home-eyebrow-line" /> RUANG UNTUK RASA INGIN TAHU</div><h1 ref={heading} tabIndex={-1}>Apa yang ingin Anda<br /><span>pelajari hari ini?</span></h1><p>Ubah topik, catatan, atau materi Anda menjadi kuis yang bermakna.</p></div>
+    {errorMessage && <div className="form-alert" role="alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
+    <QuizComposer draft={draft} patch={patch} onContinue={() => void navigate('configuration')} busy={transitioning || isLoading} saving={saving || pending} saveError={saveError} />
+    <section className="quick-start-section" aria-labelledby="quick-start-title"><div className="home-section-heading"><h2 id="quick-start-title">Mulai dengan ritme Anda</h2><span>Preset opsional</span></div><div className="quick-starts">{QUICK_STARTS.map((preset, i) => { const Icon = [Zap, GraduationCap, Lightbulb][i]; return <button type="button" key={preset.id} aria-pressed={draft.preset === preset.id} onClick={() => patch(d => applyQuickStart(d, preset.id))}><span className="preset-icon"><Icon size={19} /></span><span><strong>{preset.label}</strong><small>{preset.description}</small></span><ArrowRight size={16} /></button>; })}</div></section>
+    {continueLearning}
+    <div className="home-ai-note"><BrainCircuit size={16} /><span>{modelName(model)}</span><span className="home-note-separator">·</span><button onClick={onOpenSettings}>{hasApiKey ? 'Kelola AI' : 'Hubungkan AI Anda'}<ArrowRight size={13} /></button></div>
+  </div>;
+  return <div className="page-shell menu-page configuration-page">
+    <button type="button" className="configuration-back" disabled={transitioning || isLoading} onClick={() => void navigate('creator')}><ArrowLeft size={17} />Kembali</button>
+    <div className="menu-heading"><div><div className="eyebrow">LANGKAH 2 · SESUAIKAN LATIHAN</div><h1 ref={heading} tabIndex={-1}>Konfigurasi Kuis</h1><p>Atur latihan sesuai tujuan dan waktu Anda.</p></div><span className="menu-heading-note"><Sparkles size={16} /> Dibantu AI</span></div>
+    {(errorMessage || validationError || saveError) && <div role="alert" className="form-alert"><strong>Kuis belum dapat dimulai</strong><p>{validationError || saveError || errorMessage}</p></div>}
+    <form onSubmit={submit} className="menu-layout"><fieldset disabled={isLoading || transitioning} className="menu-fields">
+      <section className="surface menu-section source-summary"><div className="menu-section-title"><BookOpen size={19} /><h2>Sumber kuis</h2><button type="button" onClick={() => void navigate('creator')}>Edit materi<ArrowRight size={14} /></button></div><h3>{sources.topic}</h3><p>{studyMaterial.trim() ? 'Konteks materi ditambahkan · ' : ''}{draft.attachments.length ? draft.attachments.length + ' lampiran · ' : ''}{sources.material.length.toLocaleString('id-ID')} karakter materi</p>{draft.attachments.map(a => <span key={a.id} className="configuration-file">{a.name}</span>)}</section>
+      <QuestionComposition expanded value={composition} onChange={setComposition} count={selectedCount} sequential={sequential && !unlimited} evaluator={preferences.evaluation ?? defaultEvaluationSettings} onOpen={onOpenModelSettings} />
           <section className="surface menu-section">
             <div className="menu-section-title"><SlidersHorizontal size={19} /><h2>Pengaturan latihan</h2></div>
             <div className="menu-setting-grid">
@@ -194,11 +134,11 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             </div>
           </section>
 
-          <details className="surface menu-advanced">
-            <summary><SlidersHorizontal size={18} /><span><strong>Personalisasi kuis</strong><small>Bahasa, gaya penulisan, dan instruksi tambahan</small></span><ChevronDown size={18} /></summary>
+          <section className="surface menu-advanced">
+            <div className="menu-section-title personalization-title"><SlidersHorizontal size={18} /><h2>Bahasa & instruksi</h2></div>
             <div className="menu-advanced-body">
               <div className="menu-setting-grid">
-                <div><span className="field-label">Partner AI</span><button type="button" className="ai-config-shortcut" onClick={onOpenSettings}><BrainCircuit size={18} /><span>{modelName(model)}<small>Kelola di Pengaturan AI</small></span><ArrowRight size={16} /></button></div>
+                <div><span className="field-label">Partner AI</span><button type="button" className="ai-config-shortcut" onClick={onOpenModelSettings}><BrainCircuit size={18} /><span>{modelName(model)}<small>Kelola di Pengaturan AI</small></span><ArrowRight size={16} /></button></div>
                 <div><label htmlFor="quiz-language" className="field-label">Bahasa kuis</label><select id="quiz-language" className="field-input" value={language} onChange={e => setLanguage(e.target.value as "id" | "en")}><option value="id">Bahasa Indonesia</option><option value="en">English</option></select></div>
               </div>
               <p className="field-help mt-4">Referensi web {enableGrounding && supportsGrounding ? 'aktif' : 'nonaktif'} · Ubah melalui Pengaturan AI.</p>
@@ -209,14 +149,14 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
               <label htmlFor="additional-instructions" className="field-label mt-5">Instruksi tambahan <span className="optional-badge">Opsional</span></label>
               <textarea id="additional-instructions" className="field-input resize-y" rows={3} maxLength={2000} value={additionalInstructions} onChange={e => setAdditionalInstructions(e.target.value)} placeholder="Contoh: fokus pada studi kasus dan contoh sehari-hari." />
             </div>
-          </details>
+          </section>
 
           <section className="surface ai-connection-card"><span className={`connection-dot ${hasApiKey ? 'connected' : ''}`} /><div><strong>{hasApiKey ? 'Partner AI siap digunakan' : 'Hubungkan partner AI Anda'}</strong><p>{hasApiKey ? 'Key dan model mengikuti ruang penyimpanan aktif.' : 'Tambahkan API key tanpa perlu login.'}</p></div><button type="button" className="settings-link" onClick={onOpenSettings}>Pengaturan AI <ArrowRight size={15} /></button></section>
         </fieldset>
 
         <aside className="surface menu-summary" aria-label="Ringkasan kuis">
           <div className="menu-section-title"><Sparkles size={19} /><h2>Ringkasan kuis</h2></div>
-          <div className="menu-summary-topic"><span>{inputMode === "material" ? "DARI MATERI ANDA" : "TOPIK PILIHAN"}</span><h3>{topic.trim() || "Topik belum diisi"}</h3></div>
+          <div className="menu-summary-topic"><span>{"LATIHAN ANDA"}</span><h3>{sources.topic}</h3></div>
           <dl className="menu-summary-list">
             <div><dt>Kesulitan</dt><dd>{difficultyName(difficulty)}</dd></div>
             <div><dt>Jumlah soal</dt><dd>{validCount ? questionCount : "—"} soal</dd></div>
@@ -228,11 +168,10 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             {additionalInstructions.trim() && <div><dt>Instruksi tambahan</dt><dd><Check size={14} /> Ditambahkan</dd></div>}
           </dl>
           <div className="menu-summary-model"><BrainCircuit size={17} /><span>{modelName(model)}</span></div>
-          <Button type="submit" label={isLoading ? "Menyiapkan kuis…" : "Buat kuis"} icon={<ArrowRight size={17} />} iconPosition="trailing" className="w-full" size="lg" disabled={!canGenerate} aria-describedby="generate-help" />
-          <p id="generate-help" className="menu-submit-help" aria-live="polite">{missingReason || "Setiap soal dilengkapi pembahasan."}</p>
+          <Button type="submit" label={isLoading || transitioning ? "Menyiapkan kuis…" : "Mulai"} icon={<ArrowRight size={17} />} iconPosition="trailing" className="w-full" size="lg" disabled={!canGenerate || transitioning} aria-describedby="generate-help" />
+          <p id="generate-help" className="menu-submit-help" aria-live="polite">{missingReason || "Mulai menggunakan kuota AI pada ruang aktif."}</p>
           <p className="menu-privacy-note"><ShieldCheck size={14} /> {storageLabel}</p>
         </aside>
-      </form>
-    </div>
-  );
+    </form>
+  </div>;
 };

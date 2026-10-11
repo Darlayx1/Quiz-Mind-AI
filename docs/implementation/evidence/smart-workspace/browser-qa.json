@@ -1,0 +1,162 @@
+{
+  "requestedWidths": [
+    320,
+    375,
+    768,
+    1024,
+    1440
+  ],
+  "home": [
+    {
+      "ctaInside": true,
+      "scrollWidth": 305,
+      "toolbarOverlap": false,
+      "tools": [
+        {
+          "height": 44,
+          "label": "Unggah lampiran",
+          "left": 30.80000114440918,
+          "right": 74.80000114440918,
+          "width": 44
+        },
+        {
+          "height": 44,
+          "label": "Tambah konteks materi",
+          "left": 74.80000305175781,
+          "right": 118.8000030517578,
+          "width": 44
+        }
+      ],
+      "width": 305
+    },
+    {
+      "ctaInside": true,
+      "scrollWidth": 360,
+      "toolbarOverlap": false,
+      "tools": [
+        {
+          "height": 44,
+          "label": "Unggah lampiran",
+          "left": 34.79999923706055,
+          "right": 78.79999923706055,
+          "width": 44
+        },
+        {
+          "height": 44,
+          "label": "Tambah konteks materi",
+          "left": 82.80000305175781,
+          "right": 126.8000030517578,
+          "width": 44
+        }
+      ],
+      "width": 360
+    },
+    {
+      "ctaInside": true,
+      "scrollWidth": 753,
+      "toolbarOverlap": false,
+      "tools": [
+        {
+          "height": 44,
+          "label": "Unggah lampiran",
+          "left": 50.79999923706055,
+          "right": 94.79999923706056,
+          "width": 44
+        },
+        {
+          "height": 44,
+          "label": "Tambah konteks materi",
+          "left": 98.8000030517578,
+          "right": 142.8000030517578,
+          "width": 44
+        }
+      ],
+      "width": 753
+    },
+    {
+      "ctaInside": true,
+      "scrollWidth": 1009,
+      "toolbarOverlap": false,
+      "tools": [
+        {
+          "height": 44,
+          "label": "Unggah lampiran",
+          "left": 95.20000457763672,
+          "right": 139.20000457763672,
+          "width": 44
+        },
+        {
+          "height": 44,
+          "label": "Tambah konteks materi",
+          "left": 143.1999969482422,
+          "right": 187.1999969482422,
+          "width": 44
+        }
+      ],
+      "width": 1009
+    },
+    {
+      "ctaInside": true,
+      "scrollWidth": 1425,
+      "toolbarOverlap": false,
+      "tools": [
+        {
+          "height": 44,
+          "label": "Unggah lampiran",
+          "left": 303.20001220703125,
+          "right": 347.20001220703125,
+          "width": 44
+        },
+        {
+          "height": 44,
+          "label": "Tambah konteks materi",
+          "left": 351.20001220703125,
+          "right": 395.2000122070313,
+          "width": 44
+        }
+      ],
+      "width": 1425
+    }
+  ],
+  "configuration": [
+    {
+      "fields": 30,
+      "scrollWidth": 305,
+      "startVisible": true,
+      "width": 305
+    },
+    {
+      "fields": 30,
+      "scrollWidth": 360,
+      "startVisible": true,
+      "width": 360
+    },
+    {
+      "fields": 30,
+      "scrollWidth": 753,
+      "startVisible": true,
+      "width": 753
+    },
+    {
+      "fields": 30,
+      "scrollWidth": 1009,
+      "startVisible": true,
+      "width": 1009
+    },
+    {
+      "fields": 30,
+      "scrollWidth": 1425,
+      "startVisible": true,
+      "width": 1425
+    }
+  ],
+  "nativeMultiplePicker": true,
+  "textDocxPptxXlsxPdfReady": true,
+  "imageOcrVerified": "Fotosintesis menggunakan energi cahaya. Klorofil menyerap cahaya matahari. Respirasi sel menghasilkan energi.",
+  "productionPdfAndOcrWithCsp": true,
+  "backPreservesSources": true,
+  "isolatedOriginReloadPreservesTopicContextAttachmentsPresetLanguage": true,
+  "contextKeyboardEnterEscapeAndFocusReturn": true,
+  "legacyDocShowsActionableError": true,
+  "notes": "Client widths exclude the 15px vertical scrollbar. No live AI generation or live account database writes were performed."
+}

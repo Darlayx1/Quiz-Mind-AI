@@ -1,5 +1,6 @@
 import worker from '../dist/server/index.js';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 const call = (pathname, body) => worker.fetch(new Request('https://quiz.test' + pathname,
   body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), {});
@@ -10,6 +11,12 @@ assert.ok(!html.includes('/src/main'));
 for (const match of html.matchAll(/(?:src|href)="(\/assets\/[^\"]+)"/g)) assert.equal((await call(match[1])).status, 200);
 assert.equal((await call('/history')).status, 200);
 assert.equal((await call('/assets/missing.js')).status, 404);
+assert.equal((await call('/ingestion-assets/missing.wasm')).status, 404);
+for (const [name, mime] of [['tesseract-core-lstm.wasm', 'application/wasm'], ['eng.traineddata.gz', 'application/octet-stream'], ['worker.min.js', 'text/javascript; charset=utf-8']]) {
+  const response = await call('/ingestion-assets/' + name);
+  assert.equal(response.headers.get('content-type'), mime);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), await readFile('dist/ingestion-assets/' + name), 'Worker preserves binary material-processing assets');
+}
 assert.equal((await call('/api/health')).status, 200);
 assert.deepEqual((await (await call('/api/health')).json()).models, ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemma-4-31b-it']);
 assert.equal((await call('/api/missing')).status, 404);

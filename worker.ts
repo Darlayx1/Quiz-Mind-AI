@@ -50,14 +50,15 @@ export default {
       }
     }
     if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method not allowed', { status: 405 });
-    const files = assets as Record<string, string>;
+    const files = assets as Record<string, string | { base64: string }>;
     const key = pathname === '/' ? '/index.html' : pathname;
-    const content = files[key] ?? (pathname.startsWith('/assets/') ? undefined : files['/index.html']);
+    const content = files[key] ?? (/^\/(assets|ingestion-assets)\//.test(pathname) ? undefined : files['/index.html']);
     if (content === undefined) return new Response('Not found', { status: 404 });
-    const mime = key.endsWith('.js') ? 'text/javascript' : key.endsWith('.css') ? 'text/css' : 'text/html';
-    return new Response(request.method === 'HEAD' ? null : content, {
+    const mime = /\.(js|mjs)$/.test(key) ? 'text/javascript' : key.endsWith('.css') ? 'text/css' : key.endsWith('.wasm') ? 'application/wasm' : key.endsWith('.gz') ? 'application/octet-stream' : 'text/html';
+    const body = typeof content === 'string' ? content : Uint8Array.from(atob(content.base64), c => c.charCodeAt(0));
+    return new Response(request.method === 'HEAD' ? null : body, {
       headers: {
-        'content-type': mime + '; charset=utf-8',
+        'content-type': mime + (typeof content === 'string' ? '; charset=utf-8' : ''),
         'cache-control': pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache'
       }
     });

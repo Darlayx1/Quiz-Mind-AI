@@ -9,7 +9,9 @@ async function collect(directory) {
     if (entry.isDirectory()) await collect(filename);
     else {
       const url = '/' + path.relative('dist', filename).replaceAll('\\', '/');
-      assets[url] = await readFile(filename, 'utf8');
+      const bytes = await readFile(filename);
+      assets[url] = /\.(wasm|gz|png|jpe?g|gif|webp|ico)$/i.test(filename)
+        ? { base64: bytes.toString('base64') } : bytes.toString('utf8');
     }
   }
 }

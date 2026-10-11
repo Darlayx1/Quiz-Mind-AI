@@ -34,7 +34,7 @@ jobs:
       - run: node --import tsx scripts/workspace-ai-test.ts
       - run: npm run test:quality
       - run: npm run test:parallel
-      - run: node --import tsx scripts/app-operation-test.ts
+      - run: npm run test:composer
       - run: node --import tsx scripts/workspace-account-test.ts
       - run: node --import tsx scripts/quiz-types-test.ts
       - run: npm run build:pages

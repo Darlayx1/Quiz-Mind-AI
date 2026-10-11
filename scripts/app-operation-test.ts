@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { emptyWorkspace } from '../src/workspace/types.js';
+import { fixtures } from './assessment-fixtures.js';
+import { validateQuestion } from '../src/questionValidation.js';
 
 // Render the real App with an isolated hook host and deferred provider operations.
 const runtime = globalThis as any;
@@ -51,7 +53,12 @@ runtime.__workspace.mode = 'initializing'; runtime.__workspace.error = 'Fixture 
 assert.ok(JSON.stringify(render()).includes('Fixture startup timeout'));
 assert.ok(!JSON.stringify(render()).includes('Memulihkan ruang penyimpanan'), 'Startup timeout must exit the loading screen');
 runtime.__workspace.mode = 'account'; runtime.__workspace.ready = true; runtime.__workspace.error = '';
-find(render(), 'QuizCreator').props.onGenerate({ topic: 'First', questionCount: 1 });
+const firstCreator = find(render(), 'QuizCreator');
+firstCreator.props.onNavigate('configuration');
+assert.equal(pending.length, 0, 'Entering configuration never calls generation');
+firstCreator.props.onGenerate({ topic: 'First', questionCount: 1 });
+firstCreator.props.onGenerate({ topic: 'Duplicate click', questionCount: 1 });
+assert.equal(pending.length, 1, 'Rapid submissions cannot dispatch a second provider operation');
 assert.ok(find(render(), 'GenerationLoader'));
 runtime.__workspace.mode = 'reauth_required'; runtime.__workspace.ready = false; render();
 assert.equal(pending[0].args[5].aborted, true);
@@ -91,4 +98,16 @@ const toast = (function byToast(node: any): any {
   return byToast(node.props?.children);
 })(render());
 assert.match(toast.props.children, /berhasil dibatalkan/);
-console.log('PASS: real App session recovery and cancel action aborts generation and returns to creator. No external calls.');
+const savedQuiz = { id: 'resume-fixture', title: 'Saved quiz', questions: [validateQuestion({ ...fixtures.single_choice, id: 'q1' }, 0, 'Konsep', [], 'single_choice')!] };
+const savedProgress = { quizId: savedQuiz.id, currentIndex: 0, answers: { q1: 0 }, bookmarks: ['q1'], attemptId: 'preserved-attempt', startedAt: 1000, deadline: 901000 };
+runtime.__workspace.data.history = [{ quiz: savedQuiz, savedAt: '' }];
+runtime.__workspace.data.progress = savedProgress;
+const continueSection = find(render(), 'QuizCreator').props.continueLearning;
+find(continueSection, 'button').props.onClick();
+assert.deepEqual(find(render(), 'QuizRunner').props.initialProgress, savedProgress);
+const beforeHome = updates;
+find(render(), 'TopBar').props.onNavigate('creator');
+assert.equal(updates, beforeHome, 'Go Home performs no destructive workspace update');
+assert.deepEqual(runtime.__workspace.data.progress, savedProgress);
+assert.ok(find(render(), 'QuizCreator').props.continueLearning);
+console.log('PASS: real App configuration without generation, duplicate submission guard, session recovery/cancel, Go Home preservation, Continue Learning answer/bookmark/attempt/deadline restoration. No external calls.');
