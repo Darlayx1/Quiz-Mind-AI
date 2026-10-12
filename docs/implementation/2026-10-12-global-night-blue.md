@@ -19,4 +19,6 @@ Permintaan pengguna: terapkan aksen night blue di semua tampilan, jadikan latar 
 
 ## Publikasi
 
+Verifikasi publik setelah deploy awal menemukan bahwa deklarasi gradient legacy `.app-frame` masih terdapat pada CSS produksi dan latar terukur `rgb(246, 248, 251)`, berbeda dari dev. Sumber gradient dihapus langsung dari aturan kanonis, bukan ditimpa dengan override tambahan. Sticky kontrol mobile juga dibuat putih. Preview build produksi diperiksa terpisah pada port sementara 5174: `backgroundColor` putih, `backgroundImage: none`, root putih, dan aksen `#214f82`. Server preview sementara dihentikan setelah pemeriksaan.
+
 Jalur produksi yang dikonfigurasi adalah GitHub Actions `.github/workflows/pages.yml`, yang menerbitkan frontend ketika `main` diperbarui. Target: https://darlayx1.github.io/Quiz-Mind-AI/. Perubahan ini hanya frontend; tidak membutuhkan deployment Edge Functions atau migrasi database.

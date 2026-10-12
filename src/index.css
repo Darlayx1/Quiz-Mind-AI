@@ -19,7 +19,6 @@
 
 /* Shared workspace and settings system. */
 :root { --qm-accent: var(--qm-blue-600); --qm-ink: #1d2b42; --qm-muted: #758198; --qm-line: #e4e9f1; --qm-soft: #f5f7fb; }
-.app-frame { background: #fff !important; }
 .surface { border-color: var(--qm-line); box-shadow: 0 5px 25px -20px #23314a33; }
 .workspace-strip { display: flex; justify-content: space-between; gap: 16px; max-width: 1160px; width: 100%; margin: auto; padding: 15px 28px 0; color: var(--qm-muted); font-size: 11px; }
 .workspace-strip > span, .header-settings-button, .app-footer button { display: inline-flex; align-items: center; gap: 8px; }
@@ -139,8 +138,7 @@ button:disabled {
   cursor: not-allowed;
 }
 .app-frame {
-  background:
-    radial-gradient(ellipse at 75% 0%, #f1f6fc 0, transparent 36%), #f6f8fb;
+  background: #fff;
 }
 .page-shell {
   max-width: 1160px;
@@ -1068,7 +1066,7 @@ progress::-moz-progress-bar {
     bottom: 0;
     z-index: 10;
     padding: 12px 0;
-    background: #f6f8fbef;
+    background: #ffffffef;
     backdrop-filter: blur(12px);
   }
   .runner-page aside {
