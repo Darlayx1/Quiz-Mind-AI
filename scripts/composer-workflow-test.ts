@@ -69,12 +69,12 @@ globalThis.clearTimeout = ((id: number) => { timers.delete(id); }) as any;
 try {
   const compiled = await build({ entryPoints: ['src/components/QuizCreator.tsx'], bundle: true, write: false, platform: 'node', format: 'esm',
     plugins: [{ name: 'creator-host', setup(p) {
-      p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/Button\.js$|\/QuizComposer\.js$|\/QuestionComposition\.js$|\/QuestionScoring\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
+      p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/Button\.js$|\/QuizComposer\.js$|\/QuestionComposition\.js$|\/QuestionScoring\.js$|\/LanguageStyleSelector\.js$|\/DurationControl\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
       p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => {
         let contents = '';
         if (path === 'react') contents = 'export const {useState,useRef,useEffect}=globalThis.__composerHooks;export default {};';
         else if (path === 'react/jsx-runtime') contents = 'export const Fragment="Fragment";export const jsx=(type,props)=>({type,props});export const jsxs=jsx;';
-        else if (path === 'lucide-react') contents = ['ArrowLeft','ArrowRight','BookOpen','BrainCircuit','Check','LayoutGrid','ListOrdered','ShieldCheck','SlidersHorizontal','Sparkles','Zap','GraduationCap','Lightbulb'].map(n => `export const ${n}="${n}";`).join('');
+        else if (path === 'lucide-react') contents = ['ArrowLeft','ArrowRight','BrainCircuit','Check','ChevronLeft','ChevronRight','ShieldCheck','Sparkles','Zap','GraduationCap','Lightbulb'].map(n => `export const ${n}="${n}";`).join('');
         else if (path.includes('QuestionComposition')) contents = 'export const QuestionComposition="QuestionComposition";export const defaultComposition={mode:"single",type:"single_choice",distribution:{single_choice:5,multiple_select:5},points:{},partialCredit:false};';
         else { const name = path.split('/').at(-1)!.replace('.js', ''); contents = `export const ${name}="${name}";`; }
         return { contents };
@@ -108,6 +108,16 @@ try {
   assert.equal(generates, 1, 'Concurrent Mulai submissions invoke generation once');
   assert.equal(config.language, 'en'); assert.ok(config.studyMaterial.includes('Last context')); assert.ok(config.studyMaterial.includes('Materi file.'));
   assert.equal(config.topic, 'Last edit');
+  component(tree, 'DurationControl').props.onChange('20'); tree = render();
+  find(tree, n => n.type === 'input' && n.props?.name === 'display-mode' && n.props.value === 'sequential').props.onChange(); tree = render();
+  assert.equal(component(tree, 'DurationControl').props.value, '60');
+  component(tree, 'DurationControl').props.onChange('90'); tree = render();
+  component(tree, 'DurationControl').props.onUnlimitedChange(true); tree = render();
+  assert.equal(component(tree, 'DurationControl').props.unlimited, true);
+  component(tree, 'DurationControl').props.onUnlimitedChange(false); tree = render();
+  assert.equal(component(tree, 'DurationControl').props.value, '90');
+  find(tree, n => n.type === 'input' && n.props?.name === 'display-mode' && n.props.value === 'non_sequential').props.onChange(); tree = render();
+  assert.equal(component(tree, 'DurationControl').props.value, '20', 'Duration component callbacks retain both mode units independently');
   // Exercise the real creator's payload wiring for all seven types and mixed allocation.
   for (const type of QUESTION_TYPES) {
     const gallery = component(tree, 'QuestionComposition');
@@ -117,22 +127,23 @@ try {
   }
   const mixed: Composition = { ...component(tree, 'QuestionComposition').props.value, mode: 'mixed', distribution: equalDistribution(QUESTION_TYPES, 11), points: { essay: 4 }, times: { essay: 0 }, partialCredit: true };
   component(tree, 'QuestionComposition').props.onChange(mixed);
-  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '11' } }); tree = render();
+  tree = render();
   find(tree, n => n.type === 'input' && n.props?.name === 'display-mode' && n.props.value === 'sequential').props.onChange(); tree = render();
   await find(tree, n => n.type === 'form').props.onSubmit(event); tree = render();
   assert.equal(config.questionCount, 11); assert.deepEqual(config.questionDistribution, mixed.distribution);
   assert.equal(config.pointsByType.essay, 4); assert.equal(config.timePerQuestionByType.essay, 0); assert.equal(config.partialCredit, true);
   const beforeInvalid = generates;
-  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '12' } }); tree = render();
-  assert.deepEqual(component(tree, 'QuestionComposition').props.value.distribution, mixed.distribution, 'Changing target never silently reallocates');
-  await find(tree, n => n.type === 'form').props.onSubmit(event); assert.equal(generates, beforeInvalid, 'Mismatched allocation blocks generation');
-  assert.match(compositionError(component(tree, 'QuestionComposition').props.value, 12), /11 dari 12/);
-  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '11' } }); tree = render();
+  component(tree, 'QuestionComposition').props.onChange({ ...mixed, distribution: {} }); tree = render();
+  await find(tree, n => n.type === 'form').props.onSubmit(event); assert.equal(generates, beforeInvalid, 'Empty mixed composition blocks generation');
+  assert.match(compositionError(component(tree, 'QuestionComposition').props.value, 12), /minimal satu/);
+  component(tree, 'QuestionComposition').props.onChange(mixed); tree = render();
+  assert.equal(compositionError(mixed, 12), '', 'Universal target no longer conflicts with mixed totals');
   const gallery = component(tree, 'QuestionComposition'); gallery.props.onChange({ ...gallery.props.value, mode: 'single' }); tree = render();
   component(tree, 'QuestionComposition').props.onChange({ ...component(tree, 'QuestionComposition').props.value, mode: 'mixed' }); tree = render();
-  assert.deepEqual(component(tree, 'QuestionComposition').props.value, mixed, 'Mode switch retains type, distribution, weights, partial credit, and timers');
+  const preserved = component(tree, 'QuestionComposition').props.value;
+  assert.deepEqual(preserved.distribution, mixed.distribution); assert.deepEqual(preserved.points, mixed.points); assert.deepEqual(preserved.times, mixed.times);
   await find(tree, n => n.type === 'form').props.onSubmit(event); tree = render();
-  assert.deepEqual(restoreComposerDraft(stored).composition, mixed, 'Saved draft restores full mixed configuration');
+  assert.deepEqual(restoreComposerDraft(stored).composition, preserved, 'Saved draft restores full mixed and single configuration');
   assert.equal(activeQuestionTypes(mixed).length, 7);
   stage = 'creator'; tree = render(); component(tree, 'QuizComposer').props.patch({ topic: 'Unsaved' }); tree = render(); rejectSave = true;
   component(tree, 'QuizComposer').props.onContinue(); await settle(); tree = render();

@@ -1,0 +1,72 @@
+[
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 272.8000183105469,
+    "navigatorWidth": 272.8000183105469,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 320
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 328,
+    "navigatorWidth": 328,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 375
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 340,
+    "navigatorWidth": 340,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 390
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 340,
+    "navigatorWidth": 340,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 430
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 336.3999938964844,
+    "navigatorWidth": 336.3999938964844,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 768
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 290.3999938964844,
+    "navigatorWidth": 290.3999938964844,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 1024
+  },
+  {
+    "customExists": true,
+    "customValue": "",
+    "dotsContained": true,
+    "dotsWidth": 340,
+    "navigatorWidth": 340,
+    "overflow": false,
+    "pointInputs": 0,
+    "width": 1440
+  }
+]

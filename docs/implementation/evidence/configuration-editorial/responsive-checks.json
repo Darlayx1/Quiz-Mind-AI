@@ -1,0 +1,58 @@
+[
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 305,
+    "summaryPosition": "static",
+    "timeInputs": 7,
+    "width": 320
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 360,
+    "summaryPosition": "static",
+    "timeInputs": 7,
+    "width": 375
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 375,
+    "summaryPosition": "static",
+    "timeInputs": 7,
+    "width": 390
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 415,
+    "summaryPosition": "static",
+    "timeInputs": 7,
+    "width": 430
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 753,
+    "summaryPosition": "static",
+    "timeInputs": 7,
+    "width": 768
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 1009,
+    "summaryPosition": "sticky",
+    "timeInputs": 7,
+    "width": 1024
+  },
+  {
+    "horizontalOverflow": false,
+    "rows": 7,
+    "scrollWidth": 1425,
+    "summaryPosition": "sticky",
+    "timeInputs": 7,
+    "width": 1440
+  }
+]

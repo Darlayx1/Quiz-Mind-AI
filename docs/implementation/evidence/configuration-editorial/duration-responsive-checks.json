@@ -1,0 +1,142 @@
+[
+  {
+    "durationColumns": "247.2px",
+    "overflow": false,
+    "presetHeights": [
+      76,
+      76,
+      76,
+      76,
+      76
+    ],
+    "presetWidths": [
+      45.4,
+      45.4,
+      45.4,
+      45.4,
+      45.4
+    ],
+    "styleInline": true,
+    "width": 320
+  },
+  {
+    "durationColumns": "302.4px",
+    "overflow": false,
+    "presetHeights": [
+      76,
+      76,
+      76,
+      76,
+      76
+    ],
+    "presetWidths": [
+      56.5,
+      56.5,
+      56.5,
+      56.5,
+      56.5
+    ],
+    "styleInline": true,
+    "width": 375
+  },
+  {
+    "durationColumns": "317.6px",
+    "overflow": false,
+    "presetHeights": [
+      76,
+      76,
+      76,
+      76,
+      76
+    ],
+    "presetWidths": [
+      59.5,
+      59.5,
+      59.5,
+      59.5,
+      59.5
+    ],
+    "styleInline": true,
+    "width": 390
+  },
+  {
+    "durationColumns": "357.6px",
+    "overflow": false,
+    "presetHeights": [
+      76,
+      76,
+      76,
+      76,
+      76
+    ],
+    "presetWidths": [
+      67.5,
+      67.5,
+      67.5,
+      67.5,
+      67.5
+    ],
+    "styleInline": true,
+    "width": 430
+  },
+  {
+    "durationColumns": "499.2px 140px",
+    "overflow": false,
+    "presetHeights": [
+      88.1,
+      88.1,
+      88.1,
+      88.1,
+      88.1
+    ],
+    "presetWidths": [
+      95,
+      95,
+      95,
+      95,
+      95.1
+    ],
+    "styleInline": true,
+    "width": 768
+  },
+  {
+    "durationColumns": "407.2px 140px",
+    "overflow": false,
+    "presetHeights": [
+      88.1,
+      88.1,
+      88.1,
+      88.1,
+      88.1
+    ],
+    "presetWidths": [
+      76.6,
+      76.6,
+      76.6,
+      76.6,
+      76.7
+    ],
+    "styleInline": true,
+    "width": 1024
+  },
+  {
+    "durationColumns": "578.4px 140px",
+    "overflow": false,
+    "presetHeights": [
+      88.1,
+      88.1,
+      88.1,
+      88.1,
+      88.1
+    ],
+    "presetWidths": [
+      110.9,
+      110.9,
+      110.9,
+      110.9,
+      110.9
+    ],
+    "styleInline": true,
+    "width": 1440
+  }
+]

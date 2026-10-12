@@ -1,6 +1,6 @@
 import { DIFFICULTIES } from './models.js';
 import { defaultComposition, type Composition } from './questionComposition.js';
-import type { DifficultyLevel, QuizDisplayMode } from './types/quiz.js';
+import { QUESTION_TYPES, type DifficultyLevel, type QuizDisplayMode } from './types/quiz.js';
 import type { DraftAttachment } from './materialIngestion.js';
 
 export interface ComposerDraft extends Record<string, unknown> {
@@ -9,6 +9,8 @@ export interface ComposerDraft extends Record<string, unknown> {
   displayMode: QuizDisplayMode; totalMinutes: string; perQuestionSeconds: string; unlimited: boolean;
   language: 'id' | 'en'; languageStyle: string; additionalInstructions: string; composition: Composition;
   preset?: string;
+  languageStyleMode?: 'preset' | 'custom'; customLanguageStyle?: string;
+  languageStylePreset?: string;
 }
 export function restoreComposerDraft(saved?: Record<string, unknown> | null): ComposerDraft {
   const text = (key: string, fallback = '') => typeof saved?.[key] === 'string' ? saved[key] as string : fallback;
@@ -26,7 +28,10 @@ export function restoreComposerDraft(saved?: Record<string, unknown> | null): Co
     customCount: text('customCount', '25'), displayMode: saved?.displayMode === 'sequential' ? 'sequential' : 'non_sequential',
     totalMinutes: text('totalMinutes', '15'), perQuestionSeconds: text('perQuestionSeconds', '60'), unlimited: saved?.unlimited === true,
     language: saved?.language === 'en' ? 'en' : 'id', languageStyle: text('languageStyle'), additionalInstructions: text('additionalInstructions'),
-    composition: validComposition(saved?.composition) ? saved.composition as Composition : structuredClone(defaultComposition),
+    languageStyleMode: saved?.languageStyleMode === 'custom' ? 'custom' : saved?.languageStyleMode === 'preset' ? 'preset' : undefined,
+    customLanguageStyle: text('customLanguageStyle'),
+    languageStylePreset: text('languageStylePreset'),
+    composition: validComposition(saved?.composition) ? { ...saved.composition, type: QUESTION_TYPES.includes(saved.composition.type) ? saved.composition.type : defaultComposition.type } : structuredClone(defaultComposition),
   };
 }
 function validComposition(value: unknown): value is Composition {
