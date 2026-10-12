@@ -3,9 +3,12 @@ import { build } from 'esbuild';
 import { emptyWorkspace } from '../src/workspace/types.js';
 import { fixtures } from './assessment-fixtures.js';
 import { validateQuestion } from '../src/questionValidation.js';
+import { buildResult } from '../src/scoring.js';
+import { normalizeQuizConfig } from '../src/quizConfig.js';
 
 // Render the real App with an isolated hook host and deferred provider operations.
 const runtime = globalThis as any;
+runtime.__buildResult = buildResult;
 const slots: any[] = []; let cursor = 0; let effects: (() => void)[] = [];
 runtime.__hooks = {
   useState(value: any) { const i = cursor++; if (!(i in slots)) slots[i] = typeof value === 'function' ? value() : value;
@@ -32,7 +35,7 @@ const compiled = await build({ entryPoints: ['src/App.tsx'], bundle: true, write
       else if (path.includes('/ai.js')) contents = 'export const availableKeys=()=>[{}];export const generateWorkspaceQuiz=(...a)=>globalThis.__generate(...a);';
       else if (path.includes('supabase')) contents = 'export const accountRpc=async()=>{};';
       else if (path.includes('evaluation')) contents = 'export const evaluateWorkspace=async()=>{};';
-      else if (path.includes('scoring')) contents = 'export const buildResult=()=>{};';
+      else if (path.includes('scoring')) contents = 'export const buildResult=(...args)=>globalThis.__buildResult(...args);';
       else { const names = path === 'lucide-react' ? ['Settings2','Monitor','Cloud','ArrowRight','RefreshCw'] : [path.split('/').at(-1)!.replace('.js','')];
         contents = names.map(name => `export const ${name}="${name}";`).join(''); }
       return { contents };
@@ -111,3 +114,37 @@ assert.equal(updates, beforeHome, 'Go Home performs no destructive workspace upd
 assert.deepEqual(runtime.__workspace.data.progress, savedProgress);
 assert.ok(find(render(), 'QuizCreator').props.continueLearning);
 console.log('PASS: real App configuration without generation, duplicate submission guard, session recovery/cancel, Go Home preservation, Continue Learning answer/bookmark/attempt/deadline restoration. No external calls.');
+
+// Exercise both result actions against the real App and a deferred, simulated provider.
+runtime.__workspace.update = async (updater: any) => { updates++; runtime.__workspace.data = updater(runtime.__workspace.data); };
+runtime.__generate = (...args: any[]) => new Promise((resolve, reject) => pending.push({ args, resolve, reject }));
+const originalPreferences = structuredClone(runtime.__workspace.data.preferences);
+const earlierHistoryCount = runtime.__workspace.data.history.length;
+const originalConfig = normalizeQuizConfig({ topic: 'Karbohidrat', studyMaterial: 'Materi awal yang harus dipertahankan.', questionCount: 1,
+  questionType: 'single_choice', difficulty: 'hard', language: 'en', timeLimitMinutes: 0, model: originalPreferences.model, enableGrounding: originalPreferences.grounding });
+const originalQuiz = { id: 'regenerate-original', title: 'Kuis asal', topic: originalConfig.topic, summary: 'Fixture', difficulty: originalConfig.difficulty,
+  timeLimitMinutes: 0, createdAt: '2026-10-12T00:00:00Z', questions: [validateQuestion({ ...fixtures.single_choice, id: 'q1' }, 0, 'Konsep', [], 'single_choice')!] };
+find(render(), 'QuizCreator').props.onGenerate(originalConfig);
+pending.at(-1).resolve(originalQuiz); await settle();
+const firstGenerated = find(render(), 'QuizRunner').props.quiz;
+assert.deepEqual(firstGenerated.generationConfig, originalConfig);
+assert.deepEqual(firstGenerated.generationPreferences, originalPreferences);
+runtime.__workspace.data.preferences = { ...originalPreferences, grounding: !originalPreferences.grounding, keyId: 'changed-key' };
+const submission = { quizId: originalQuiz.id, userAnswers: { q1: 0 }, bookmarkedQuestions: [], timeTakenSeconds: 10, completedAt: '2026-10-12T00:01:00Z' };
+find(render(), 'QuizRunner').props.onSubmit(submission); await settle();
+const beforeRemedial = pending.length;
+find(render(), 'QuizResults').props.onRetake(); await settle();
+assert.equal(pending.length, beforeRemedial, 'Remedial never calls the generator');
+assert.deepEqual(find(render(), 'QuizRunner').props.quiz.questions, originalQuiz.questions);
+assert.equal(find(render(), 'QuizRunner').props.initialProgress, null, 'Remedial starts with fresh answers and timer');
+find(render(), 'QuizRunner').props.onSubmit({ ...submission, completedAt: '2026-10-12T00:02:00Z' }); await settle();
+const resultActions = find(render(), 'QuizResults').props;
+resultActions.onRegenerate(); resultActions.onRegenerate();
+assert.equal(pending.length, beforeRemedial + 1, 'Duplicate clicks dispatch only one new generation');
+assert.deepEqual(pending.at(-1).args[0], originalConfig);
+assert.deepEqual(pending.at(-1).args[1], originalPreferences, 'Preferences changed later do not replace the original ones');
+pending.at(-1).resolve({ ...originalQuiz, id: 'regenerate-fresh', questions: [{ ...originalQuiz.questions[0], id: 'new-q1', question: 'Soal baru dari provider fixture?' }] }); await settle();
+assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'regenerate-fresh');
+assert.equal(runtime.__workspace.data.history.length, earlierHistoryCount + 2, 'Original result and earlier unrelated history remain preserved');
+assert.equal(runtime.__workspace.data.history.find((h: any) => h.quiz.id === originalQuiz.id).attempts.length, 2);
+console.log('PASS: regeneration reuses exact config/preferences with one new provider dispatch; remedial uses identical questions, fresh progress, no provider call, and preserves attempts/history.');

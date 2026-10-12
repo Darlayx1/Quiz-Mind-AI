@@ -55,6 +55,8 @@ export interface QuestionEvaluation {
 }
 
 export interface Quiz {
+  generationConfig?: QuizConfig;
+  generationPreferences?: import('../workspace/types.js').Preferences;
   /** Legacy metadata only; ignored for new generation. */
   targetAudience?: string;
   qualityReviews?: import('../server/assessmentPolicy.js').QualityReviewRecord[];

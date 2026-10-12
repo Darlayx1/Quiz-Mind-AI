@@ -16,6 +16,7 @@ import { availableKeys, generateWorkspaceQuiz } from './workspace/ai.js';
 import { accountRpc } from './workspace/supabase.js';
 import type { GenerationJob, QuizProgress } from './workspace/types.js';
 import { resumableQuiz } from './resumableSession.js';
+import { quizRegeneration } from './quizRegeneration.js';
 
 export default function App() {
   const w = useWorkspace();
@@ -34,6 +35,7 @@ export default function App() {
   const activeJobId = useRef<string | null>(null);
   const restoredScope = useRef<string | null>(null);
   const attemptedProgress = useRef('');
+  const resettingRemedial = useRef(false);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 5000);
@@ -60,10 +62,10 @@ export default function App() {
     return w.update(d => ({ ...d, progress }), w.scope).catch(() => { attemptedProgress.current = ''; });
   }, [w.update, w.scope]);
   const newQuiz = () => { if(isEvaluating)return; setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
-  const generate = async (config: QuizConfig, resume?: GenerationJob) => {
+  const generate = async (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
     if (scope.current !== w.scope || abort.current || loading || isEvaluating || !w.ready || !w.repository) return;
     const origin = w.scope; const repository = w.repository;
-    const preferences = structuredClone(resume?.preferences || w.data.preferences);
+    const preferences = structuredClone(resume?.preferences || originalPreferences || w.data.preferences);
     const controller = new AbortController(); abort.current = controller;
     setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0 });
     const started = Date.now(); let currentJob: GenerationJob | undefined;
@@ -75,11 +77,12 @@ export default function App() {
         currentJob = job; activeJobId.current = job.id; await w.update(d => ({ ...d, job }), origin);
       }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration({ config, completed }); });
       controller.signal.throwIfAborted(); if (scope.current !== origin || abort.current !== controller) return;
-      await w.update(d => ({ ...d, job: null, history: [{ quiz: generated, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
+      const savedQuiz: Quiz = { ...generated, generationConfig: structuredClone(currentJob?.config ?? config), generationPreferences: structuredClone(preferences) };
+      await w.update(d => ({ ...d, job: null, history: [{ quiz: savedQuiz, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
       controller.signal.throwIfAborted();
       if (scope.current !== origin || abort.current !== controller) return;
-      setQuiz(generated); setResult(null); setView('runner');
+      setQuiz(savedQuiz); setResult(null); setView('runner');
       setToast({ kind: 'success', message: 'Kuis berhasil dibuat.' });
     } catch (e) {
       if (scope.current !== origin || abort.current !== controller) return;
@@ -91,8 +94,8 @@ export default function App() {
           detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
     } finally { if (scope.current === origin && abort.current === controller) { setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
   };
-  const startGeneration = (config: QuizConfig, resume?: GenerationJob) => {
-    const task = generate(config, resume);
+  const startGeneration = (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
+    const task = generate(config, resume, originalPreferences);
     activeGeneration.current = task;
     void task.finally(() => { if (activeGeneration.current === task) activeGeneration.current = null; });
   };
@@ -209,7 +212,19 @@ export default function App() {
     setQuiz(selected); const saved = w.data.history.find(h => h.quiz.id === selected.id);
     if (saved?.lastResult) { setResult(saved.lastResult); setView('results'); } else { setResult(null); setView('runner'); }
   };
-  const retryQuiz = () => { if(isEvaluating)return; void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
+  const retryQuiz = () => {
+    if (isEvaluating || loading || abort.current || resettingRemedial.current || !result) return;
+    const original = result.quiz, origin = w.scope; resettingRemedial.current = true;
+    void w.update(d => ({ ...d, progress: null }), origin).then(() => {
+      if (scope.current !== origin) return;
+      attemptedProgress.current = ''; setQuiz(original); setResult(null); setError(''); setView('runner');
+    }).catch(() => {}).finally(() => { resettingRemedial.current = false; });
+  };
+  const regenerateQuiz = () => {
+    if (!result || isEvaluating || loading || abort.current || resettingRemedial.current) return;
+    try { const original = quizRegeneration(result.quiz, w.data.preferences); startGeneration(original.config, undefined, original.preferences); }
+    catch (e) { setError((e as Error).message); }
+  };
   const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : w.session ? 'Akun · penyimpanan pribadi' : 'Akun · pulihkan sesi';
   const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled));
   const resumable = resumableQuiz(w.data.history, w.data.progress);
@@ -249,7 +264,7 @@ export default function App() {
           error={error}
         />
       ) : view === 'creator' || view === 'configuration' ? null : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
-      : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={cancelEvaluation} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
+      : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onRegenerate={regenerateQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={cancelEvaluation} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
       : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}
     </main>

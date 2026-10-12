@@ -41,13 +41,13 @@ export const TopBar: React.FC<TopBarProps> = ({
         </span>
       </button>
       <nav aria-label="Navigasi utama" className="header-nav">
-        <button
+        {activeView !== 'results' && <button
           aria-current={activeView === "creator" || activeView === "configuration" ? "page" : undefined}
           disabled={isBusy}
           onClick={() => onNavigate("creator")}
         >
           <LayoutGrid size={16} /> Beranda
-        </button>
+        </button>}
         <button
           aria-current={activeView === "history" ? "page" : undefined}
           disabled={isBusy || activeView === "runner"}
@@ -80,6 +80,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               iconPosition="leading"
               size="sm"
               collapseOnMobile
+              disabled={isBusy}
               onClick={onNewQuizClick}
             />
           )
