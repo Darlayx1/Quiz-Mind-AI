@@ -19,8 +19,8 @@ export const GenerateIllustration: React.FC<{ className?: string }> = ({ classNa
             <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#1e293b" floodOpacity="0.07" />
           </filter>
           <linearGradient id="qm-blue-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#3b82f6" />
-            <stop offset="100%" stopColor="#1d4ed8" />
+            <stop offset="0%" stopColor="#376ea8" />
+            <stop offset="100%" stopColor="#17375b" />
           </linearGradient>
           <linearGradient id="qm-sheet-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
             <stop offset="0%" stopColor="#f8fafc" />
@@ -81,21 +81,21 @@ export const GenerateIllustration: React.FC<{ className?: string }> = ({ classNa
             height="72"
             rx="10"
             fill="#ffffff"
-            stroke="#3b82f6"
+            stroke="#376ea8"
             strokeWidth="1.5"
             filter="url(#qm-card-shadow)"
           />
           {/* Badge nomor soal */}
-          <rect x="62" y="52" width="22" height="6" rx="3" fill="#eff6ff" stroke="#bfdbfe" strokeWidth="0.8" />
-          <rect x="66" y="54" width="14" height="2" rx="1" fill="#3b82f6" />
+          <rect x="62" y="52" width="22" height="6" rx="3" fill="#f2f6fc" stroke="#c9d6e6" strokeWidth="0.8" />
+          <rect x="66" y="54" width="14" height="2" rx="1" fill="#376ea8" />
           
           {/* Pertanyaan kuis */}
           <rect x="62" y="64" width="72" height="3.5" rx="1.75" fill="#1e293b" />
           <rect x="62" y="71" width="56" height="3" rx="1.5" fill="#64748b" />
 
           {/* Opsi / Pilihan */}
-          <circle cx="68" cy="85" r="3.5" fill="#eff6ff" stroke="#3b82f6" strokeWidth="1" />
-          <circle cx="68" cy="85" r="1.5" fill="#3b82f6" />
+          <circle cx="68" cy="85" r="3.5" fill="#f2f6fc" stroke="#376ea8" strokeWidth="1" />
+          <circle cx="68" cy="85" r="1.5" fill="#376ea8" />
           <rect x="76" y="83.5" width="54" height="3" rx="1.5" fill="#475569" />
 
           <circle cx="68" cy="97" r="3.5" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1" />
@@ -110,7 +110,7 @@ export const GenerateIllustration: React.FC<{ className?: string }> = ({ classNa
           />
         </g>
         <g className="qm-anim-sparkle-subtle" transform="translate(32, 102)">
-          <circle cx="3" cy="3" r="2.5" fill="#93c5fd" />
+          <circle cx="3" cy="3" r="2.5" fill="#a8bed7" />
         </g>
       </svg>
     </div>
@@ -136,13 +136,13 @@ export const EvaluationIllustration: React.FC<{ className?: string }> = ({ class
             <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#1e293b" floodOpacity="0.08" />
           </filter>
           <linearGradient id="qm-eval-highlight" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.15" />
-            <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.05" />
-            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+            <stop offset="0%" stopColor="#376ea8" stopOpacity="0.15" />
+            <stop offset="50%" stopColor="#376ea8" stopOpacity="0.05" />
+            <stop offset="100%" stopColor="#376ea8" stopOpacity="0" />
           </linearGradient>
           <linearGradient id="qm-rubric-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#2563eb" />
-            <stop offset="100%" stopColor="#3b82f6" />
+            <stop offset="0%" stopColor="#214f82" />
+            <stop offset="100%" stopColor="#376ea8" />
           </linearGradient>
         </defs>
 
@@ -190,20 +190,20 @@ export const EvaluationIllustration: React.FC<{ className?: string }> = ({ class
             height="78"
             rx="9"
             fill="#ffffff"
-            stroke="#bfdbfe"
+            stroke="#c9d6e6"
             strokeWidth="1.3"
             filter="url(#qm-eval-shadow)"
           />
           {/* Header Rubrik */}
-          <rect x="106" y="36" width="26" height="4" rx="2" fill="#2563eb" />
-          <circle cx="147" cy="38" r="3" fill="#dbeafe" />
-          <circle cx="147" cy="38" r="1.5" fill="#2563eb" />
+          <rect x="106" y="36" width="26" height="4" rx="2" fill="#214f82" />
+          <circle cx="147" cy="38" r="3" fill="#e6eef8" />
+          <circle cx="147" cy="38" r="1.5" fill="#214f82" />
 
           {/* Kriteria 1 */}
           <g transform="translate(106, 48)">
-            <rect x="0" y="0" width="42" height="12" rx="3" fill="#eff6ff" stroke="#bfdbfe" strokeWidth="0.8" />
-            <rect x="4" y="4.5" width="22" height="3" rx="1.5" fill="#1d4ed8" />
-            <circle cx="36" cy="6" r="2.5" fill="#93c5fd" />
+            <rect x="0" y="0" width="42" height="12" rx="3" fill="#f2f6fc" stroke="#c9d6e6" strokeWidth="0.8" />
+            <rect x="4" y="4.5" width="22" height="3" rx="1.5" fill="#17375b" />
+            <circle cx="36" cy="6" r="2.5" fill="#a8bed7" />
           </g>
 
           {/* Kriteria 2 */}
@@ -236,7 +236,7 @@ export const EvaluationIllustration: React.FC<{ className?: string }> = ({ class
             y1="63"
             x2="154"
             y2="63"
-            stroke="#3b82f6"
+            stroke="#376ea8"
             strokeWidth="1.2"
             strokeDasharray="3 3"
             strokeOpacity="0.7"
