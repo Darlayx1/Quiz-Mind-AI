@@ -1,15 +1,61 @@
-import React from 'react';
-import { QUESTION_TYPES,type QuestionType,type EvaluationSettings } from '../types/quiz.js';
+import { Check, CircleDot, ListChecks, ToggleLeft, TextCursorInput, FilePenLine, Link2, ListOrdered, Shapes } from 'lucide-react';
+import { QUESTION_TYPES, type QuestionType } from '../types/quiz.js';
 import { questionLabels } from '../questionState.js';
-export interface Composition {mode:'single'|'mixed';type:QuestionType;distribution:Partial<Record<QuestionType,number>>;points:Partial<Record<QuestionType,number>>;partialCredit:boolean;times?:Partial<Record<QuestionType,number>>}
-export const defaultComposition:Composition={mode:'single',type:'single_choice',distribution:{single_choice:5,multiple_select:5},points:{},partialCredit:false};
-export function QuestionComposition({value:v,onChange,count,evaluator,onOpen,sequential=false,expanded=false}:{expanded?:boolean;sequential?:boolean;value:Composition;onChange:(v:Composition)=>void;count:number;evaluator:EvaluationSettings;onOpen?:()=>void}){
- const Group=expanded?'div':'details',Heading=expanded?'h3':'summary';
- const patch=(p:Partial<Composition>)=>onChange({...v,...p}),active=QUESTION_TYPES.filter(t=>v.mode==='single'?t===v.type:(v.distribution[t]??0)>0),open=active.some(t=>t==='short_answer'||t==='essay');
- return <section className="surface section-pad question-composition"><h2>Tipe soal</h2><div className="key-actions">{(['single','mixed'] as const).map(mode=><label key={mode} className="key-checkbox"><input type="radio" name="composition" checked={v.mode===mode} onChange={()=>patch({mode})}/>{mode==='single'?'Satu tipe':'Campuran'}</label>)}</div>
- {v.mode==='single'?<><label htmlFor="question-type" className="field-label">Pilih tipe soal</label><select id="question-type" className="field-input" value={v.type} onChange={e=>patch({type:e.target.value as QuestionType})}>{QUESTION_TYPES.map(t=><option key={t} value={t}>{questionLabels[t]}</option>)}</select></>:<><div className="type-distribution">{QUESTION_TYPES.map(t=><div key={t}><label className="key-checkbox"><input type="checkbox" checked={(v.distribution[t]??0)>0} onChange={e=>patch({distribution:{...v.distribution,[t]:e.target.checked?1:0}})}/>{questionLabels[t]}</label><input aria-label={'Jumlah '+questionLabels[t]} className="field-input" type="number" min={0} max={100} value={v.distribution[t]??0} onChange={e=>patch({distribution:{...v.distribution,[t]:Number(e.target.value)}})}/></div>)}</div><p className="field-help" role="status">Total {Object.values(v.distribution).reduce((n,i)=>n+(i??0),0)} soal (maksimal 100).</p><button type="button" className="topic-chip" disabled={!active.length} onClick={()=>{const total=Math.min(100,Math.max(active.length,count||10));patch({distribution:Object.fromEntries(active.map((t,i)=>[t,Math.floor(total/active.length)+(i<total%active.length?1:0)]))});}}>Bagi merata</button></>}
- <p className="field-help">Pilihan ganda biasa dan kompleks menggunakan 5 opsi A–E. Pilihan ganda kompleks bisa memiliki beberapa jawaban benar.</p>
- <Group className="connection-advanced composition-settings"><Heading>Penilaian & bobot</Heading><label className="key-checkbox"><input type="checkbox" checked={v.partialCredit} onChange={e=>patch({partialCredit:e.target.checked})}/>Kredit parsial untuk pilihan ganda kompleks dan mengurutkan</label><p className="field-help">Menjodohkan dinilai per pasangan. Bawaan setiap soal bernilai 1 poin.</p>{active.map(t=><div className="matching-row" key={t}><label htmlFor={'points-'+t}>{questionLabels[t]} · poin per soal</label><input id={'points-'+t} type="number" min={1} max={20} className="field-input" value={v.points[t]??1} onChange={e=>patch({points:{...v.points,[t]:Math.min(20,Math.max(1,Number(e.target.value)||1))}})}/></div>)}</Group>
- {sequential&&<Group className="connection-advanced composition-settings"><Heading>Waktu per tipe soal</Heading><p className="field-help">Kosong mengikuti waktu umum. Nilai 0 memberi waktu tanpa batas untuk tipe tersebut.</p>{active.map(t=><div className="matching-row" key={t}><label htmlFor={'time-'+t}>{questionLabels[t]} · detik</label><input id={'time-'+t} className="field-input" type="number" min={0} max={600} placeholder="Ikuti waktu umum" value={v.times?.[t]??''} onChange={e=>{const times={...v.times};if(e.target.value==='')delete times[t];else times[t]=Math.min(600,Math.max(0,Math.round(Number(e.target.value)||0)));patch({times});}}/></div>)}</Group>}
- {open&&<div className="evaluation-summary"><strong>{evaluator.enabled?'Dinilai AI setelah dikumpulkan':'Evaluasi AI nonaktif · evaluasi nanti atau tinjau manual'}</strong><p>{evaluator.followGenerator?'Mengikuti model pembuat soal':evaluator.provider+' · '+evaluator.model}. Jawaban tetap tersimpan jika penilaian gagal.</p><button type="button" className="topic-chip" onClick={onOpen}>Kelola Evaluasi AI</button></div>}</section>;
+import { activeQuestionTypes, allocatedCount, compositionError, equalDistribution, type Composition } from '../questionComposition.js';
+export { defaultComposition, type Composition } from '../questionComposition.js';
+
+const TYPE_INFO = {
+  single_choice: { icon: CircleDot, description: 'Pilih satu jawaban yang paling tepat.', prompt: 'Planet mana yang dikenal sebagai planet merah?', answers: ['A. Bumi', 'B. Mars', 'C. Venus', 'D. Jupiter', 'E. Saturnus'] },
+  multiple_select: { icon: ListChecks, description: 'Temukan beberapa jawaban yang benar.', prompt: 'Pilih semua sumber energi terbarukan.', answers: ['□ Matahari', '□ Batu bara', '□ Angin', '□ Minyak bumi', '□ Gas alam'] },
+  true_false: { icon: ToggleLeft, description: 'Tentukan apakah sebuah pernyataan benar.', prompt: 'Bumi mengelilingi Matahari.', answers: ['Benar / Salah'] },
+  short_answer: { icon: TextCursorInput, description: 'Jawab singkat dengan kata atau konsep.', prompt: 'Apa nama proses tumbuhan membuat makanan?', answers: ['Jawaban singkat: __________'] },
+  essay: { icon: FilePenLine, description: 'Kembangkan gagasan dengan jawaban terbuka.', prompt: 'Jelaskan hubungan cahaya dan pertumbuhan tumbuhan.', answers: ['Tulis penjelasan Anda…', 'Penilaian menggunakan rubrik sesuai soal.'] },
+  matching: { icon: Link2, description: 'Hubungkan setiap item dengan pasangannya.', prompt: 'Pasangkan organ dengan fungsinya.', answers: ['Jantung ↔ memompa darah', 'Paru-paru ↔ pertukaran gas'] },
+  ordering: { icon: ListOrdered, description: 'Susun langkah dalam urutan yang tepat.', prompt: 'Urutkan tahapan pertumbuhan tanaman.', answers: ['1. Benih → 2. Kecambah → 3. Tanaman'] },
+};
+
+export function QuestionComposition({ value, onChange, count }: {
+  value: Composition; onChange: (value: Composition) => void; count: number;
+}) {
+  const patch = (change: Partial<Composition>) => onChange({ ...value, ...change });
+  const active = activeQuestionTypes(value), total = allocatedCount(value), error = compositionError(value, count);
+  const canDistribute = active.length > 0 && Number.isInteger(count) && count >= active.length && count <= 100;
+  const updateCount = (type: QuestionType, n: number) => patch({ distribution: { ...value.distribution, [type]: n } });
+  return <section className="surface menu-section question-composition" aria-labelledby="composition-title">
+    <div className="menu-section-title"><Shapes size={20} /><h2 id="composition-title">Komposisi soal</h2><span className="section-number">01</span></div>
+    <fieldset className="segmented-field"><legend className="field-label">Bentuk latihan</legend><div className="segmented-control">
+      {(['single', 'mixed'] as const).map(mode => <label key={mode}><input type="radio" name="composition" checked={value.mode === mode} onChange={() => patch({ mode })} /><span>{mode === 'single' ? 'Satu tipe' : 'Campuran'}</span></label>)}
+    </div></fieldset>
+    <p className="field-help mode-explanation">{value.mode === 'single' ? 'Pilih satu bentuk soal. Jelajahi contoh sebelum memilih.' : 'Pilih beberapa tipe, lalu atur pembagiannya. Konfigurasi satu tipe tetap tersimpan.'}</p>
+    <fieldset className="gallery-field"><legend className="sr-only">{value.mode === 'single' ? 'Pilih satu tipe soal' : 'Pilih tipe soal campuran'}</legend><div className="question-gallery">
+      {QUESTION_TYPES.map(type => {
+        const info = TYPE_INFO[type], Icon = info.icon, selected = active.includes(type);
+        return <div key={type} className={`question-type-card ${selected ? 'selected' : ''}`} data-type={type}>
+          <label className="question-type-select">
+            <input type={value.mode === 'single' ? 'radio' : 'checkbox'} name={value.mode === 'single' ? 'question-type' : undefined} value={type} checked={selected}
+              onChange={event => value.mode === 'single' ? patch({ type }) : updateCount(type, event.target.checked ? 1 : 0)} aria-label={questionLabels[type]} aria-describedby={`type-help-${type}`} />
+            <span className="type-icon"><Icon size={20} /></span><span className="type-text"><strong>{questionLabels[type]}</strong><small id={`type-help-${type}`}>{info.description}</small></span>
+            <span className="type-check" aria-hidden="true">{selected && <Check size={14} />}</span>
+          </label>
+          <details className="type-preview"><summary>Contoh soal<span aria-hidden="true">＋</span></summary><div><span className="preview-caption">CONTOH LOKAL · TANPA AI</span><p>{info.prompt}</p><ul>{info.answers.map(answer => <li key={answer}>{answer}</li>)}</ul></div></details>
+        </div>;
+      })}
+    </div></fieldset>
+    {value.mode === 'mixed' && <div className="composition-builder">
+      <div className="composition-toolbar"><div><strong>Pembagian soal</strong><p id="allocation-status" role="status">{total} teralokasi dari {Number.isInteger(count) ? count : '—'} soal{total < count ? ` · ${count - total} tersisa` : total > count ? ` · ${total - count} berlebih` : ''}</p></div>
+        <button type="button" className="preset-chip" disabled={!canDistribute} onClick={() => patch({ distribution: equalDistribution(active, count) })}>Bagi merata</button></div>
+      <div className="distribution-bar" role="img" aria-label={`Distribusi ${total} soal: ${active.map(type => `${questionLabels[type]} ${value.distribution[type]}`).join(', ') || 'belum ada tipe dipilih'}`}>
+        {active.map(type => <span key={type} className={`distribution-${type}`} style={{ flexGrow: value.distribution[type] }} />)}
+      </div>
+      {!active.length && <p className="field-error">Belum ada tipe dipilih. Pilih kartu di atas untuk memulai.</p>}
+      {active.map(type => <div className="allocation-row" key={type}><label htmlFor={`count-${type}`}><span className={`distribution-key distribution-${type}`} />{questionLabels[type]}</label><div className="count-stepper">
+        <button type="button" aria-label={`Kurangi ${questionLabels[type]}`} disabled={(value.distribution[type] ?? 0) <= 1} onClick={() => updateCount(type, (value.distribution[type] ?? 1) - 1)}>−</button>
+        <input id={`count-${type}`} type="number" min={1} max={100} step={1} aria-label={`Jumlah ${questionLabels[type]}`} aria-invalid={!Number.isInteger(value.distribution[type]) || (value.distribution[type] ?? 0) > 100} aria-describedby={error ? 'composition-error' : undefined} value={value.distribution[type] ?? 0} onChange={event => updateCount(type, Math.max(1, Number(event.target.value) || 1))} />
+        <button type="button" aria-label={`Tambah ${questionLabels[type]}`} disabled={total >= 100} onClick={() => updateCount(type, (value.distribution[type] ?? 0) + 1)}>＋</button>
+      </div></div>)}
+      {error && <p className="field-error" id="composition-error">{error}</p>}
+      {!canDistribute && active.length > count && <p className="field-help">Total soal perlu minimal {active.length} agar setiap tipe mendapat satu soal.</p>}
+      <p className="field-help">Ubah total soal di Intensitas latihan. Pembagian Anda tetap tersimpan sampai Anda mengubahnya atau memilih Bagi merata.</p>
+    </div>}
+  </section>;
 }

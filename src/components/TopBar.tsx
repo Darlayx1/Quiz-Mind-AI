@@ -25,7 +25,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   isKeyConfigured,
   onNewQuizClick,
 }) => (
-  <header className="app-header print:hidden">
+  <header className={`app-header print:hidden ${activeView === 'configuration' ? 'configuration-header' : ''}`}>
     <div className="header-inner">
       <button
         className="brand"

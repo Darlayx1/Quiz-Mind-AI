@@ -1,5 +1,5 @@
 import { DIFFICULTIES } from './models.js';
-import { defaultComposition, type Composition } from './components/QuestionComposition.js';
+import { defaultComposition, type Composition } from './questionComposition.js';
 import type { DifficultyLevel, QuizDisplayMode } from './types/quiz.js';
 import type { DraftAttachment } from './materialIngestion.js';
 

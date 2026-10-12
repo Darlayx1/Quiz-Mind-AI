@@ -9,6 +9,8 @@ import { localRepository } from '../src/workspace/localRepository.js';
 import { resumableQuiz } from '../src/resumableSession.js';
 import { fixtures } from './assessment-fixtures.js';
 import { validateQuestion } from '../src/questionValidation.js';
+import { activeQuestionTypes, compositionError, equalDistribution, type Composition } from '../src/questionComposition.js';
+import { QUESTION_TYPES } from '../src/types/quiz.js';
 
 const legacy = restoreComposerDraft({ inputMode: 'material', topic: 'Legacy', studyMaterial: 'Catatan lama', difficulty: 'advanced', unknownField: 'preserve' });
 assert.equal(legacy.difficulty, 'hard'); assert.equal(legacy.unknownField, 'preserve');
@@ -67,7 +69,7 @@ globalThis.clearTimeout = ((id: number) => { timers.delete(id); }) as any;
 try {
   const compiled = await build({ entryPoints: ['src/components/QuizCreator.tsx'], bundle: true, write: false, platform: 'node', format: 'esm',
     plugins: [{ name: 'creator-host', setup(p) {
-      p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/Button\.js$|\/QuizComposer\.js$|\/QuestionComposition\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
+      p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/Button\.js$|\/QuizComposer\.js$|\/QuestionComposition\.js$|\/QuestionScoring\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
       p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => {
         let contents = '';
         if (path === 'react') contents = 'export const {useState,useRef,useEffect}=globalThis.__composerHooks;export default {};';
@@ -95,7 +97,7 @@ try {
   assert.equal(stage, 'creator', 'Navigation awaits last edit persistence'); assert.equal(generates, 0);
   deferred!(); deferred = null; await settle(); tree = render();
   assert.equal(stage, 'configuration'); assert.equal(stored.topic, 'Last edit'); assert.equal(stored.studyMaterial, 'Last context');
-  find(tree, n => n.props?.id === 'quiz-language').props.onChange({ target: { value: 'en' } });
+  find(tree, n => n.type === 'input' && n.props?.name === 'quiz-language' && n.props.value === 'en').props.onChange();
   tree = render();
   find(tree, n => n.props?.className === 'configuration-back').props.onClick(); await settle(); tree = render();
   assert.equal(component(tree, 'QuizComposer').props.draft.language, 'en'); assert.deepEqual(component(tree, 'QuizComposer').props.draft.attachments, [attached]);
@@ -106,6 +108,32 @@ try {
   assert.equal(generates, 1, 'Concurrent Mulai submissions invoke generation once');
   assert.equal(config.language, 'en'); assert.ok(config.studyMaterial.includes('Last context')); assert.ok(config.studyMaterial.includes('Materi file.'));
   assert.equal(config.topic, 'Last edit');
+  // Exercise the real creator's payload wiring for all seven types and mixed allocation.
+  for (const type of QUESTION_TYPES) {
+    const gallery = component(tree, 'QuestionComposition');
+    gallery.props.onChange({ ...gallery.props.value, mode: 'single', type }); tree = render();
+    await find(tree, n => n.type === 'form').props.onSubmit(event); tree = render();
+    assert.equal(config.questionType, type); assert.deepEqual(config.questionDistribution, { [type]: 10 });
+  }
+  const mixed: Composition = { ...component(tree, 'QuestionComposition').props.value, mode: 'mixed', distribution: equalDistribution(QUESTION_TYPES, 11), points: { essay: 4 }, times: { essay: 0 }, partialCredit: true };
+  component(tree, 'QuestionComposition').props.onChange(mixed);
+  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '11' } }); tree = render();
+  find(tree, n => n.type === 'input' && n.props?.name === 'display-mode' && n.props.value === 'sequential').props.onChange(); tree = render();
+  await find(tree, n => n.type === 'form').props.onSubmit(event); tree = render();
+  assert.equal(config.questionCount, 11); assert.deepEqual(config.questionDistribution, mixed.distribution);
+  assert.equal(config.pointsByType.essay, 4); assert.equal(config.timePerQuestionByType.essay, 0); assert.equal(config.partialCredit, true);
+  const beforeInvalid = generates;
+  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '12' } }); tree = render();
+  assert.deepEqual(component(tree, 'QuestionComposition').props.value.distribution, mixed.distribution, 'Changing target never silently reallocates');
+  await find(tree, n => n.type === 'form').props.onSubmit(event); assert.equal(generates, beforeInvalid, 'Mismatched allocation blocks generation');
+  assert.match(compositionError(component(tree, 'QuestionComposition').props.value, 12), /11 dari 12/);
+  find(tree, n => n.props?.id === 'quiz-count').props.onChange({ target: { value: '11' } }); tree = render();
+  const gallery = component(tree, 'QuestionComposition'); gallery.props.onChange({ ...gallery.props.value, mode: 'single' }); tree = render();
+  component(tree, 'QuestionComposition').props.onChange({ ...component(tree, 'QuestionComposition').props.value, mode: 'mixed' }); tree = render();
+  assert.deepEqual(component(tree, 'QuestionComposition').props.value, mixed, 'Mode switch retains type, distribution, weights, partial credit, and timers');
+  await find(tree, n => n.type === 'form').props.onSubmit(event); tree = render();
+  assert.deepEqual(restoreComposerDraft(stored).composition, mixed, 'Saved draft restores full mixed configuration');
+  assert.equal(activeQuestionTypes(mixed).length, 7);
   stage = 'creator'; tree = render(); component(tree, 'QuizComposer').props.patch({ topic: 'Unsaved' }); tree = render(); rejectSave = true;
   component(tree, 'QuizComposer').props.onContinue(); await settle(); tree = render();
   assert.equal(stage, 'creator'); assert.match(component(tree, 'QuizComposer').props.saveError, /Fixture disk failure/);

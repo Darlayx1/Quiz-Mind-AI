@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/app-operation-test.ts",
+    "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/app-operation-test.ts",
     "test:quality": "node --import tsx scripts/quiz-quality-test.ts",
     "benchmark:quality": "node --import tsx scripts/quality-benchmark.ts",
     "test:generation": "node --import tsx scripts/quiz-stream-test.ts && node --import tsx scripts/generation-efficiency-test.ts && node --import tsx scripts/generation-quality-gate-test.ts",

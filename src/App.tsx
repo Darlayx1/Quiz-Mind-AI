@@ -210,7 +210,7 @@ export default function App() {
     if (saved?.lastResult) { setResult(saved.lastResult); setView('results'); } else { setResult(null); setView('runner'); }
   };
   const retryQuiz = () => { if(isEvaluating)return; void w.update(d => ({ ...d, progress: null })).then(() => { attemptedProgress.current = ''; setResult(null); setView('runner'); }).catch(() => {}); };
-  const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : `Akun · ${w.session?.user.email || 'pulihkan sesi'}`;
+  const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : w.session ? 'Akun · penyimpanan pribadi' : 'Akun · pulihkan sesi';
   const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled));
   const resumable = resumableQuiz(w.data.history, w.data.progress);
   const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
