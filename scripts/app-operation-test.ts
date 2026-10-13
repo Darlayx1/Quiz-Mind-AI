@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { emptyWorkspace } from '../src/workspace/types.js';
+import { emptyWorkspace, keyPaused } from '../src/workspace/types.js';
 import { fixtures } from './assessment-fixtures.js';
 import { validateQuestion } from '../src/questionValidation.js';
 import { buildResult } from '../src/scoring.js';
@@ -9,6 +9,7 @@ import { normalizeQuizConfig } from '../src/quizConfig.js';
 // Render the real App with an isolated hook host and deferred provider operations.
 const runtime = globalThis as any;
 runtime.__buildResult = buildResult;
+runtime.__keyPaused = keyPaused;
 const slots: any[] = []; let cursor = 0; let effects: (() => void)[] = [];
 runtime.__hooks = {
   useState(value: any) { const i = cursor++; if (!(i in slots)) slots[i] = typeof value === 'function' ? value() : value;
@@ -32,6 +33,7 @@ const compiled = await build({ entryPoints: ['src/App.tsx'], bundle: true, write
       if (path === 'react') contents = 'export const {useState,useRef,useCallback,useEffect}=globalThis.__hooks;';
       else if (path === 'react/jsx-runtime') contents = 'export const Fragment="Fragment";export const jsx=(type,props)=>({type,props});export const jsxs=jsx;';
       else if (path.includes('useWorkspace')) contents = 'export const useWorkspace=()=>globalThis.__workspace;';
+      else if (path.includes('/types.js')) contents = 'export const keyPaused=globalThis.__keyPaused;';
       else if (path.includes('/ai.js')) contents = 'export const availableKeys=()=>[{}];export const generateWorkspaceQuiz=(...a)=>globalThis.__generate(...a);';
       else if (path.includes('supabase')) contents = 'export const accountRpc=async()=>{};';
       else if (path.includes('evaluation')) contents = 'export const evaluateWorkspace=async()=>{};';
