@@ -3049,10 +3049,8 @@ progress::-moz-progress-bar {
 .configuration-page .menu-heading { margin-bottom: 30px; }
 .configuration-page .menu-heading h1 { font-size: clamp(28px, 3vw, 36px); letter-spacing: -1.2px; }
 .configuration-page .menu-layout { grid-template-columns: minmax(0,1fr); gap: 28px; }
-.configuration-page .menu-fields { gap: 0; border: 0; padding: 0; }
-.configuration-page .menu-section, .configuration-page .question-composition { border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: 24px 0; margin: 0; min-width: 0; }
-.configuration-page .menu-section + .menu-section { border-top: 1px solid var(--qm-line); }
-.configuration-page .menu-section:first-of-type { padding-top: 0; }
+.configuration-page .menu-fields { gap: 16px; border: 0; padding: 0; }
+.configuration-page .menu-section, .configuration-page .question-composition { border: 1px solid #e5eaf1; border-radius: 12px; box-shadow: none; background: white; padding: 24px; margin: 0; min-width: 0; }
 .configuration-page .menu-section-title { margin-bottom: 16px; gap: 12px; }
 .configuration-page .menu-section-title h2 { font-size: 17px; line-height: 1.45; margin: 0; letter-spacing: -.3px; }
 .configuration-page .section-number { color: var(--qm-muted); font-size: 11px; letter-spacing: .03em; font-variant-numeric: tabular-nums; margin: 0; }
@@ -3133,6 +3131,7 @@ progress::-moz-progress-bar {
 .preset-chip { min-height: 44px; padding: 8px 12px; border: 1px solid #c6cdda; border-radius: var(--config-radius,8px); font-size: 12px; color: #46516a; background: white; transition: background var(--press-duration), color var(--press-duration); }
 .preset-chip:hover:not(:disabled) { background: #f2f6fc; }.preset-chip[aria-pressed=true] { background: var(--qm-accent); color: white; border-color: var(--qm-accent); font-weight: 600; }
 .configuration-page .duration-workspace { padding: 18px 20px 14px; margin-top: 20px; border: 1px solid #e0e7f0; border-radius: 12px; background: #f8fafc; }
+.configuration-page .menu-fields .duration-workspace { padding: 18px 0 0; border: 0; border-top: 1px solid var(--qm-line); border-radius: 0; background: transparent; }
 .duration-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .duration-heading-copy { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .duration-symbol { width: 40px; height: 40px; border-radius: 10px; background: #e9eff7; color: var(--qm-accent); display: grid; place-items: center; flex-shrink: 0; }
@@ -3224,7 +3223,7 @@ progress::-moz-progress-bar {
 @media (max-width: 767px) {
   .configuration-page { padding: 16px 16px calc(160px + env(safe-area-inset-bottom)); }
   .configuration-page .menu-heading { margin-bottom: 24px; }.configuration-page .menu-heading h1 { font-size: 28px; }.configuration-page .menu-heading p { font-size: 12px; }
-  .configuration-page .menu-section, .configuration-page .question-composition { padding: 22px 0; }.configuration-page .menu-section-title h2 { font-size: 16px; }
+  .configuration-page .menu-section, .configuration-page .question-composition { padding: 18px; }.configuration-page .menu-section-title h2 { font-size: 16px; }
   .composition-row, .composition-rows.with-time .composition-row { grid-template-columns: 138px minmax(0,1fr) minmax(0,1fr); gap: 12px 10px; }
   .composition-type { grid-column: 1 / -1; padding-top: 0; }.composition-type small { margin-top: -2px; }
   .composition-row:not(.is-inactive) .composition-type strong { color: var(--qm-ink); }
@@ -3257,6 +3256,7 @@ progress::-moz-progress-bar {
   .selector-footer { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }.selector-option strong { font-size: 13px; }
 }
 @media (max-width: 374px) {
+  .configuration-page .menu-section, .configuration-page .question-composition { padding: 14px; }
   .configuration-page .menu-section-title { gap: 8px; }.draft-status { font-size: 11px; }
   .composition-row, .composition-rows.with-time .composition-row { column-gap: 8px; }.row-control small { font-size: 9px; }
   .configuration-page .menu-section-title h2 { font-size: 15px; }.preset-chip { padding-inline: 9px; }
