@@ -7,7 +7,8 @@ import type { AIModel } from '../models.js';
 import type { Quiz } from '../types/quiz.js';
 import type { WorkspaceController } from '../workspace/useWorkspace.js';
 import type { ApiKeyRecord, Preferences } from '../workspace/types.js';
-import { supabase, authRedirect, accountRpc } from '../workspace/supabase.js';
+import { supabase, authRedirect, accountRpc, signInWithGoogle } from '../workspace/supabase.js';
+import { profileName } from '../workspace/googleAuth.js';
 import { localImportPayload } from '../workspace/localRepository.js';
 import { testKey } from '../workspace/ai.js';
 import { AIEvaluationSettings } from './AIEvaluationSettings.js';
@@ -22,9 +23,11 @@ const date = (value?: string) => value ? new Date(value).toLocaleString('id-ID',
 export function AISettings({ workspace: w, initialTab = 'account', onClose, onSelectQuiz, accountLocked = false }:
   { workspace: WorkspaceController; initialTab?: SettingsTab; onClose: () => void; onSelectQuiz: (quiz: Quiz) => void; accountLocked?: boolean }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
-  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [error, setError] = useState('');
+  const [working, setBusy] = useState(false); const [googlePending, setGooglePending] = useState(false);
+  const busy = working || googlePending;
+  const [message, setMessage] = useState(''); const [error, setError] = useState('');
   const [authView, setAuthView] = useState<'login' | 'signup' | 'forgot' | 'reset'>(w.passwordRecovery ? 'reset' : 'login');
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(w.session?.user.user_metadata?.name || '');
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(profileName(w.session?.user.user_metadata));
   const [editing, setEditing] = useState<ApiKeyRecord | 'new' | null>(null); const [label, setLabel] = useState(''); const [secret, setSecret] = useState('');
   const [parallelSecret, setParallelSecret] = useState('');
   const [parallelConflict, setParallelConflict] = useState<'skip' | 'replace'>('skip');
@@ -53,6 +56,7 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
     return () => { mounted.current = false; document.body.style.overflow = overflow; document.removeEventListener('keydown', keydown); prior?.focus(); };
   }, []);
   useEffect(() => { setSecret(''); setEditing(null); setImportPreview(null); setParallelSecret(''); setParallelConflict('skip'); setMessage(''); setError(''); setPage(0); setPassword(''); }, [w.scope]);
+  useEffect(() => { setName(profileName(w.session?.user.user_metadata)); }, [w.session?.user.id, w.session?.user.user_metadata?.name, w.session?.user.user_metadata?.full_name]);
   const act = async (action: () => Promise<unknown>, success?: string) => {
     if (busy) return; const scope = w.scope; setBusy(true); setMessage(''); setError('');
     try { await action(); if (mounted.current && currentScope.current === scope && success) setMessage(success); }
@@ -87,11 +91,12 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
           {(error || w.error) && <div role="alert" className="settings-alert error">{error || w.error}{w.mode !== 'reauth_required' && <button onClick={() => act(w.refresh)} disabled={busy || w.storageLoading}>Muat ulang data</button>}</div>}
           {message && <div role="status" className="settings-alert success"><Check size={16} />{message}</div>}
           {tab === 'account' && <>
+            {w.authError && <div role="alert" className="settings-alert error">{w.authError}<button type="button" onClick={w.dismissAuthError}>Tutup pesan</button></div>}
             <div className="settings-heading"><h3>Akun</h3><p>Gunakan secara lokal, atau masuk untuk menyimpan data ke akun Anda.</p></div>
             {accountLocked && <div className="settings-alert">Selesaikan atau tinggalkan kuis terlebih dahulu sebelum mengubah akun.</div>}
             {w.session && authView !== 'reset' ? <>
-              <div className="settings-card account-card account-profile"><span className="account-avatar"><UserRound size={27} /></span><div><strong>{w.session.user.user_metadata?.name || 'Akun Anda'}</strong><p>{w.session.user.email}</p><span className="status-badge available">{w.session.user.email_confirmed_at ? 'Email terverifikasi' : 'Email belum terverifikasi'}</span></div></div>
-              <form className="settings-form narrow account-form" onSubmit={e => { e.preventDefault(); void act(async () => { const { error } = await supabase.auth.updateUser({ data: { name: name.trim() } }); if (error) throw error; }, 'Profil diperbarui.'); }}><label htmlFor="profile-name">Nama tampilan</label><input id="profile-name" maxLength={80} value={name} onChange={e => setName(e.target.value)} onBlur={() => { if (name.trim() !== (w.session?.user.user_metadata?.name || '')) void act(async () => { const { error } = await supabase.auth.updateUser({ data: { name: name.trim() } }); if (error) throw error; }, 'Profil diperbarui.'); }} /><p className="settings-help" role="status">Nama tampilan tersimpan otomatis setelah selesai diedit.</p></form>
+              <div className="settings-card account-card account-profile"><span className="account-avatar"><UserRound size={27} /></span><div><strong>{profileName(w.session.user.user_metadata) || 'Akun Anda'}</strong><p>{w.session.user.email}</p><span className="status-badge available">{w.session.user.email_confirmed_at ? 'Email terverifikasi' : 'Email belum terverifikasi'}</span></div></div>
+              <form className="settings-form narrow account-form" onSubmit={e => { e.preventDefault(); void act(async () => { const { error } = await supabase.auth.updateUser({ data: { name: name.trim() } }); if (error) throw error; }, 'Profil diperbarui.'); }}><label htmlFor="profile-name">Nama tampilan</label><input id="profile-name" maxLength={80} value={name} onChange={e => setName(e.target.value)} onBlur={() => { if (name.trim() !== profileName(w.session?.user.user_metadata)) void act(async () => { const { error } = await supabase.auth.updateUser({ data: { name: name.trim() } }); if (error) throw error; }, 'Profil diperbarui.'); }} /><p className="settings-help" role="status">Nama tampilan tersimpan otomatis setelah selesai diedit.</p></form>
               <div className="settings-divider" />
               <h4>Data lokal dan akun tetap terpisah</h4><p className="settings-help">Masuk tidak memindahkan data perangkat. Pilih sendiri data yang ingin diimpor ke akun ini.</p>
               <button className="settings-secondary" disabled={busy || !w.ready || accountLocked} onClick={() => act(async () => { const payload = await localImportPayload(); setImportPreview(payload); setSelectedImports(payload.keys.map(k => k.id)); })}>Pratinjau impor data lokal</button>
@@ -104,13 +109,21 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
               <button className="settings-link logout-link" disabled={busy || accountLocked} onClick={() => act(w.logout)}><LogOut size={16} />Keluar ke mode lokal</button>
             </> : <>
               <div className="settings-card local-account-note"><Monitor size={22} /><div><strong>{w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : 'Anda menggunakan mode lokal'}</strong><p>{w.mode === 'reauth_required' ? 'Data akun tetap berada di akun asal.' : 'API key, pengaturan, kuis, dan riwayat tersimpan di perangkat ini tanpa perlu login.'}</p></div></div>
-              <form className="settings-form narrow" onSubmit={e => { e.preventDefault(); void act(async () => {
+              <form className="settings-form narrow" onSubmit={e => { e.preventDefault(); w.dismissAuthError(); void act(async () => {
                 if (authView === 'forgot') { const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: authRedirect() }); if (error) throw error; setMessage('Tautan pemulihan dikirim jika alamat terdaftar.'); return; }
                 if (authView === 'reset') { const { error } = await supabase.auth.updateUser({ password }); if (error) throw error; w.finishRecovery(); setAuthView('login'); setPassword(''); setMessage('Kata sandi diperbarui.'); return; }
                 const response = authView === 'signup' ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: authRedirect(), data: { name: name.trim() } } }) : await supabase.auth.signInWithPassword({ email, password });
                 if (response.error) throw response.error; setPassword(''); if (authView === 'signup' && !response.data.session) setMessage('Periksa email untuk memverifikasi akun sebelum masuk.');
               }); }}>
                 <h4>{authView === 'signup' ? 'Buat akun' : authView === 'forgot' ? 'Pulihkan akun' : authView === 'reset' ? 'Kata sandi baru' : 'Masuk ke Quiz Mind AI'}</h4>
+                {(authView === 'login' || authView === 'signup') && <>
+                  <button type="button" className="settings-secondary google-signin" disabled={busy || accountLocked || w.mode === 'initializing'} aria-busy={googlePending} onClick={() => {
+                    if (busy || accountLocked || w.mode === 'initializing') return;
+                    w.dismissAuthError(); setGooglePending(true);
+                    void act(async () => { try { await signInWithGoogle(); } catch (error) { setGooglePending(false); throw error; } });
+                  }}><span className="google-signin-mark" aria-hidden="true">G</span>{googlePending ? 'Menghubungkan ke Google…' : 'Masuk dengan Google'}</button>
+                  <div className="auth-separator"><span>atau gunakan email</span></div>
+                </>}
                 {authView === 'signup' && <><label htmlFor="account-name">Nama tampilan</label><input id="account-name" value={name} maxLength={80} onChange={e => setName(e.target.value)} /></>}
                 {authView !== 'reset' && <><label htmlFor="account-email">Email</label><input id="account-email" type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></>}
                 {authView !== 'forgot' && <><label htmlFor="account-password">{authView === 'reset' ? 'Kata sandi baru' : 'Kata sandi'}</label><input id="account-password" type="password" required minLength={authView === 'login' ? 1 : 8} autoComplete={authView === 'login' ? 'current-password' : 'new-password'} value={password} onChange={e => setPassword(e.target.value)} /></>}

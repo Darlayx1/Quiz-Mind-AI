@@ -1,12 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
 import { withSignal } from './request.js';
+import { completeAuthCallback, createGoogleSignIn, readAuthCallback, verifyGoogleProvider } from './googleAuth.js';
 
 export const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || 'https://btsvqhlfkkgwkqsezzoq.supabase.co';
 export const PUBLISHABLE_KEY = import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_0_-VQxC-t2qEMzJTy63SkQ_-BYp-ZQM';
+const callback = typeof location === 'undefined' ? null : readAuthCallback(location.href);
 export const supabase = createClient(SUPABASE_URL, PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
 });
 export const authRedirect = () => `${location.origin}${import.meta.env.BASE_URL}`;
+export const signInWithGoogle = createGoogleSignIn(supabase.auth, authRedirect, url => location.assign(url),
+  () => AbortSignal.timeout(20000), signal => verifyGoogleProvider(`${SUPABASE_URL}/auth/v1/settings`, PUBLISHABLE_KEY, signal));
+export const authCallbackResult = callback ? completeAuthCallback(callback, supabase.auth,
+  () => location.href, url => history.replaceState(history.state, '', url)) : null;
 export class AccountSessionError extends Error {
   constructor() { super('Sesi akun perlu dipulihkan. Silakan masuk kembali.'); this.name = 'AccountSessionError'; }
 }

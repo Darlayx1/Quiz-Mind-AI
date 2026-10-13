@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:auth": "node --import tsx scripts/google-auth-test.ts",
     "test:results": "node --import tsx scripts/results-review-test.ts",
     "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/configuration-generation-test.ts && node --import tsx scripts/app-operation-test.ts",
     "test:quality": "node --import tsx scripts/quiz-quality-test.ts",

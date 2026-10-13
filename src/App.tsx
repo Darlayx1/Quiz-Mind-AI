@@ -54,7 +54,7 @@ export default function App() {
       if (saved) { setQuiz(saved); setView('runner'); }
     }
   }, [w.ready, w.scope, w.data.progress, w.data.history]);
-  useEffect(() => { if (w.passwordRecovery) setSettings('account'); }, [w.passwordRecovery]);
+  useEffect(() => { if (w.passwordRecovery || w.authError) setSettings('account'); }, [w.passwordRecovery, w.authError]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
   const persistDraft = useCallback((draft: Record<string, unknown>) => w.update(d => ({ ...d, draft }), w.scope), [w.update, w.scope]);
   const persistProgress = useCallback((progress: QuizProgress) => {

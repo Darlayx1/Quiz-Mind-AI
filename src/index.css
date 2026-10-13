@@ -70,6 +70,10 @@
 .settings-primary, .settings-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 10px 15px; border-radius: 9px; font-size: 12px; font-weight: 600; transition: background .15s; }
 .settings-primary { background: var(--qm-accent); color: #fff; border: 1px solid var(--qm-accent); box-shadow: 0 3px 8px #214f8222; }.settings-primary:hover { background: #17375b; }.settings-form > .settings-primary { margin-top: 8px; }
 .settings-secondary { background: white; color: #425570; border: 1px solid #dce3ed; }.settings-secondary:hover { background: #f6f8fc; }
+.google-signin { width: 100%; min-height: 46px; gap: 10px; }
+.google-signin-mark { font-size: 20px; font-weight: 700; color: #4285f4; line-height: 1; }
+.auth-separator { display: flex; align-items: center; gap: 12px; width: 100%; color: var(--qm-muted, #64748b); font-size: 12px; margin: 5px 0; }
+.auth-separator::before, .auth-separator::after { content: ''; flex: 1; height: 1px; background: var(--qm-line, #dce3ed); }
 .settings-primary:disabled, .settings-secondary:disabled, .key-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .settings-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--qm-accent); font-weight: 550; }.settings-link:hover { text-decoration: underline; }.settings-link:disabled { opacity: .5; }
 .settings-help { font-size: 11px; color: var(--qm-muted); line-height: 1.85; margin: 11px 0; }.settings-divider { border-top: 1px solid var(--qm-line); margin: 27px 0; }

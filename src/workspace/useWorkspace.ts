@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { supabase, AccountSessionError } from './supabase.js';
+import { supabase, AccountSessionError, authCallbackResult } from './supabase.js';
 import { withSignal, storageError } from './request.js';
 import { localRepository } from './localRepository.js';
 import { accountRepository } from './accountRepository.js';
@@ -8,6 +8,7 @@ import { keyPaused, KEY_LIMIT_PAUSE_MS, emptyWorkspace, type ApiKeyRecord, type 
 
 export function useWorkspace() {
   const [session, setSession] = useState<Session | null>(null);
+  const [authError, setAuthError] = useState('');
   const [mode, setMode] = useState<'initializing' | 'guest' | 'account' | 'reauth_required'>('initializing');
   const [data, setData] = useState<WorkspaceData>(emptyWorkspace);
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
@@ -61,6 +62,7 @@ export function useWorkspace() {
   }, [load]);
   useEffect(() => {
     let alive = true;
+    void authCallbackResult?.then(message => { if (alive) setAuthError(message); });
     const timer = setTimeout(() => { if (alive) { setStorageLoading(false); setError('Pemulihan sesi melewati batas waktu. Silakan muat ulang data.'); } }, 30000);
     const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
       clearTimeout(timer);
@@ -125,7 +127,8 @@ export function useWorkspace() {
     await action(captured.repository);
     if (captured === context.current) await load(captured.repository, captured.epoch);
   }, [load]);
-  return { session, mode, scope: mode === 'guest' ? 'guest' : session?.user.id ?? '', data, keys, error, saving, ready, storageLoading, update,
+  return { session, mode, scope: mode === 'guest' ? 'guest' : session?.user.id ?? '', data, keys, error, authError,
+    dismissAuthError: () => setAuthError(''), saving, ready, storageLoading, update,
     keyAction, refresh, repository: context.current?.repository, passwordRecovery,
     finishRecovery: () => { recovery.current = false; setPasswordRecovery(false); },
     logout: async () => { explicitLogout.current = true; const { error: authError } = await supabase.auth.signOut({ scope: 'local' }); if (authError) { explicitLogout.current = false; throw authError; } transition(null, true); explicitLogout.current = false; },
