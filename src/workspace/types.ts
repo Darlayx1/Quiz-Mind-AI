@@ -1,6 +1,6 @@
 import { DEFAULT_MODEL, type AIModel } from '../models.js';
 import type { Quiz, QuizConfig, QuizResult, Question, StoredAnswer, EvaluationSettings } from '../types/quiz.js';
-import { defaultEvaluationSettings } from '../evaluationSettings.js';
+import { normalizeEvaluationSettings, defaultEvaluationSettings } from '../evaluationSettings.js';
 import type { ParallelResearch } from '../server/parallelSearch.js';
 
 export type KeyStatus = 'untested' | 'available' | 'invalid' | 'quota' | 'unavailable';
@@ -39,12 +39,12 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 3, fallback: false, evaluation: { ...defaultEvaluationSettings } },
+  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 3, fallback: true, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {
   const defaults = emptyWorkspace();
-  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences },
+  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences, fallback: true, maxAttempts: 3, evaluation: normalizeEvaluationSettings(value?.preferences?.evaluation) },
     history: Array.isArray(value?.history) ? value.history : [],
     activity: Array.isArray(value?.activity) ? value.activity : [] };
 }
@@ -65,9 +65,17 @@ export function keyStatus(error: unknown): KeyStatus {
   if (status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(message)) return 'quota';
   return 'unavailable';
 }
+export function nextKeyLabel(keys: Pick<ApiKeyRecord, 'label'>[]) {
+ let n=1; while(keys.some(k=>k.label===`API key ${n}`)) n++; return `API key ${n}`;
+}
+export const KEY_LIMIT_PAUSE_MS = 24 * 60 * 60 * 1000;
+export function keyPaused(key: ApiKeyRecord, now = Date.now()) {
+  return key.status === 'quota' && !!key.testedAt && Date.parse(key.testedAt) + KEY_LIMIT_PAUSE_MS > now;
+}
 export function availableKeys(keys: ApiKeyRecord[], preferences: Preferences) {
-  const sorted = keys.filter(k => k.enabled && k.provider !== 'parallel').sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  if (preferences.keyId && keys.some(k => k.id === preferences.keyId && k.provider === 'parallel')) return [];
+  const sorted = keys.filter(k => k.enabled && !keyPaused(k) && k.provider !== 'parallel').sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   if (!preferences.keyId) return sorted;
   const selected = sorted.find(k => k.id === preferences.keyId);
-  return selected ? [selected, ...(preferences.fallback ? sorted.filter(k => k.id !== selected.id) : [])] : [];
+  return selected ? [selected, ...sorted.filter(k => k.id !== selected.id)] : sorted;
 }

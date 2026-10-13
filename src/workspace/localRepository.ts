@@ -2,7 +2,7 @@ import { openDB, type DBSchema } from 'idb';
 import { readData, migrateHistory } from '../quizStorage.js';
 import { validateCollection } from '../keyPool.js';
 import { validateParallelKey } from '../server/parallelSearch.js';
-import { emptyWorkspace, sanitizeWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository, type WorkspaceSnapshot, type KeyStatus } from './types.js';
+import { nextKeyLabel, emptyWorkspace, sanitizeWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository, type WorkspaceSnapshot, type KeyStatus } from './types.js';
 
 interface LocalDatabase extends DBSchema {
   workspace: { key: string; value: WorkspaceSnapshot };
@@ -60,7 +60,7 @@ export const localRepository: WorkspaceRepository = {
   async keys() { return (await (await dbPromise()).getAll('keys')).sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id)); },
   async putKey(input) {
     const secret = input.secret?.trim();
-    if (!input.label.trim() || input.label.length > 80) throw new Error('Nama key wajib diisi, maksimal 80 karakter.');
+    if (input.label.length > 80) throw new Error('Nama key maksimal 80 karakter.');
     if (secret && (secret.length < 8 || secret.length > 1024)) throw new Error('API key harus berisi 8–1024 karakter.');
     const digest = secret ? await fingerprint(secret) : null;
     const db = await dbPromise(); const tx = db.transaction(['keys', 'credentials'], 'readwrite');
@@ -76,7 +76,7 @@ export const localRepository: WorkspaceRepository = {
     if (!existing && !secret) return fail('Masukkan API key.');
     if (digest && all.some(k => k.fingerprint === digest && k.id !== input.id)) return fail('API key ini sudah tersimpan di ruang lokal.');
     const id = existing?.id ?? crypto.randomUUID();
-    await tx.objectStore('keys').put({ id, provider, label: input.label.trim(), suffix: secret ? secret.slice(-4) : existing!.suffix,
+    await tx.objectStore('keys').put({ id, provider, label: input.label.trim() || existing?.label || nextKeyLabel(all), suffix: secret ? secret.slice(-4) : existing!.suffix,
       fingerprint: digest ?? existing!.fingerprint, enabled: input.enabled ?? existing?.enabled ?? true,
       priority: input.priority ?? existing?.priority ?? (Math.max(0, ...all.map(k => k.priority)) + 1),
       status: secret ? 'untested' : existing!.status, testedAt: secret ? undefined : existing?.testedAt,

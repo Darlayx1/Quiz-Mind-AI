@@ -57,7 +57,7 @@ var modelInfo = (id) => {
 };
 
 // src/evaluationSettings.ts
-var defaultEvaluationSettings = { enabled: true, followGenerator: true, provider: "gemini", model: DEFAULT_MODEL, shortAnswerMode: "hybrid", allowKeyFallback: true, allowModelFallback: false, fallbackModel: DEFAULT_MODEL, allowProviderFallback: false, fallbackProvider: "gemini", fallbackProviderModel: "gemini-3.5-flash-lite", reviewFlagged: true };
+var defaultEvaluationSettings = { enabled: true, followGenerator: false, provider: "gemini", model: DEFAULT_MODEL, shortAnswerMode: "ai", allowKeyFallback: true, allowModelFallback: false, fallbackModel: DEFAULT_MODEL, allowProviderFallback: false, fallbackProvider: "gemini", fallbackProviderModel: "gemini-3.5-flash-lite", reviewFlagged: true };
 function normalizeEvaluationSettings(input) {
   if (input === void 0) return { ...defaultEvaluationSettings };
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Pengaturan evaluasi AI tidak valid.");
@@ -65,6 +65,12 @@ function normalizeEvaluationSettings(input) {
   const s = {
     ...defaultEvaluationSettings,
     ...input,
+    enabled: true,
+    followGenerator: false,
+    allowKeyFallback: true,
+    allowModelFallback: false,
+    allowProviderFallback: false,
+    shortAnswerMode: "ai",
     provider: "gemini",
     fallbackProvider: "gemini",
     model: modelInfo(raw.model)?.provider === "gemini" ? raw.model : DEFAULT_MODEL,

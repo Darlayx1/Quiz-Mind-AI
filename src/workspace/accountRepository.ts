@@ -1,5 +1,5 @@
 import { accountSession, accountResponse, accountRpc, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
-import { sanitizeWorkspace, type ApiKeyRecord, type WorkspaceRepository } from './types.js';
+import { nextKeyLabel, sanitizeWorkspace, type ApiKeyRecord, type WorkspaceRepository } from './types.js';
 
 export function accountRepository(userId: string): WorkspaceRepository {
   return {
@@ -24,7 +24,9 @@ export function accountRepository(userId: string): WorkspaceRepository {
         successes: k.successes, failures: k.failures })) as ApiKeyRecord[];
     },
     async putKey(input) {
-      await accountRpc(userId, 'qm_upsert_provider_key', { p_id: input.id || null, p_label: input.label, p_provider: input.provider || null,
+      const existingKeys = input.label.trim() ? [] : await this.keys();
+      const label = input.label.trim() || existingKeys.find(k => k.id === input.id)?.label || nextKeyLabel(existingKeys);
+      await accountRpc(userId, 'qm_upsert_provider_key', { p_id: input.id || null, p_label: label, p_provider: input.provider || null,
         p_secret: input.secret?.trim() || null, p_enabled: input.enabled ?? null, p_priority: input.priority ?? null });
     },
     async removeKey(id) { await accountRpc(userId, 'qm_remove_key', { p_id: id }); },

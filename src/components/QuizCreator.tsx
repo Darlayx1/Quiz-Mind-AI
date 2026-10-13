@@ -22,12 +22,12 @@ import { LANGUAGE_STYLES } from '../languageStyles.js';
 interface QuizCreatorProps {
   onGenerate: (config: QuizConfig) => void; isLoading: boolean; errorMessage: string | null;
   preferences: Preferences; hasApiKey: boolean; storageLabel: string; onOpenSettings: () => void;
-  onOpenModelSettings?: () => void;
+  onOpenModelSettings?: () => void; onGroundingChange?: (enabled: boolean) => void;
   initialDraft?: Record<string, unknown> | null; onDraft: (draft: Record<string, unknown>) => Promise<unknown> | void;
   stage?: 'creator' | 'configuration'; onNavigate?: (stage: 'creator' | 'configuration') => void;
   continueLearning?: React.ReactNode;
 }
-export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, preferences, hasApiKey, storageLabel, onOpenSettings, onOpenModelSettings = onOpenSettings, initialDraft, onDraft, stage = 'configuration', onNavigate, continueLearning }) => {
+export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading, errorMessage, preferences, hasApiKey, storageLabel, onOpenSettings, onOpenModelSettings = onOpenSettings, onGroundingChange, initialDraft, onDraft, stage = 'configuration', onNavigate, continueLearning }) => {
   const { draft, patch, flush, saveError, saving, pending, latest } = useComposerDraft(initialDraft, onDraft);
   const { studyMaterial, difficulty, displayMode, totalMinutes, perQuestionSeconds, unlimited, language, additionalInstructions, composition } = draft;
   const state = configurationState(draft);
@@ -105,6 +105,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
           <label htmlFor="additional-instructions" className="field-label">Instruksi tambahan <span className="optional-badge">Opsional</span></label><textarea id="additional-instructions" className="field-input resize-y" rows={3} maxLength={2000} value={additionalInstructions} onChange={e => patch({ additionalInstructions: e.target.value })} placeholder="Contoh: fokus pada studi kasus dan penerapan sehari-hari." />
           <div className="configuration-ai-row"><BrainCircuit size={19} /><div><strong>{hasApiKey ? 'AI siap' : 'Hubungkan AI'}</strong><p>{modelName(model)} · Referensi web {enableGrounding && supportsGrounding ? 'aktif' : 'nonaktif'}</p></div><button type="button" className="settings-link" onClick={onOpenModelSettings}>Pengaturan<ArrowRight size={14} /></button></div>
         </section>
+        <section className="menu-section web-search-section"><div className="menu-section-title"><span className="section-number">04</span><h2>Pencarian web</h2></div><label className="toggle-row"><span><strong>Gunakan referensi web</strong><small>Tambahkan sumber terbaru untuk pembuatan kuis.</small></span><input type="checkbox" role="switch" checked={enableGrounding && supportsGrounding} disabled={!supportsGrounding} onChange={e=>onGroundingChange?.(e.target.checked)} /></label>{!supportsGrounding && <p className="field-help">Model ini memerlukan Parallel Search untuk pencarian web.</p>}</section>
       </fieldset>
       <aside id="quiz-summary" className="menu-summary" aria-label="Ringkasan kuis">
         <div className="menu-section-title"><Sparkles size={18} /><h2>Latihan Anda</h2></div><h3 className="summary-topic">{sources.topic}</h3>

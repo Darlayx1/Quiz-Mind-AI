@@ -9,7 +9,7 @@ import { quizSchemaFor } from '../src/questionValidation.js';
 import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../src/server/geminiService.js';
 import { localRepository } from '../src/workspace/localRepository.js';
 import { generateWorkspaceQuiz } from '../src/workspace/ai.js';
-import { emptyWorkspace } from '../src/workspace/types.js';
+import { availableKeys, keyPaused, KEY_LIMIT_PAUSE_MS, emptyWorkspace } from '../src/workspace/types.js';
 import { fixtures } from './assessment-fixtures.js';
 import { build } from 'esbuild';
 
@@ -118,13 +118,20 @@ try {
   await assert.rejects(generateWorkspaceQuiz({ ...base, questionCount: 6 }, { ...preferences, grounding: true, allowGroundingFallback: true },
     await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.code === 'WEB_SEARCH_QUOTA');
   assert.deepEqual(requests.slice(start).map(r => Boolean(r.tools?.length)), [true], 'Legacy fallback preference must never bypass required web');
+  const limitedKey = (await localRepository.keys())[0];
+  assert.equal(limitedKey.status, 'quota');
   const disabledStart = requests.length;
+  await assert.rejects(generateWorkspaceQuiz(base, preferences, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal));
+  assert.equal(requests.length, disabledStart, 'A limited key is skipped during its 24-hour pause');
+  await localRepository.recordKeyOutcome(limitedKey.id, 'available');
   await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true, allowGroundingFallback: false }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
   assert.equal(requests.length - disabledStart, 1);
+  await localRepository.recordKeyOutcome(limitedKey.id, 'available');
   failure = 'all-quota';
   const allQuotaStart = requests.length;
   await assert.rejects(generateWorkspaceQuiz(base, { ...preferences, grounding: true }, await localRepository.keys(), localRepository, async () => {}, new AbortController().signal), (e: any) => e.status === 429);
   assert.equal(requests.length - allQuotaStart, 1, 'Required web quota rejection stops without identical retries');
+  await localRepository.recordKeyOutcome(limitedKey.id, 'available');
   for (const mode of ['no-web-sources', 'no-web-query'] as const) {
     failure = mode;
     const before = requests.length;
@@ -137,6 +144,30 @@ try {
   assert.equal(groundedQuiz.questions.length, 6);
   assert.ok(groundedQuiz.usedGrounding && groundedQuiz.webCheckedAt);
   assert.ok(groundedQuiz.questions.every(q => q.groundingSources.length));
+  // A quota rejection moves to a different key and survives page reload.
+  const first = (await localRepository.keys())[0];
+  await localRepository.putKey({label:'',secret:'second-fixture-secret'});
+  const second = (await localRepository.keys()).find(k=>k.id!==first.id)!;
+  assert.equal(second.label,'API key 1');
+  const providerFetch=globalThis.fetch;
+  let failoverCalls=0;
+  globalThis.fetch=async (...args)=>{failoverCalls++;if(failoverCalls===1)return Response.json({error:{message:'Quota limit',code:429}},{status:429});return providerFetch(...args);};
+  const failoverQuiz=await generateWorkspaceQuiz(base,{...preferences,keyId:first.id,fallback:false},await localRepository.keys(),localRepository,async()=>{},new AbortController().signal);
+  assert.equal(failoverQuiz.questions.length,1);assert.equal(failoverCalls,2);
+  const paused=(await localRepository.keys()).find(k=>k.id===first.id)!;
+  assert.ok(keyPaused(paused));assert.equal(paused.enabled,true,'Manual enablement stays separate from temporary pause');
+  assert.equal(keyPaused(paused,Date.parse(paused.testedAt!)+KEY_LIMIT_PAUSE_MS),false);
+  assert.deepEqual(availableKeys(await localRepository.keys(),{...preferences,keyId:first.id,fallback:false}).map(k=>k.id),[second.id]);
+  globalThis.fetch=providerFetch;
+  await localRepository.putKey({label:'',secret:'third-fixture-secret'});
+  await localRepository.putKey({label:'',secret:'fourth-fixture-secret'});
+  assert.deepEqual((await localRepository.keys()).slice(1).map(k=>k.label),['API key 1','API key 2','API key 3']);
+  await localRepository.recordKeyOutcome(first.id,'available');
+  failure='all-quota';const beforeLimit=requests.length;
+  await assert.rejects(generateWorkspaceQuiz(base,preferences,await localRepository.keys(),localRepository,async()=>{},new AbortController().signal));
+  assert.equal(requests.length-beforeLimit,3,'Stop after three different quota-limited keys');
+  assert.equal(availableKeys(await localRepository.keys(),preferences).length,1);
+  failure=undefined;
   console.log('PASS: active generator schemas for all seven types with/without search, Gemma/custom compatibility, sparse distributions, HTTP/network diagnostics, timeout/cancel, and no repeated invalid output. No external API requests.');
 } finally {
   globalThis.fetch = originalFetch;
@@ -150,6 +181,9 @@ let accountCalls = 0;
 let accountKeyReads = 0;
 const accountProgressWrites: { data: any; filters: Record<string, unknown> }[] = [];
 let accountFailure = false;
+let accountKeys: any[] = [{id:'account-key',enabled:true}];
+let accountQuotaFailures=0;
+let quotaReservations=0;
 let accountSearchQuota = false;
 let accountNoSources = false;
 const outcomes: string[] = [];
@@ -171,13 +205,14 @@ const admin = {
       return query;
     }
     const query: any = { select: () => query, eq: () => query, order: () => query,
-      then: (resolve: any) => Promise.resolve({ data: [{ id: 'account-key', enabled: true }], error: null }).then(resolve) };
+      then: (resolve: any) => Promise.resolve({ data: accountKeys, error: null }).then(resolve) };
     return query;
   },
   rpc: async (name: string, params: any) => {
     if (name === 'qm_claim_job') return { data: { id: params.p_id || operationId, status: 'pending', lease_token: 'fixture-lease' }, error: null };
     if (name === 'qm_service_credential') return { data: key, error: null };
-    if (name === 'qm_record_outcome') outcomes.push(params.p_status);
+    if (name === 'qm_record_outcome') {outcomes.push(params.p_status);const k=accountKeys.find(k=>k.id===params.p_key);if(k){k.status=params.p_status;k.tested_at=new Date().toISOString();}}
+    if(name==='qm_reserve_quota_retry'){quotaReservations++;return {data:true,error:null};}
     if (name === 'qm_commit_job') commits.push(params);
     if (name === 'qm_reserve_dispatch') return { data: true, error: null };
     return { data: null, error: null };
@@ -188,6 +223,7 @@ runtime.__accountGenerationCall = async (params: any) => {
   const audit = qualityReviewFixture(params.contents);
   if (audit) return { text: JSON.stringify(audit), candidates: [{ finishReason: 'STOP' }] };
   accountCalls++;
+  if(accountQuotaFailures-->0)throw Object.assign(new Error('Quota limit'),{status:429});
   if (accountSearchQuota && params.config.tools?.length) throw Object.assign(new Error('Quota limited'), { status: 429 });
   assert.equal(params.config.responseMimeType, 'application/json');
   assert.deepEqual(params.config.responseJsonSchema.properties.questions.items, quizSchemaFor('essay').properties.questions.items);
@@ -241,6 +277,7 @@ try {
   assert.equal(response.status, 429);
   assert.equal((await response.json()).code, 'WEB_SEARCH_QUOTA');
   assert.equal(accountCalls, 3, 'Account must never fall back without web');
+  accountKeys[0].status='available';
   accountSearchQuota = false; accountNoSources = true;
   response = await handler!(request({ ...preferences, grounding: true }));
   assert.equal(response.status, 200);
@@ -252,6 +289,15 @@ try {
   const grounded = (await response.json()).quiz;
   assert.ok(grounded.usedGrounding && grounded.webCheckedAt);
   assert.ok(grounded.questions.every((q: any) => q.groundingSources.length));
+  const accountFirst=accountKeys[0];
+  accountKeys.push({id:'account-backup',enabled:true});accountQuotaFailures=1;
+  const beforeFailover=accountCalls;
+  response=await handler!(request({...preferences,keyId:accountFirst.id,fallback:false}));
+  assert.equal(response.status,200);assert.equal(accountCalls-beforeFailover,2);assert.equal(quotaReservations,1);
+  assert.equal(accountFirst.status,'quota');
+  const beforePaused=accountCalls;
+  response=await handler!(request({...preferences,keyId:accountFirst.id}));
+  assert.equal(response.status,200);assert.equal(accountCalls-beforePaused,1,'Account bypasses a paused primary key');
   let providerSignal: AbortSignal | undefined;
   let providerStarted!: () => void;
   const providerCalled = new Promise<void>(resolve => { providerStarted = resolve; });

@@ -1,3 +1,4 @@
+import { Select } from './Select.js';
 import React from 'react';
 import type { AnswerValue,Item,Question,StoredAnswer } from '../types/quiz.js';
 import { normalizedAnswer,optionIds } from '../questionState.js';
@@ -21,7 +22,7 @@ export function QuestionInput({question:q,value,onChange,seed=''}:{question:Ques
  }
  if(q.type==='matching'){
  const pairs=a?.type==='matching'?a.pairs:{},right=stableShuffle(q.rightItems,q.id+seed);
- return <fieldset className="matching-answer"><legend className="field-help mb-4">Pilih satu pasangan untuk setiap item. Setiap pilihan hanya dipakai sekali.</legend>{q.leftItems.map(item=><div className="matching-row" key={item.id}><label htmlFor={id+'-'+item.id}>{item.text}</label><select className="field-input" id={id+'-'+item.id} value={pairs[item.id]??''} onChange={e=>{const next={...pairs};if(e.target.value)next[item.id]=e.target.value;else delete next[item.id];onChange({type:'matching',pairs:next});}}><option value="">Belum dipasangkan</option>{right.map(r=><option key={r.id} value={r.id} disabled={Object.entries(pairs).some(([l,v])=>l!==item.id&&v===r.id)}>{r.text}</option>)}</select></div>)}<button type="button" className="topic-chip" onClick={()=>onChange({type:'matching',pairs:{}})}>Hapus semua pasangan</button></fieldset>;
+ return <fieldset className="matching-answer"><legend className="field-help mb-4">Pilih satu pasangan untuk setiap item. Setiap pilihan hanya dipakai sekali.</legend>{q.leftItems.map(item=><div className="matching-row" key={item.id}><label htmlFor={id+'-'+item.id}>{item.text}</label><Select className="field-input" id={id+'-'+item.id} value={pairs[item.id]??''} onChange={e=>{const next={...pairs};if(e.target.value)next[item.id]=e.target.value;else delete next[item.id];onChange({type:'matching',pairs:next});}}><option value="">Belum dipasangkan</option>{right.map(r=><option key={r.id} value={r.id} disabled={Object.entries(pairs).some(([l,v])=>l!==item.id&&v===r.id)}>{r.text}</option>)}</Select></div>)}<button type="button" className="topic-chip" onClick={()=>onChange({type:'matching',pairs:{}})}>Hapus semua pasangan</button></fieldset>;
  }
  if(q.type!=='ordering')return null;
  const initial=stableShuffle(q.items,q.id+seed),ordered=a?.type==='ordering'?a.orderedItemIds:initial.map(i=>i.id),confirmed=a?.type==='ordering'&&a.confirmed;

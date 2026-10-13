@@ -1,7 +1,7 @@
 import { normalizeQuizConfig } from '../quizConfig.js';
 import { localCredential } from './localRepository.js';
 import { supabase, SUPABASE_URL, PUBLISHABLE_KEY } from './supabase.js';
-import { keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
+import { keyPaused, keyStatus, availableKeys, type ApiKeyRecord, type GenerationJob, type Preferences, type WorkspaceRepository } from './types.js';
 import type { Quiz, QuizConfig } from '../types/quiz.js';
 import { usableResearch, type ParallelResearch } from '../server/parallelSearch.js';
 import { stableResearchFallbackCodes } from '../server/assessmentPolicy.js';
@@ -22,9 +22,9 @@ export async function invokeAccount(body: Record<string, unknown>, signal?: Abor
 }
 export async function testKey(repository: WorkspaceRepository, id: string, model: Preferences['model']) {
   if (repository.scope !== 'guest') return invokeAccount({ action: 'test', keyId: id, model }, undefined, repository.scope);
+  const record = (await repository.keys()).find(k => k.id === id && k.enabled && !keyPaused(k));
+  if (!record) throw new Error('Key aktif tidak ditemukan atau sedang dijeda.');
   try {
-    const record = (await repository.keys()).find(k => k.id === id && k.enabled);
-    if (!record) throw new Error('Key aktif tidak ditemukan.');
     if (record.provider === 'parallel') {
       await guestParallelSearch('Penjumlahan sederhana', await localCredential(id));
       await repository.recordKeyOutcome(id, 'available'); return;
@@ -51,7 +51,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   checkpoint: (job: GenerationJob) => Promise<unknown>, signal: AbortSignal, resume?: GenerationJob,
   onProgress?: (count: number, total: number) => void): Promise<Quiz> {
   const config = normalizeQuizConfig({ ...input, model: preferences.model, enableGrounding: preferences.grounding });
-  let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: structuredClone(preferences),
+  let job: GenerationJob = resume ? structuredClone(resume) : { id: crypto.randomUUID(), config, preferences: { ...structuredClone(preferences), grounding: config.enableGrounding ?? preferences.grounding },
     questions: [], status: 'running', createdAt: new Date().toISOString() };
   job.config = normalizeQuizConfig(job.config);
 
@@ -67,7 +67,7 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   const eligible = availableKeys(keys, job.preferences);
   if (!eligible.length) throw new Error('Tambahkan atau aktifkan API key pada ruang penyimpanan ini.');
   if (job.preferences.grounding && job.preferences.searchProvider === 'parallel' && repository.scope === 'guest') {
-    const searchKey = keys.find(k => k.provider === 'parallel' && k.enabled);
+    const searchKey = keys.find(k => k.provider === 'parallel' && k.enabled && !keyPaused(k));
     if (!searchKey) throw new Error('Tambahkan atau aktifkan satu API key Parallel pada Pengaturan AI.');
     if (!job.parallelFallback && !usableResearch(job.parallelResearch, job.config.topic, job.config)) {
       try {
@@ -164,21 +164,36 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
   }
 
   const { generateQuizBatch, classifyApiError } = await import('../server/geminiService.js');
-  const key = eligible[0];
+  const candidates = eligible.slice(0, 3);
+  let key = candidates[0];
   job.dispatchReservedAt = new Date().toISOString();
   job.modelCallCount = 1;
   await checkpoint(job);
 
   try {
-    const fullQuiz = await generateQuizBatch(
-      { ...job.config, enableGrounding: job.parallelFallback ? false : job.config.enableGrounding },
-      await localCredential(key.id),
-      [],
-      signal,
-      job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined,
-      undefined,
-      { stream: true, onProgress: count => onProgress?.(Math.min(count, job.config.questionCount), job.config.questionCount) }
-    );
+    let fullQuiz: Quiz | undefined;
+    for (let attempt = 0; attempt < candidates.length; attempt++) {
+      key = candidates[attempt];
+      job.modelCallCount = attempt + 1;
+      await checkpoint(job);
+      try {
+        fullQuiz = await generateQuizBatch(
+          { ...job.config, enableGrounding: job.parallelFallback ? false : job.config.enableGrounding },
+          await localCredential(key.id), [], signal,
+          job.preferences.grounding && job.preferences.searchProvider === 'parallel' && !job.parallelFallback ? job.parallelResearch : undefined,
+          undefined,
+          { stream: true, onProgress: count => onProgress?.(Math.min(count, job.config.questionCount), job.config.questionCount) }
+        );
+        break;
+      } catch (error) {
+        signal.throwIfAborted();
+        const classified = classifyApiError(error, job.preferences.model);
+        if (keyStatus(classified) !== 'quota' || attempt + 1 >= candidates.length) throw classified;
+        await repository.recordKeyOutcome(key.id, 'quota');
+        onProgress?.(0, job.config.questionCount);
+      }
+    }
+    if (!fullQuiz) throw new Error('Tidak ada key cadangan yang tersedia.');
     if (job.parallelFallback) {
       fullQuiz.groundingFallbackUsed = true;
       fullQuiz.generationWarnings = [...(fullQuiz.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];

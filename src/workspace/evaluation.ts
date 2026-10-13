@@ -4,16 +4,15 @@ import { availableKeys, keyStatus } from './types.js';
 import { localCredential } from './localRepository.js';
 import { invokeAccount } from './ai.js';
 import { buildResult } from '../scoring.js';
-import { defaultEvaluationSettings } from '../evaluationSettings.js';
+import { normalizeEvaluationSettings, defaultEvaluationSettings } from '../evaluationSettings.js';
 
 export async function evaluateWorkspace(result: QuizResult, targets: string[] | undefined, preferences: Preferences, keys: ApiKeyRecord[], repository: WorkspaceRepository,
   signal: AbortSignal, checkpoint: (result: QuizResult, meta?: { completed: number; total: number; group: string[] }) => Promise<unknown>) {
-  const settings=result.evaluationSettings??result.quiz.evaluationSettings??preferences.evaluation??defaultEvaluationSettings;
+  const settings=normalizeEvaluationSettings(result.evaluationSettings??result.quiz.evaluationSettings??preferences.evaluation??defaultEvaluationSettings);
   if(!settings.enabled)throw new Error('Aktifkan evaluator pada Model & penggunaan, atau tinjau nilai secara manual.');
   const ids=targets??Object.entries(result.evaluations??{}).filter(([,e])=>e.earnedPoints===null&&e.status!=='needs_review').map(([id])=>id);
-  const model=settings.followGenerator?result.quiz.model??preferences.model:settings.model;
-  const candidates=availableKeys(keys,{...preferences,fallback:settings.allowKeyFallback});
-  if(!candidates.length)throw new Error('Tambahkan key aktif pada ruang ini untuk evaluasi.');
+  const model=settings.model;
+  if(!availableKeys(keys,preferences).length)throw new Error('Tambahkan key aktif pada ruang ini untuk evaluasi.');
   let current=structuredClone(result),cursor=0;
   while(cursor<ids.length){
     signal.throwIfAborted();
@@ -21,8 +20,10 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
     const previous=current.evaluations??{};
     const exhausted=group.some(id=>(previous[id]?.attemptCount??0)>=3);
     if(exhausted)throw new Error('Tiga percobaan evaluasi telah digunakan. Tinjau jawaban secara manual.');
+    const candidates=availableKeys(await repository.keys(),preferences);
+    if(!candidates.length)throw new Error('Semua API key sedang dijeda atau nonaktif. Jawaban tersimpan; evaluasi dapat dilanjutkan nanti.');
     let evaluations:Record<string,QuestionEvaluation>|undefined,last:unknown,keyIndex=0,currentModel=model;
-    const remaining=Math.min(preferences.maxAttempts,...group.map(id=>3-(previous[id]?.attemptCount??0)));
+    const remaining=Math.min(3,...group.map(id=>3-(previous[id]?.attemptCount??0)));
     for(let attempt=0;attempt<remaining;attempt++){
       signal.throwIfAborted();const key=candidates[keyIndex];
       try{
@@ -39,6 +40,7 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
         for(const id of group)previous[id]={...previous[id],attemptCount:(previous[id]?.attemptCount??0)+1};
         const code=Number((error as any).status);
         if(code===400)break;
+        if(keyStatus(error)!=='quota' && keyStatus(error)!=='invalid' && code!==404)break;
         if(code===404||['invalid','quota'].includes(keyStatus(error))){
           if(code!==404&&keyIndex+1<candidates.length)keyIndex++;
           else if(settings.allowModelFallback&&currentModel!==settings.fallbackModel)currentModel=settings.fallbackModel;

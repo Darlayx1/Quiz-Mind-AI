@@ -1,3 +1,4 @@
+import { Select } from './Select.js';
 import { questionLabels,questionType } from '../questionState.js';
 import { exportJSON } from '../quizStorage.js';
 import React, { useState } from 'react';
@@ -126,7 +127,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
                   {quiz.title}
                 </h3>
 
-                <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p><p className="field-help">{[...new Set(quiz.questions.map(questionType))].map(t=>questionLabels[t]).join(' · ')}</p>{results&&results.length>1&&<select className="field-input" aria-label={'Pilih hasil sesi '+quiz.title} value={lastResult?.submission.attemptId??lastResult?.submission.completedAt} onChange={e=>{const r=results.find(r=>(r.submission.attemptId??r.submission.completedAt)===e.target.value);if(r)onViewResult?.(r);}}>{results.map((r,i)=><option key={r.submission.attemptId??r.submission.completedAt} value={r.submission.attemptId??r.submission.completedAt}>Sesi {i+1} · {new Date(r.submission.completedAt).toLocaleString('id-ID')} · {r.finalScore===null?'Belum final':r.score+'/100'}</option>)}</select>}
+                <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p><p className="field-help">{[...new Set(quiz.questions.map(questionType))].map(t=>questionLabels[t]).join(' · ')}</p>{results&&results.length>1&&<Select className="field-input" aria-label={'Pilih hasil sesi '+quiz.title} value={lastResult?.submission.attemptId??lastResult?.submission.completedAt} onChange={e=>{const r=results.find(r=>(r.submission.attemptId??r.submission.completedAt)===e.target.value);if(r)onViewResult?.(r);}}>{results.map((r,i)=><option key={r.submission.attemptId??r.submission.completedAt} value={r.submission.attemptId??r.submission.completedAt}>Sesi {i+1} · {new Date(r.submission.completedAt).toLocaleString('id-ID')} · {r.finalScore===null?'Belum final':r.score+'/100'}</option>)}</Select>}
                 <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1"><Clock size={12} />{quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'} · {durationLabel(quizTimerSeconds(quiz))}{quizTimerSeconds(quiz) > 0 ? quiz.displayMode === 'sequential' ? ' / soal' : ' total' : ''}</p>
               </div>
 

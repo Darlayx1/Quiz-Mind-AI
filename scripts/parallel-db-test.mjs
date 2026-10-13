@@ -21,6 +21,7 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
     await db.exec(await readFile('supabase/migrations/202610110002_generation_quality.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110003_single_call_high_policy.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110004_workspace_conflict.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202610130001_quota_key_failover.sql', 'utf8'));
     const asUser = async uid => { await db.exec(`reset role; set role authenticated;`); await db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]); };
     const put = async (id, provider, secret = null, enabled = null) => (await db.query('select public.qm_upsert_provider_key($1,$2,$3,$4,$5,$6) as id', [id, provider + ' key', secret, enabled, 1, provider])).rows[0].id;
     await asUser(owner);
@@ -99,6 +100,25 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, { attemptState: { ...state.attemptState, calls: 4 } }]), /Batas percobaan/);
       await asUser(owner);
       await assert.rejects(db.query('select public.qm_checkpoint_generation_state($1,$2,$3,$4)', [owner, id, job.lease_token, state]), /permission denied/);
+    });
+    await t.test('quota retry requires owner, lease, fresh quota evidence and stops at three calls', async () => {
+      await db.exec('reset role; set role service_role');
+      const jobId='00000000-0000-4000-8000-000000000020';
+      const job=(await db.query('select public.qm_claim_job($1,$2,$3,$4) as job',[owner,jobId,{topic:'Quota'},{}])).rows[0].job;
+      const keys=(await db.query("select id from public.qm_api_keys where user_id=$1 and provider='gemini' order by priority limit 3",[owner])).rows;
+      const reserve=async (uid=owner,lease=job.lease_token,k=keys[0].id)=>(await db.query('select public.qm_reserve_quota_retry($1,$2,$3,$4) as ok',[uid,jobId,lease,k])).rows[0].ok;
+      assert.equal(await reserve(),false,'No quota evidence');
+      await db.query('select public.qm_reserve_dispatch($1,$2,$3)',[owner,jobId,job.lease_token]);
+      await db.query("update public.qm_api_keys set status='quota',tested_at=now() where id=any($1::uuid[])",[keys.map(k=>k.id)]);
+      assert.equal(await reserve(other),false,'Other owner blocked');
+      assert.equal(await reserve(owner,jobId),false,'Wrong lease blocked');
+      assert.equal(await reserve(),true);
+      assert.equal(await reserve(),false,'Same quota evidence cannot reserve a second retry');
+      assert.equal(await reserve(owner,job.lease_token,keys[1].id),true);
+      assert.equal(await reserve(owner,job.lease_token,keys[2].id),false,'Three calls is final');
+      assert.equal((await db.query('select model_call_count from public.qm_ai_jobs where id=$1',[jobId])).rows[0].model_call_count,3);
+      await asUser(owner);
+      await assert.rejects(db.query('select public.qm_reserve_quota_retry($1,$2,$3,$4)',[owner,jobId,job.lease_token,keys[0].id]),/permission denied/);
     });
     await t.test('single-call-high-v1: atomic dispatch reservation, permanent single-call, hardened commit and owner polling', async () => {
       await db.exec('reset role; set role service_role');

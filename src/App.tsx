@@ -10,6 +10,7 @@ import { EvaluationLoader, type ActiveEvaluationState } from './components/Evalu
 import { QuizRunner } from './components/QuizRunner.js';
 import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
+import { keyPaused } from './workspace/types.js';
 import { AISettings, type SettingsTab } from './components/AISettings.js';
 import { useWorkspace } from './workspace/useWorkspace.js';
 import { availableKeys, generateWorkspaceQuiz } from './workspace/ai.js';
@@ -226,7 +227,7 @@ export default function App() {
     catch (e) { setError((e as Error).message); }
   };
   const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : w.session ? 'Akun · penyimpanan pribadi' : 'Akun · pulihkan sesi';
-  const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled));
+  const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled && !keyPaused(k)));
   const resumable = resumableQuiz(w.data.history, w.data.progress);
   const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
@@ -235,7 +236,8 @@ export default function App() {
     <main className="flex-1 w-full" aria-busy={loading || w.storageLoading}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span>{w.mode !== 'reauth_required' && <button disabled={w.storageLoading} onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button>}</div></div>}
       {w.ready && <div hidden={loading || isEvaluating || !['creator', 'configuration'].includes(view)}>
-        <QuizCreator key={`${w.scope}:${w.mode}`} stage={view === 'configuration' ? 'configuration' : 'creator'} onNavigate={setView} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} onOpenModelSettings={() => setSettings('models')} initialDraft={w.data.draft} onDraft={persistDraft}
+        <QuizCreator key={`${w.scope}:${w.mode}`} stage={view === 'configuration' ? 'configuration' : 'creator'} onNavigate={setView} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} onGroundingChange={grounding => { void w.update(d=>({...d,preferences:{...d.preferences,grounding}})).catch(()=>{}); }}
+          onOpenModelSettings={() => setSettings('models')} initialDraft={w.data.draft} onDraft={persistDraft}
           continueLearning={(resumable || interrupted || w.data.progress) && <section className="continue-learning" aria-labelledby="continue-title"><div className="home-section-heading"><h2 id="continue-title">Lanjutkan belajar</h2><span>Ruang aktif Anda</span></div>
             {resumable ? <div className="continue-row"><span className="continue-symbol"><ArrowRight size={20} /></span><div><strong>{resumable.title}</strong><p>Sesi belum selesai · jawaban, penanda, dan waktu tetap tersimpan.</p></div><button className="settings-secondary" onClick={() => { setQuiz(resumable); setResult(null); setView('runner'); }}>Lanjutkan<ArrowRight size={16} /></button></div>
               : w.data.progress && <p className="composer-notice" role="status">Sesi tersimpan tidak dapat dilanjutkan. Periksa Riwayat; salinan data tetap dipertahankan.</p>}
