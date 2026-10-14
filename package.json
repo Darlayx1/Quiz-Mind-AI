@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:runner": "node --import tsx scripts/quiz-runner-test.ts",
     "test:auth": "node --import tsx scripts/google-auth-test.ts",
     "test:results": "node --import tsx scripts/results-review-test.ts",
     "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/configuration-generation-test.ts && node --import tsx scripts/app-operation-test.ts && node --import tsx scripts/quiz-preparation-test.ts",

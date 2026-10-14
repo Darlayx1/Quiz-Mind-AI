@@ -1,22 +1,22 @@
 import type { QuizProgress } from '../workspace/types.js';
 import { exportJSON, type Draft } from '../quizStorage.js';
 import { validateAnswer } from '../questionState.js';
-import { QuestionInput } from './QuestionInput.js';
-import { answerProgress, questionLabels, questionType } from '../questionState.js';
+import { QuestionInput, stableShuffle } from './QuestionInput.js';
+import { answerProgress, normalizedAnswer, questionLabels, questionType } from '../questionState.js';
 import React, { useState, useEffect, useRef } from "react";
-import { difficultyName, modelName } from "../models.js";
-import { quizTimerSeconds, durationLabel } from "../quizConfig.js";
+import { quizTimerSeconds } from "../quizConfig.js";
 import type { Quiz, QuizSubmission, Question, StoredAnswer, AnswerValue } from "../types/quiz.js";
-import { Button } from "./Button.js";
 import { ConfirmModal } from "./ConfirmModal.js";
 import {
   Clock,
   Bookmark,
   ChevronRight,
-  Send,
   Infinity as InfinityIcon,
-  LayoutGrid,
-  ListOrdered,
+  ChevronLeft,
+  Download,
+  X,
+  LogOut,
+  LockKeyhole,
   Check,
   ArrowRight,
 } from "lucide-react";
@@ -30,6 +30,27 @@ interface QuizRunnerProps {
   onProgress?: (progress: QuizProgress) => void | Promise<unknown>;
 }
 
+export type AnswerCompleteness = 'unanswered' | 'partial' | 'answered';
+// Readiness is a presentation hint; scoring and persisted answers keep their existing contracts.
+export function evaluateAnswerCompleteness(question: Question, rawAnswer?: StoredAnswer): AnswerCompleteness {
+  const progress = answerProgress(question, rawAnswer);
+  if (progress !== 'complete') return progress;
+  const answer = normalizedAnswer(question, rawAnswer);
+  if (answer?.type === 'essay' && answer.text.trim().split(/\s+/).length < 8) return 'partial';
+  return 'answered';
+}
+
+export function emptyQuestionAnswer(question: Question, seed: string): AnswerValue {
+  switch (question.type) {
+    case 'multiple_select': return { type: 'multiple_select', selectedOptionIds: [] };
+    case 'true_false': return { type: 'true_false', value: null };
+    case 'short_answer': case 'essay': return { type: question.type, text: '' };
+    case 'matching': return { type: 'matching', pairs: {} };
+    case 'ordering': return { type: 'ordering', orderedItemIds: stableShuffle(question.items, question.id + seed).map(i => i.id), confirmed: false };
+    default: return { type: 'single_choice', selectedOptionId: null };
+  }
+}
+
 export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,attemptKey,initialProgress,onProgress}) => {
   const progressCallback=useRef(onProgress);progressCallback.current=onProgress;
   const readData=async<T,>(_key:string):Promise<T|undefined>=>initialProgress?.quizId===quiz.id?({...initialProgress,index:initialProgress.currentIndex,attemptId:initialProgress.attemptId??crypto.randomUUID()} as T):undefined;
@@ -38,6 +59,10 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
   const questionLimit=(index:number)=>sequential?(quiz.timePerQuestionByType?.[questionType(quiz.questions[index])]??quizTimerSeconds(quiz)):quizTimerSeconds(quiz);
   const [currentIndex,setCurrentIndex]=useState(0),[userAnswers,setUserAnswers]=useState<Record<string,StoredAnswer>>({}),[bookmarks,setBookmarks]=useState<Set<string>>(new Set());
   const [timeLeft,setTimeLeft]=useState(questionLimit(0)),[notice,setNotice]=useState(''),[showSubmitConfirm,setShowSubmitConfirm]=useState(false),[showQuitConfirm,setShowQuitConfirm]=useState(false),[hydrated,setHydrated]=useState(false),[readOnly,setReadOnly]=useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const canReviewSequential = sequential && quiz.questions.every((_, index) => questionLimit(index) === 0);
   const submitted=useRef(false),startedAt=useRef(Date.now()),deadline=useRef(0),indexRef=useRef(0),answersRef=useRef(userAnswers),bookmarksRef=useRef(bookmarks),submitRef=useRef(onSubmit),attempt=useRef(attemptKey??crypto.randomUUID()),ready=useRef(false),owner=useRef(false),questionHeading=useRef<HTMLHeadingElement>(null),saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   submitRef.current=onSubmit;
   const active=useRef(true);
@@ -46,7 +71,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
   const save=()=>{if(!ready.current||!owner.current||submitted.current)return;clearTimeout(saveTimer.current);void writeData('draft:'+quiz.id,snapshot()).catch(()=>setNotice('Belum tersimpan pada ruang aktif. Ekspor jawaban sebelum menutup halaman.'));};
   const schedule=()=>{clearTimeout(saveTimer.current);saveTimer.current=setTimeout(save,500);};
   const finish=(finishedAt=Date.now(),reason:'manual'|'timer'='manual')=>{
-    if(submitted.current||!ready.current||!owner.current)return;submitted.current=true;clearTimeout(saveTimer.current);
+    if(submitted.current||!ready.current||!owner.current)return;submitted.current=true;setIsSubmitting(true);setIsMobileDrawerOpen(false);clearTimeout(saveTimer.current);
     const submission:QuizSubmission={schemaVersion:2,quizId:quiz.id,attemptId:attempt.current,submissionId:crypto.randomUUID(),userAnswers:{...answersRef.current},bookmarkedQuestions:Array.from(bookmarksRef.current),startedAt:new Date(startedAt.current).toISOString(),completedAt:new Date().toISOString(),timeTakenSeconds:Math.max(0,Math.round((finishedAt-startedAt.current)/1000)),submitReason:reason};
     void writeData('draft:'+quiz.id,{...snapshot(),submitted:submission}).catch(()=>{}).finally(()=>{if(active.current)submitRef.current(submission);});
   };
@@ -77,7 +102,8 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
       }catch(e){if(e instanceof Error&&e.message.startsWith('Draft tidak valid')){owner.current=false;setReadOnly(true);setHydrated(true);setNotice(e.message);return;}setNotice(e instanceof Error?e.message:'Draft belum berhasil dibaca.');startedAt.current=Date.now();deadline.current=questionLimit(0)?Date.now()+questionLimit(0)*1000:0;}
       ready.current=true;setHydrated(true);tick();
     };
-    if(navigator.locks){void navigator.locks.request(lease,{ifAvailable:true},async lock=>{if(!lock){if(mounted){setReadOnly(true);setHydrated(true);setNotice('Kuis ini sedang dikerjakan pada tab lain. Tutup sesi di tab itu lalu buka kembali.');}return;}await initialize();if(!mounted)return;await new Promise<void>(resolve=>{release=resolve;});});}
+    // StrictMode cleans up its first effect before remounting. Never acquire a lease for that stale effect.
+    if(navigator.locks){void Promise.resolve().then(()=>{if(!mounted)return;return navigator.locks.request(lease,{ifAvailable:true},async lock=>{if(!mounted)return;if(!lock){setReadOnly(true);setHydrated(true);setNotice('Kuis ini sedang dikerjakan pada tab lain. Tutup sesi di tab itu lalu buka kembali.');return;}await initialize();if(!mounted)return;await new Promise<void>(resolve=>{release=resolve;});});});}
     else { void initialize(); }
     const onHide=()=>{save();release();owner.current=false;};window.addEventListener('pagehide',onHide);
     return()=>{save();mounted=false;active.current=false;ready.current=false;owner.current=false;clearInterval(heartbeat);clearTimeout(saveTimer.current);release();window.removeEventListener('pagehide',onHide);};
@@ -87,238 +113,183 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
   const choose=(id:string,answer:AnswerValue)=>{if(!ready.current||!owner.current||submitted.current||tick())return;if(sequential&&id!==quiz.questions[indexRef.current].id)return;answersRef.current={...answersRef.current,[id]:answer};setUserAnswers(answersRef.current);schedule();};
   const toggleBookmark=(id:string)=>{if(!ready.current||!owner.current||submitted.current)return;const next=new Set(bookmarksRef.current);next.has(id)?next.delete(id):next.add(id);bookmarksRef.current=next;setBookmarks(next);save();};
   const advance=()=>{if(!ready.current||!owner.current||submitted.current||tick())return;if(indexRef.current>=total-1){setShowSubmitConfirm(true);return;}indexRef.current++;deadline.current=questionLimit(indexRef.current)?Date.now()+questionLimit(indexRef.current)*1000:0;setCurrentIndex(indexRef.current);setTimeLeft(questionLimit(indexRef.current));setNotice('');save();};
-  const jumpTo=(index:number)=>{if(sequential)return;setCurrentIndex(index);document.getElementById('question-'+quiz.questions[index].id)?.scrollIntoView({block:'start',behavior:'smooth'});};
-  const answered=quiz.questions.filter(q=>answerProgress(q,userAnswers[q.id])==='complete').length,partial=quiz.questions.filter(q=>answerProgress(q,userAnswers[q.id])==='partial').length,unanswered=total-answered-partial;
-  const critical=!unlimited&&timeLeft<=(sequential?Math.min(15,limit/4):60),clockText=String(Math.floor(timeLeft/60)).padStart(2,'0')+':'+String(timeLeft%60).padStart(2,'0');
-  const renderQuestion = (question: Question, index: number) => (
-    <article
-      key={question.id}
-      id={`question-${question.id}`}
-      className="surface question-stage section-pad"
-    >
-      <div className="question-card-heading">
-        <span className="question-counter">
-          SOAL {String(index + 1).padStart(2, "0")} <span>/ {total}</span>
-        </span>
-        <button
-          type="button"
-          onClick={() => toggleBookmark(question.id)}
-          aria-pressed={bookmarks.has(question.id)}
-          className={`bookmark-button ${bookmarks.has(question.id) ? "is-bookmarked" : ""}`}
-        >
-          <Bookmark size={15} />
-          <span>
-            {bookmarks.has(question.id) ? "Ditandai ragu" : "Tandai ragu"}
-          </span>
-        </button>
-      </div>
-      {question.topicCategory && (
-        <div className="question-category">{question.topicCategory}</div>
-      )}
-      <h2
-        ref={sequential ? questionHeading : undefined}
-        tabIndex={-1}
-        className="question-title"
-      >
-        {question.question}
-      </h2>
-      <p className="field-help mb-4">{questionLabels[questionType(question)]} · {question.maxPoints??1} poin</p>
-      <fieldset disabled={!hydrated||readOnly}><QuestionInput seed={attempt.current} question={question} value={userAnswers[question.id]} onChange={answer=>choose(question.id,answer)}/></fieldset>
-      {!sequential && answerProgress(question,userAnswers[question.id]) !== 'unanswered' && (
-        <div className="answer-saved">
-          <Check size={13} /> Jawaban tercatat · Anda dapat mengubahnya sebelum
-          mengumpulkan.
-        </div>
-      )}
-    </article>
-  );
+  const navigateTo = (index: number) => {
+    if (index < 0 || index >= total || !ready.current || !owner.current || submitted.current || tick()) return;
+    if (sequential && !canReviewSequential) return;
+    indexRef.current = index;
+    setCurrentIndex(index);
+    setIsMobileDrawerOpen(false);
+    if (sequential) {
+      window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    } else {
+      document.getElementById('question-' + quiz.questions[index].id)?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }
+    save();
+  };
 
-  return (
-    <div
-      className={`page-shell runner-page ${sequential ? "sequential-runner" : "free-runner"}`}
-    >
-      {quiz.generationWarnings?.map(message => <div key={message} className="settings-alert" role="status">{message}</div>)}
-      {quiz.usedGrounding && quiz.webCheckedAt && <div className="settings-alert" role="status">Pencarian web dilakukan pada {new Date(quiz.webCheckedAt).toLocaleString('id-ID')}. Sumber tersedia pada pembahasan soal; periksa tanggal sumber untuk fakta yang dapat berubah.</div>}
-      <div className="runner-heading">
-        <div>
-          <div className="eyebrow">
-            {sequential ? <ListOrdered size={15} /> : <LayoutGrid size={15} />}{" "}
-            {sequential ? "SESI SEKUENSIAL" : "SESI NON SEKUENSIAL"}
-          </div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-3">
-            {quiz.title}
-          </h1>
-          <p className="text-xs text-slate-500 mt-2">
-            {difficultyName(quiz.difficulty)} · {total} soal ·{" "}
-            {modelName(quiz.model)}
-          </p>
+  useEffect(() => {
+    if (sequential || !hydrated || !('IntersectionObserver' in window)) return;
+    const visible = new Set<HTMLElement>();
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const card = entry.target as HTMLElement;
+        if (entry.isIntersecting) visible.add(card); else visible.delete(card);
+      }
+      const closest = [...visible].sort((a, b) => Math.abs(a.getBoundingClientRect().top - 116) - Math.abs(b.getBoundingClientRect().top - 116))[0];
+      if (!closest) return;
+      const index = Number(closest.dataset.questionIndex);
+      if (index !== indexRef.current) {
+        indexRef.current = index;
+        setCurrentIndex(index);
+        schedule();
+      }
+    }, { rootMargin: '-100px 0px -45% 0px', threshold: 0 });
+    quiz.questions.forEach(q => {
+      const card = document.getElementById('question-' + q.id);
+      if (card) observer.observe(card);
+    });
+    return () => observer.disconnect();
+  }, [sequential, hydrated, quiz.id]);
+
+  useEffect(() => {
+    if (!isMobileDrawerOpen) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    drawerRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const closeOnDesktop = () => { if (window.innerWidth >= 1024) setIsMobileDrawerOpen(false); };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setIsMobileDrawerOpen(false); }
+      if (event.key !== 'Tab') return;
+      const controls = drawerRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex="0"]');
+      if (!controls?.length) return;
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    window.addEventListener('resize', closeOnDesktop);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKey);
+      window.removeEventListener('resize', closeOnDesktop);
+      previousFocus?.focus();
+    };
+  }, [isMobileDrawerOpen]);
+
+  const completeness = quiz.questions.map(q => evaluateAnswerCompleteness(q, userAnswers[q.id]));
+  const answered = completeness.filter(status => status === 'answered').length;
+  const partial = completeness.filter(status => status === 'partial').length;
+  const unanswered = total - answered - partial;
+  const progressPercent = total ? Math.round(((answered + partial * 0.5) / total) * 100) : 0;
+  const critical = !unlimited && timeLeft <= 60, warning = !unlimited && timeLeft <= 180;
+  const clockText = String(Math.floor(timeLeft / 60)).padStart(2, '0') + ':' + String(timeLeft % 60).padStart(2, '0');
+  const canInteract = hydrated && !readOnly && !isSubmitting;
+  const requestSubmit = () => {
+    if (!canInteract || tick()) return;
+    setIsMobileDrawerOpen(false);
+    setShowSubmitConfirm(true);
+  };
+  const statusLabel = (index: number) => bookmarks.has(quiz.questions[index].id) ? 'Ragu-ragu' : completeness[index] === 'answered' ? 'Terjawab' : completeness[index] === 'partial' ? 'Sebagian terjawab' : 'Belum dijawab';
+  const statusClass = (index: number) => bookmarks.has(quiz.questions[index].id) ? 'flagged' : completeness[index];
+  const nextQuestion = () => canReviewSequential ? navigateTo(currentIndex + 1) : advance();
+
+  const palette = () => <div className="quiz-palette" aria-label="Nomor soal">
+    {quiz.questions.map((question, index) => <button key={question.id} type="button"
+      disabled={!canInteract || (sequential && !canReviewSequential && index !== currentIndex)}
+      onClick={() => navigateTo(index)}
+      aria-label={`Soal ${index + 1}, ${statusLabel(index)}${sequential && !canReviewSequential && index < currentIndex ? ', dikunci' : ''}`}
+      aria-current={index === currentIndex ? 'step' : undefined}
+      className={`quiz-palette-item ${statusClass(index)} ${index === currentIndex ? 'is-current' : ''}`}>
+      {index + 1}{sequential && !canReviewSequential && index < currentIndex && <LockKeyhole size={9} className="quiz-palette-lock" aria-hidden="true" />}
+    </button>)}
+  </div>;
+  const legend = () => <dl className="quiz-legend">
+    <div><dt><i className="answered" />Terjawab</dt><dd>{answered}</dd></div>
+    <div><dt><i className="partial" />Sebagian terjawab</dt><dd>{partial}</dd></div>
+    <div><dt><i className="flagged" />Ragu-ragu</dt><dd>{bookmarks.size}</dd></div>
+    <div><dt><i className="unanswered" />Belum dijawab</dt><dd>{unanswered}</dd></div>
+  </dl>;
+  const submitButton = () => <button type="button" className="quiz-primary-button" disabled={!canInteract} onClick={requestSubmit}>
+    {isSubmitting ? 'Mengumpulkan…' : 'Kumpulkan kuis'}<ArrowRight size={17} />
+  </button>;
+  const renderQuestion = (question: Question, index: number) => {
+    const hasAnswer = answerProgress(question, userAnswers[question.id]) !== 'unanswered';
+    return <article key={question.id} id={`question-${question.id}`} data-question-index={index} className="quiz-question-card" aria-labelledby={`question-title-${question.id}`}>
+      <div className="quiz-card-top"><span className="quiz-question-number">Soal {String(index + 1).padStart(2, '0')} <span>/ {total}</span></span><span className="quiz-question-type">{questionLabels[questionType(question)]}</span></div>
+      {question.topicCategory && <p className="quiz-question-category">{question.topicCategory}</p>}
+      <h2 id={`question-title-${question.id}`} ref={sequential ? questionHeading : undefined} tabIndex={-1} className="quiz-question-title">{question.question}</h2>
+      <fieldset disabled={!canInteract} className="quiz-answer-fieldset"><QuestionInput disabled={!canInteract} seed={attempt.current} question={question} value={userAnswers[question.id]} onChange={answer => choose(question.id, answer)} /></fieldset>
+      <div className="quiz-card-statusbar">
+        <span role="status" className={`quiz-answer-status animate-quiz-status ${statusClass(index)}`} key={statusClass(index)}><i />{statusLabel(index)}</span>
+        <div className="quiz-card-actions">
+          {hasAnswer && <button type="button" className="quiz-reset-button" disabled={!canInteract} onClick={() => choose(question.id, emptyQuestionAnswer(question, attempt.current))}>Reset jawaban</button>}
+          <button type="button" disabled={!canInteract} onClick={() => toggleBookmark(question.id)} aria-pressed={bookmarks.has(question.id)} className={`quiz-flag-button ${bookmarks.has(question.id) ? 'is-flagged' : ''}`}><Bookmark size={15} /><span>{bookmarks.has(question.id) ? 'Ragu-ragu' : 'Tandai ragu'}</span></button>
         </div>
-        <div className="runner-header-actions">
-          <div
-            className={`session-timer ${critical ? "is-critical" : ""}`}
-            role="timer"
-            aria-label={
-              unlimited
-                ? "Tanpa batas waktu"
-                : `${sequential ? "Sisa waktu soal" : "Sisa waktu total"} ${clockText}`
-            }
-          >
-            <span>
-              {unlimited ? <InfinityIcon size={17} /> : <Clock size={17} />}
-              {unlimited
-                ? "Tanpa batas"
-                : sequential
-                  ? "Waktu soal"
-                  : "Waktu total"}
-            </span>
-            {!unlimited && <strong>{clockText}</strong>}
-          </div>
-          <button
-            onClick={() => setShowQuitConfirm(true)}
-            className="exit-session"
-          >
-            Keluar sesi
-          </button>
-        </div>
       </div>
-      <div className="runner-progress">
-        <div>
-          <span>Progres pengerjaan</span>
-          <strong>
-            {answered} dari {total} terjawab
-          </strong>
-        </div>
-        <progress value={answered} max={total} aria-label="Progres jawaban" />
-      </div>
-      <div className="session-guidance">
-        {sequential ? <ListOrdered size={17} /> : <LayoutGrid size={17} />}
-        <p>
-          {sequential
-            ? `Jawab satu soal, lalu lanjut. Jawaban dikunci setelah Anda beralih.${unlimited ? "" : ` Setiap soal memiliki waktu ${durationLabel(limit)}.`}`
-            : `Semua soal tersedia di bawah. Jawab dengan urutan bebas dan tinjau sebelum mengumpulkan.${unlimited ? "" : " Timer berlaku untuk seluruh kuis."}`}
-        </p>
-      </div>
-      <div className="session-notice" role="status" aria-live="polite">
-        {notice}
-        <button type="button" className="topic-chip" onClick={()=>exportJSON('quizmind-draft.json',snapshot())}>Ekspor jawaban</button>
-      </div>
-      <div className="runner-layout">
-        <div className="min-w-0 space-y-5">
-          {sequential
-            ? renderQuestion(quiz.questions[currentIndex], currentIndex)
-            : quiz.questions.map(renderQuestion)}
-          <div className="question-controls session-controls">
-            <span className="field-help">
-              {sequential
-                ? `Langkah ${currentIndex + 1} dari ${total}`
-                : `${unanswered === 0 ? "Semua soal sudah terjawab." : `${unanswered} soal belum dijawab.`}`}
-            </span>
-            {sequential && currentIndex < total - 1 ? (
-              <Button
-                label={
-                  answerProgress(quiz.questions[currentIndex],userAnswers[quiz.questions[currentIndex].id])==='unanswered'
-                    ? "Lewati soal"
-                    : "Simpan & lanjut"
-                }
-                icon={<ChevronRight size={17} />}
-                iconPosition="trailing"
-                onClick={advance}
-              />
-            ) : (
-              <Button
-                label="Kumpulkan kuis"
-                icon={<Send size={17} />}
-                iconPosition="trailing"
-                onClick={() => {
-                  if (!tick()) setShowSubmitConfirm(true);
-                }}
-              />
-            )}
+    </article>;
+  };
+
+  return <div className={`quiz-exam ${sequential ? 'quiz-sequential' : 'quiz-free'}`}>
+    <div className="quiz-exam-content" inert={isMobileDrawerOpen || showSubmitConfirm || showQuitConfirm}>
+      <header className="quiz-exam-header">
+        <div className="quiz-header-inner">
+          <div className="quiz-header-title"><span className="quiz-header-eyebrow">Sesi kuis <span>· {total} soal</span></span><h1>{quiz.title}</h1></div>
+          <div className="quiz-header-actions">
+            <div className={`quiz-timer ${critical ? 'is-critical' : warning ? 'is-warning' : ''}`} role="timer" aria-label={unlimited ? 'Tanpa batas waktu' : `${sequential ? 'Sisa waktu soal' : 'Sisa waktu total'} ${clockText}`}>
+              {unlimited ? <InfinityIcon size={18} /> : <Clock size={18} />}
+              <div><span>{unlimited ? 'Tanpa batas' : sequential ? 'Waktu soal' : 'Waktu total'}</span>{!unlimited && <strong>{clockText}</strong>}</div>
+            </div>
+            <span className="quiz-header-divider" />
+            <button type="button" className="quiz-icon-button quiz-export" title="Ekspor jawaban" aria-label="Ekspor jawaban" disabled={!hydrated} onClick={() => exportJSON('quizmind-draft.json', snapshot())}><Download size={18} /></button>
+            <button type="button" className="quiz-exit-button" aria-label="Keluar sesi" disabled={isSubmitting} onClick={() => setShowQuitConfirm(true)}><LogOut size={17} /><span>Keluar sesi</span></button>
           </div>
         </div>
-        <aside className="runner-sidebar">
-          <div className="surface section-pad">
-            <div className="sidebar-heading">
-              <strong>{sequential ? "Peta progres" : "Navigasi soal"}</strong>
-              <span>{total} soal</span>
-            </div>
-            <div className="question-palette">
-              {quiz.questions.map((question, index) => (
-                <button
-                  key={question.id}
-                  type="button"
-                  disabled={sequential}
-                  onClick={() => jumpTo(index)}
-                  aria-label={`Soal ${index + 1}, ${answerProgress(question,userAnswers[question.id])==='partial'?"sebagian terjawab":answerProgress(question,userAnswers[question.id])==='complete'?"terjawab":"belum dijawab"}${bookmarks.has(question.id) ? ", ditandai ragu" : ""}${sequential && index < currentIndex ? ", dikunci" : ""}`}
-                  aria-current={index === currentIndex ? "step" : undefined}
-                  className={`palette-item ${answerProgress(question,userAnswers[question.id])==='complete'?"answered":answerProgress(question,userAnswers[question.id])==='partial'?"partial":""} ${bookmarks.has(question.id) ? "bookmarked" : ""} ${index === currentIndex ? "current" : ""}`}
-                >
-                  {index + 1}
-                </button>
-              ))}
-            </div>
-            <div className="palette-legend"><span>Sebagian terjawab <strong>{partial}</strong></span>
-              <span>
-                <i className="legend-answered" />
-                Terjawab <strong>{answered}</strong>
-              </span>
-              <span>
-                <i className="legend-bookmarked" />
-                Ragu-ragu <strong>{bookmarks.size}</strong>
-              </span>
-              <span>
-                <i />
-                Belum dijawab <strong>{unanswered}</strong>
-              </span>
-            </div>
-            {sequential && (
-              <p className="field-help mt-4">
-                Peta ini menunjukkan progres. Soal dikerjakan berurutan dan
-                tidak dapat dikunjungi kembali.
-              </p>
-            )}
-            <div className="sidebar-submit">
-              <Button
-                label="Selesaikan sesi"
-                variant="secondary"
-                className="w-full"
-                icon={<ArrowRight size={16} />}
-                iconPosition="trailing"
-                onClick={() => {
-                  if (!tick()) setShowSubmitConfirm(true);
-                }}
-              />
-            </div>
+        <div className="quiz-edge-progress" role="progressbar" aria-label="Progres pengerjaan" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent} aria-valuetext={`${answered} terjawab, ${partial} sebagian terjawab dari ${total} soal`}><div className="quiz-edge-progress-fill" style={{ width: `${progressPercent}%` }} /></div>
+      </header>
+      <main className="quiz-exam-main">
+        {notice && <div className="quiz-session-notice" role="status">{notice}</div>}
+        <div className="quiz-workspace">
+          <div className="quiz-question-column">
+            <div className="quiz-section-heading"><span>{sequential ? `Soal ${currentIndex + 1} dari ${total}` : 'Pertanyaan kuis'}</span><span>{answered} / {total} terjawab</span></div>
+            {sequential ? renderQuestion(quiz.questions[currentIndex], currentIndex) : quiz.questions.map(renderQuestion)}
+            {sequential && <div className="quiz-desktop-controls">
+              <button type="button" className="quiz-secondary-button" disabled={!canInteract || currentIndex === 0 || !canReviewSequential} onClick={() => navigateTo(currentIndex - 1)} title={!canReviewSequential ? 'Jawaban sebelumnya dikunci pada sesi dengan waktu per soal' : undefined}><ChevronLeft size={17} />Sebelumnya</button>
+              <span>{currentIndex + 1} / {total}</span>
+              {currentIndex < total - 1 ? <button type="button" className="quiz-primary-button" disabled={!canInteract} onClick={nextQuestion}>Berikutnya<ChevronRight size={17} /></button> : submitButton()}
+            </div>}
           </div>
-        </aside>
-      </div>
-      <ConfirmModal
-        isOpen={showSubmitConfirm}
-        title="Selesaikan sesi belajar?"
-        message={`Anda telah menjawab lengkap ${answered} dari ${total} soal; ${partial} jawaban parsial. ${unanswered > 0 ? `${unanswered} soal belum dijawab dan akan dihitung tanpa jawaban.` : "Semua soal sudah terjawab."} Kumpulkan untuk melihat hasil dan pembahasan.`}
-        confirmLabel="Kumpulkan & lihat hasil"
-        cancelLabel="Lanjut mengerjakan"
-        onConfirm={() => {
-          setShowSubmitConfirm(false);
-          if (!tick()) finish();
-        }}
-        onCancel={() => setShowSubmitConfirm(false)}
-      />
-      <ConfirmModal
-        isOpen={showQuitConfirm}
-        title="Keluar dari sesi?"
-        message="Progres yang tersimpan dapat dilanjutkan melalui riwayat. Ekspor jawaban bila penyimpanan perangkat bermasalah."
-        confirmLabel="Keluar sesi"
-        cancelLabel="Lanjut mengerjakan"
-        isDestructive
-        onConfirm={() => {
-          save();
-          submitted.current = true;
-          setShowQuitConfirm(false);
-          onQuit();
-        }}
-        onCancel={() => setShowQuitConfirm(false)}
-      />
+          <aside className="quiz-sidebar" aria-label="Navigasi soal">
+            <div className="quiz-navigation-card"><div className="quiz-navigation-heading"><h2>Navigasi soal</h2><span>{total} soal</span></div>
+              {palette()}{legend()}
+              {sequential && !canReviewSequential && <p className="quiz-navigation-help"><LockKeyhole size={13} />Jawaban dikunci setelah beralih soal.</p>}
+              {submitButton()}
+            </div>
+            <p className="quiz-sidebar-note"><Check size={14} />Progres tersimpan otomatis</p>
+          </aside>
+        </div>
+      </main>
+      <nav className="quiz-mobile-bar" aria-label="Aksi sesi kuis">
+        <button type="button" className="quiz-mobile-navigation" aria-haspopup="dialog" aria-expanded={isMobileDrawerOpen} aria-controls="quiz-navigation-drawer" onClick={() => setIsMobileDrawerOpen(true)}><span className="quiz-nav-grid-icon" aria-hidden="true"><i /><i /><i /><i /></span><span>Navigasi <strong>{answered}/{total}</strong></span></button>
+        {sequential && <div className="quiz-mobile-step"><button type="button" className="quiz-icon-button" disabled={!canInteract || currentIndex === 0 || !canReviewSequential} aria-label="Soal sebelumnya" onClick={() => navigateTo(currentIndex - 1)}><ChevronLeft size={19} /></button><button type="button" className="quiz-icon-button" disabled={!canInteract || currentIndex >= total - 1} aria-label="Soal berikutnya" onClick={nextQuestion}><ChevronRight size={19} /></button></div>}
+        {submitButton()}
+      </nav>
     </div>
-  );
+    {isMobileDrawerOpen && <div className="quiz-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) setIsMobileDrawerOpen(false); }}>
+      <div id="quiz-navigation-drawer" ref={drawerRef} className="quiz-navigation-drawer animate-quiz-drawer" role="dialog" aria-modal="true" aria-labelledby="quiz-drawer-title">
+        <div className="quiz-drawer-handle" />
+        <div className="quiz-navigation-heading"><div><h2 id="quiz-drawer-title">Navigasi soal</h2><p>Soal {currentIndex + 1} dari {total} · {progressPercent}% selesai</p></div><button type="button" className="quiz-icon-button" aria-label="Tutup navigasi" onClick={() => setIsMobileDrawerOpen(false)}><X size={20} /></button></div>
+        {palette()}{legend()}
+        {sequential && !canReviewSequential && <p className="quiz-navigation-help"><LockKeyhole size={13} />Jawaban dikunci setelah beralih soal.</p>}
+        {submitButton()}
+      </div>
+    </div>}
+    <ConfirmModal isOpen={showSubmitConfirm} title="Kumpulkan kuis sekarang?"
+      message={`${answered} dari ${total} soal terjawab lengkap. ${partial ? `${partial} soal sebagian terjawab. ` : ''}${unanswered ? `${unanswered} soal belum dijawab. ` : ''}${bookmarks.size ? `${bookmarks.size} soal ditandai ragu-ragu. ` : ''}Kumpulkan untuk melihat hasil dan pembahasan.`}
+      confirmLabel="Ya, kumpulkan kuis" cancelLabel="Tinjau kembali"
+      onConfirm={() => { setShowSubmitConfirm(false); if (!tick()) finish(); }} onCancel={() => setShowSubmitConfirm(false)} />
+    <ConfirmModal isOpen={showQuitConfirm} title="Keluar dari sesi?" message="Progres yang tersimpan dapat dilanjutkan melalui riwayat. Ekspor jawaban bila penyimpanan perangkat bermasalah."
+      confirmLabel="Keluar sesi" cancelLabel="Lanjut mengerjakan" isDestructive
+      onConfirm={() => { save(); submitted.current = true; setShowQuitConfirm(false); onQuit(); }} onCancel={() => setShowQuitConfirm(false)} />
+  </div>;
 };
