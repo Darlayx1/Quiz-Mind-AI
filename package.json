@@ -6,7 +6,7 @@
   "scripts": {
     "test:auth": "node --import tsx scripts/google-auth-test.ts",
     "test:results": "node --import tsx scripts/results-review-test.ts",
-    "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/configuration-generation-test.ts && node --import tsx scripts/app-operation-test.ts",
+    "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/configuration-generation-test.ts && node --import tsx scripts/app-operation-test.ts && node --import tsx scripts/quiz-preparation-test.ts",
     "test:quality": "node --import tsx scripts/quiz-quality-test.ts",
     "benchmark:quality": "node --import tsx scripts/quality-benchmark.ts",
     "test:generation": "node --import tsx scripts/quiz-stream-test.ts && node --import tsx scripts/generation-efficiency-test.ts && node --import tsx scripts/generation-quality-gate-test.ts",

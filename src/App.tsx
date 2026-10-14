@@ -3,11 +3,13 @@ import { evaluateWorkspace } from './workspace/evaluation.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Settings2, Monitor, Cloud, ArrowRight, RefreshCw } from 'lucide-react';
 import type { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
+import type { AppView } from './types/app.js';
 import { TopBar } from './components/TopBar.js';
 import { QuizCreator } from './components/QuizCreator.js';
 import { GenerationLoader } from './components/GenerationLoader.js';
 import { EvaluationLoader, type ActiveEvaluationState } from './components/EvaluationLoader.js';
 import { QuizRunner } from './components/QuizRunner.js';
+import { QuizPreparation } from './components/QuizPreparation.js';
 import { QuizResults } from './components/QuizResults.js';
 import { QuizHistoryView } from './components/QuizHistoryView.js';
 import { keyPaused } from './workspace/types.js';
@@ -21,7 +23,7 @@ import { quizRegeneration } from './quizRegeneration.js';
 
 export default function App() {
   const w = useWorkspace();
-  const [view, setView] = useState<'creator' | 'configuration' | 'runner' | 'results' | 'history'>('creator');
+  const [view, setView] = useState<AppView>('creator');
   const [quiz, setQuiz] = useState<Quiz | null>(null); const [result, setResult] = useState<QuizResult | null>(null);
   const [settings, setSettings] = useState<SettingsTab | null>(null);
   const [isEvaluating,setIsEvaluating]=useState(false);
@@ -83,7 +85,7 @@ export default function App() {
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
       controller.signal.throwIfAborted();
       if (scope.current !== origin || abort.current !== controller) return;
-      setQuiz(savedQuiz); setResult(null); setView('runner');
+      setQuiz(savedQuiz); setResult(null); setView('preparation');
       setToast({ kind: 'success', message: 'Kuis berhasil dibuat.' });
     } catch (e) {
       if (scope.current !== origin || abort.current !== controller) return;
@@ -231,7 +233,7 @@ export default function App() {
   const resumable = resumableQuiz(w.data.history, w.data.progress);
   const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
-    <TopBar activeView={view} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
+    <TopBar activeView={view} pageTitle="Persiapan Kuis" onBack={() => { setView('configuration'); setQuiz(null); }} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />
     <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>
     <main className="flex-1 w-full" aria-busy={loading || w.storageLoading}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span>{w.mode !== 'reauth_required' && <button disabled={w.storageLoading} onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button>}</div></div>}
@@ -265,7 +267,8 @@ export default function App() {
           isCancelling={cancellingEvaluation}
           error={error}
         />
-      ) : view === 'creator' || view === 'configuration' ? null : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
+      ) : view === 'creator' || view === 'configuration' ? null : view === 'preparation' && quiz ? <QuizPreparation key={`${w.scope}:${quiz.id}`} quiz={quiz} onStart={() => setView('runner')} />
+      : view === 'runner' && quiz ? <QuizRunner key={`${w.scope}:${quiz.id}`} quiz={quiz} onSubmit={finish} onQuit={()=>{setQuiz(null);setView('creator');}} initialProgress={w.data.progress} onProgress={persistProgress} />
       : view === 'results' && result ? <><div className="page-shell !pb-0 !pt-5">{error&&<div className="settings-alert error" role="alert">{error}</div>}</div><QuizResults result={result} onRetake={retryQuiz} onRegenerate={regenerateQuiz} onNewQuiz={newQuiz} isEvaluating={isEvaluating} onEvaluate={ids=>void runEvaluation(result,ids)} onCancelEvaluation={cancelEvaluation} onOpenConnections={()=>setSettings('models')} onReview={review} /></>
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
       : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}

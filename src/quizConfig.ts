@@ -5,6 +5,9 @@ import { normalizeEvaluationSettings } from './evaluationSettings.js';
 
 export class QuizConfigError extends Error {}
 
+export const displayModeOptions = [{ id: 'non_sequential', label: 'Urutan bebas' }, { id: 'sequential', label: 'Satu per satu' }] as const;
+export const languageOptions = [{ value: 'id', label: 'Indonesia' }, { value: 'en', label: 'English' }] as const;
+
 // Shared validation keeps server, Worker, and personal-key mode consistent.
 export function normalizeQuizConfig(input: unknown): QuizConfig {
   if (!input || typeof input !== "object" || Array.isArray(input))

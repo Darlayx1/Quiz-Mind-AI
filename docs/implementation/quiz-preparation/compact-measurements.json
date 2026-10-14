@@ -1,0 +1,34 @@
+[
+  {
+    "buttonBottom": 672.1000366210938,
+    "client": 305,
+    "columns": "235.2px",
+    "pageHeight": 560.2999877929688,
+    "scroll": 305,
+    "width": 320
+  },
+  {
+    "buttonBottom": 672.1000366210938,
+    "client": 375,
+    "columns": "305.6px",
+    "pageHeight": 560.2999877929688,
+    "scroll": 375,
+    "width": 390
+  },
+  {
+    "buttonBottom": 725.1000366210938,
+    "client": 753,
+    "columns": "243.2px 243.2px",
+    "pageHeight": 614.7999877929688,
+    "scroll": 753,
+    "width": 768
+  },
+  {
+    "buttonBottom": 725.1000366210938,
+    "client": 1425,
+    "columns": "243.2px 243.2px",
+    "pageHeight": 614.7999877929688,
+    "scroll": 1425,
+    "width": 1440
+  }
+]

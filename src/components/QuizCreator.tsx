@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button } from './Button.js';
 import type { QuizConfig, DifficultyLevel } from '../types/quiz.js';
 import { DIFFICULTIES, difficultyName, modelInfo, modelName } from '../models.js';
-import { durationLabel } from '../quizConfig.js';
+import { durationLabel, displayModeOptions, languageOptions } from '../quizConfig.js';
 import type { Preferences } from '../workspace/types.js';
 import { QuestionComposition } from './QuestionComposition.js';
 import { QuestionScoring } from './QuestionScoring.js';
@@ -90,7 +90,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
             <div className="difficulty-dots" role="group" aria-label="Pilih level kesulitan">{DIFFICULTIES.map((level, index) => <button type="button" key={level.id} aria-label={`Level ${index + 1}: ${level.name}`} aria-pressed={difficultyIndex === index} onClick={() => setDifficulty(level.id)}><span /></button>)}</div>
             <p id="difficulty-help" className="field-help">{DIFFICULTIES[difficultyIndex]?.description}</p>
           </div>
-          <fieldset className="segmented-field menu-mode-field"><legend className="field-label">Cara mengerjakan</legend><div className="segmented-control">{([{ id: 'non_sequential', label: 'Urutan bebas' }, { id: 'sequential', label: 'Satu per satu' }] as const).map(({ id, label }) => <label key={id}><input type="radio" name="display-mode" checked={displayMode === id} value={id} onChange={() => patch({ displayMode: id, preset: undefined })} /><span>{label}</span></label>)}</div><p className="field-help">{sequential ? 'Kerjakan berurutan, tanpa kembali ke soal sebelumnya.' : 'Berpindah antarsoal dan tinjau kembali jawaban Anda.'}</p></fieldset></div>
+          <fieldset className="segmented-field menu-mode-field"><legend className="field-label">Cara mengerjakan</legend><div className="segmented-control">{displayModeOptions.map(({ id, label }) => <label key={id}><input type="radio" name="display-mode" checked={displayMode === id} value={id} onChange={() => patch({ displayMode: id, preset: undefined })} /><span>{label}</span></label>)}</div><p className="field-help">{sequential ? 'Kerjakan berurutan, tanpa kembali ke soal sebelumnya.' : 'Berpindah antarsoal dan tinjau kembali jawaban Anda.'}</p></fieldset></div>
           <DurationControl sequential={sequential} value={sequential ? perQuestionSeconds : totalMinutes} unlimited={unlimited} valid={validTimer}
             onChange={value => patch(sequential ? { perQuestionSeconds: value, preset: undefined } : { totalMinutes: value, preset: undefined })}
             onUnlimitedChange={unlimited => patch({ unlimited, preset: undefined })}>
@@ -99,7 +99,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
         </section>
         <section className="menu-section language-section" aria-labelledby="language-title">
           <div className="menu-section-title"><span className="section-number">03</span><h2 id="language-title">Bahasa, instruksi & AI</h2></div>
-          <div className="language-controls"><fieldset id="quiz-language" className="segmented-field"><legend className="field-label">Bahasa kuis</legend><div className="segmented-control">{([{ value: 'id', label: 'Indonesia' }, { value: 'en', label: 'English' }] as const).map(option => <label key={option.value}><input type="radio" name="quiz-language" value={option.value} checked={language === option.value} onChange={() => patch({ language: option.value })} /><span>{option.label}</span></label>)}</div></fieldset>
+          <div className="language-controls"><fieldset id="quiz-language" className="segmented-field"><legend className="field-label">Bahasa kuis</legend><div className="segmented-control">{languageOptions.map(option => <label key={option.value}><input type="radio" name="quiz-language" value={option.value} checked={language === option.value} onChange={() => patch({ language: option.value })} /><span>{option.label}</span></label>)}</div></fieldset>
             <LanguageStyleSelector value={draft.languageStyle} custom={customStyle} customText={customStyle ? draft.languageStyle : draft.customLanguageStyle || ''} presetValue={draft.languageStylePreset || (LANGUAGE_STYLES.some(([label]) => label === draft.languageStyle) ? draft.languageStyle : LANGUAGE_STYLES[0][0])} onChange={(languageStyle, custom, customLanguageStyle) => patch({ languageStyle, languageStyleMode: custom ? 'custom' : 'preset', customLanguageStyle, languageStylePreset: custom ? draft.languageStylePreset || (LANGUAGE_STYLES.some(([label]) => label === draft.languageStyle) ? draft.languageStyle : LANGUAGE_STYLES[0][0]) : languageStyle })} />
           </div>
           <label htmlFor="additional-instructions" className="field-label">Instruksi tambahan <span className="optional-badge">Opsional</span></label><textarea id="additional-instructions" className="field-input resize-y" rows={3} maxLength={2000} value={additionalInstructions} onChange={e => patch({ additionalInstructions: e.target.value })} placeholder="Contoh: fokus pada studi kasus dan penerapan sehari-hari." />

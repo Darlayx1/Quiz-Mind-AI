@@ -74,8 +74,11 @@ assert.ok(find(render(), 'GenerationLoader'), 'Old finally must not clear the ne
 assert.equal(updates, 0, 'Old catch must not record a user cancellation');
 assert.equal(pending[1].args[5].aborted, false, 'New operation remains active');
 pending[1].resolve({ id: 'second', questions: [] }); await settle();
-assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'second');
+assert.equal(find(render(), 'QuizPreparation').props.quiz.id, 'second');
+assert.equal(find(render(), 'QuizRunner'), undefined, 'Runner and timer are absent until Start');
 assert.equal(updates, 1, 'Only current operation saves its result');
+find(render(), 'QuizPreparation').props.onStart();
+assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'second');
 runtime.__generate = (...args: any[]) => new Promise((_resolve, reject) => {
   const signal = args[5] as AbortSignal;
   signal.addEventListener('abort', () => reject(signal.reason), { once: true });
@@ -128,9 +131,23 @@ const originalQuiz = { id: 'regenerate-original', title: 'Kuis asal', topic: ori
   timeLimitMinutes: 0, createdAt: '2026-10-12T00:00:00Z', questions: [validateQuestion({ ...fixtures.single_choice, id: 'q1' }, 0, 'Konsep', [], 'single_choice')!] };
 find(render(), 'QuizCreator').props.onGenerate(originalConfig);
 pending.at(-1).resolve(originalQuiz); await settle();
-const firstGenerated = find(render(), 'QuizRunner').props.quiz;
+const preparationTree = render();
+const firstGenerated = find(preparationTree, 'QuizPreparation').props.quiz;
 assert.deepEqual(firstGenerated.generationConfig, originalConfig);
 assert.deepEqual(firstGenerated.generationPreferences, originalPreferences);
+assert.equal(find(preparationTree, 'QuizRunner'), undefined);
+assert.ok(JSON.stringify(preparationTree).includes('Kuis berhasil dibuat.'));
+const draftBeforeBack = structuredClone(runtime.__workspace.data.draft);
+const progressBeforeBack = structuredClone(runtime.__workspace.data.progress);
+find(preparationTree, 'TopBar').props.onBack();
+assert.equal(find(render(), 'TopBar').props.activeView, 'configuration');
+assert.equal(find(render(), 'QuizPreparation'), undefined);
+assert.deepEqual(runtime.__workspace.data.draft, draftBeforeBack);
+assert.deepEqual(runtime.__workspace.data.progress, progressBeforeBack);
+assert.ok(runtime.__workspace.data.history.some((h: any) => h.quiz.id === firstGenerated.id), 'Back preserves the saved quiz');
+find(render(), 'TopBar').props.onNavigate('history');
+find(render(), 'QuizHistoryView').props.onSelectQuiz(firstGenerated);
+assert.ok(find(render(), 'QuizRunner'), 'History bypasses preparation');
 runtime.__workspace.data.preferences = { ...originalPreferences, grounding: !originalPreferences.grounding, keyId: 'changed-key' };
 const submission = { quizId: originalQuiz.id, userAnswers: { q1: 0 }, bookmarkedQuestions: [], timeTakenSeconds: 10, completedAt: '2026-10-12T00:01:00Z' };
 find(render(), 'QuizRunner').props.onSubmit(submission); await settle();
@@ -146,6 +163,10 @@ assert.equal(pending.length, beforeRemedial + 1, 'Duplicate clicks dispatch only
 assert.deepEqual(pending.at(-1).args[0], originalConfig);
 assert.deepEqual(pending.at(-1).args[1], originalPreferences, 'Preferences changed later do not replace the original ones');
 pending.at(-1).resolve({ ...originalQuiz, id: 'regenerate-fresh', questions: [{ ...originalQuiz.questions[0], id: 'new-q1', question: 'Soal baru dari provider fixture?' }] }); await settle();
+assert.equal(find(render(), 'QuizPreparation').props.quiz.id, 'regenerate-fresh');
+assert.equal(find(render(), 'QuizRunner'), undefined, 'Regeneration also waits for Start');
+assert.equal(runtime.__workspace.data.progress, null, 'Preparation does not create progress');
+find(render(), 'QuizPreparation').props.onStart();
 assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'regenerate-fresh');
 assert.equal(runtime.__workspace.data.history.length, earlierHistoryCount + 2, 'Original result and earlier unrelated history remain preserved');
 assert.equal(runtime.__workspace.data.history.find((h: any) => h.quiz.id === originalQuiz.id).attempts.length, 2);

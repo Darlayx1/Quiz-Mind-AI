@@ -1,0 +1,34 @@
+[
+  {
+    "animations": "prep-sway",
+    "backWidth": 44,
+    "contentWidth": 305,
+    "scrollWidth": 305,
+    "titleCenter": 152.4000015258789,
+    "width": 320
+  },
+  {
+    "animations": "prep-sway",
+    "backWidth": 44,
+    "contentWidth": 375,
+    "scrollWidth": 375,
+    "titleCenter": 187.5999984741211,
+    "width": 390
+  },
+  {
+    "animations": "prep-sway",
+    "backWidth": 44,
+    "contentWidth": 753,
+    "scrollWidth": 753,
+    "titleCenter": 376.3999938964844,
+    "width": 768
+  },
+  {
+    "animations": "prep-sway",
+    "backWidth": 44,
+    "contentWidth": 1425,
+    "scrollWidth": 1425,
+    "titleCenter": 712.4000091552734,
+    "width": 1440
+  }
+]

@@ -5,10 +5,14 @@ import {
   Settings2,
   History,
   LayoutGrid,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "./Button.js";
+import type { AppView } from '../types/app.js';
 interface TopBarProps {
-  activeView: "creator" | "configuration" | "runner" | "results" | "history";
+  activeView: AppView;
+  pageTitle?: string;
+  onBack?: () => void;
   isBusy?: boolean;
   onNavigate: (view: "creator" | "history") => void;
   onOpenSettings: () => void;
@@ -24,7 +28,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   storageLabel,
   isKeyConfigured,
   onNewQuizClick,
-}) => (
+  pageTitle,
+  onBack,
+}) => activeView === 'preparation' ? (
+  <header className="app-header preparation-header print:hidden">
+    <div className="header-inner">
+      <button type="button" className="preparation-back" aria-label="Kembali ke konfigurasi" disabled={isBusy} onClick={onBack}><ArrowLeft size={21} aria-hidden="true" /></button>
+      <h1 id="preparation-title">{pageTitle || 'Persiapan Kuis'}</h1>
+      <span className="preparation-header-spacer" aria-hidden="true" />
+    </div>
+  </header>
+) : (
   <header className={`app-header print:hidden ${activeView === 'configuration' ? 'configuration-header' : ''}`}>
     <div className="header-inner">
       <button
