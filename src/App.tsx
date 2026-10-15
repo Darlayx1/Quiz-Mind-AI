@@ -20,10 +20,13 @@ import { accountRpc } from './workspace/supabase.js';
 import type { GenerationJob, QuizProgress } from './workspace/types.js';
 import { resumableQuiz } from './resumableSession.js';
 import { quizRegeneration } from './quizRegeneration.js';
+import { AnimatePresence, m } from 'motion/react';
+import { useMotionPreferences, useVisualTransition } from './ui/motion.js';
 
 export default function App() {
   const w = useWorkspace();
   const [view, setView] = useState<AppView>('creator');
+  const pagePresentation = useRef<HTMLElement>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null); const [result, setResult] = useState<QuizResult | null>(null);
   const [settings, setSettings] = useState<SettingsTab | null>(null);
   const [isEvaluating,setIsEvaluating]=useState(false);
@@ -31,7 +34,9 @@ export default function App() {
   const [cancellingEvaluation, setCancellingEvaluation] = useState(false);
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState(false);
-  const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [toast, setToastState] = useState<{ kind: 'success' | 'error'; message: string; scope: string } | null>(null);
+  const setToast = (next: { kind: 'success' | 'error'; message: string } | null) => setToastState(next ? { ...next, scope: w.scope } : null);
+  const { reduced: reducedMotion } = useMotionPreferences();
   const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number; startedAt: number; isSaving: boolean; preferences?: import('./workspace/types.js').Preferences }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0, startedAt: 0, isSaving: false });
   const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
   const activeGeneration = useRef<Promise<void> | null>(null);
@@ -258,10 +263,12 @@ export default function App() {
   const examActive = w.ready && !loading && !isEvaluating && view === 'runner' && Boolean(quiz);
   const PageContainer = examActive ? 'div' : 'main';
   const processingMode = loading ? 'generation' : isEvaluating ? 'evaluation' : undefined;
+  // Opacity preserves viewport positioning of fixed exam/configuration action bars.
+  useVisualTransition(pagePresentation, `${w.scope}:${view}:${processingMode ?? ''}:${w.ready}`, 0);
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
     {!examActive && <TopBar activeView={view} processingMode={processingMode} isCancelling={cancelling || cancellingEvaluation} pageTitle={loading ? 'Membuat Kuis' : isEvaluating ? 'Evaluasi Jawaban' : 'Persiapan Kuis'} onBack={loading ? cancelGeneration : isEvaluating ? cancelEvaluation : () => { setView('configuration'); setQuiz(null); }} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />}
     {!examActive && !processingMode && <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>}
-    <PageContainer className={`flex-1 w-full${processingMode ? ' processing-main' : ''}`} aria-busy={w.storageLoading}>
+    <PageContainer ref={node => { pagePresentation.current = node; }} className={`flex-1 w-full${processingMode ? ' processing-main' : ''}`} aria-busy={w.storageLoading}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span>{w.mode !== 'reauth_required' && <button disabled={w.storageLoading} onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button>}</div></div>}
       {w.ready && <div hidden={loading || isEvaluating || !['creator', 'configuration'].includes(view)}>
         <QuizCreator key={`${w.scope}:${w.mode}`} stage={view === 'configuration' ? 'configuration' : 'creator'} onNavigate={setView} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} onGroundingChange={grounding => { void w.update(d=>({...d,preferences:{...d.preferences,grounding}})).catch(()=>{}); }}
@@ -297,6 +304,6 @@ export default function App() {
     </PageContainer>
     {!examActive && !processingMode && <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>}
     {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
-    {toast && <div className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</div>}
+    <AnimatePresence key={`toast:${w.scope}`}>{toast?.scope === w.scope && <m.div key={toast.message} initial={reducedMotion ? false : { opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: reducedMotion ? 0 : .2 }} className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</m.div>}</AnimatePresence>
   </div>;
 }

@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { quizTimerSeconds } from "../quizConfig.js";
 import type { Quiz, QuizSubmission, Question, StoredAnswer, AnswerValue } from "../types/quiz.js";
 import { ConfirmModal } from "./ConfirmModal.js";
+import { useAnimatedDismiss, useVisualTransition } from '../ui/motion.js';
 import {
   Clock,
   Bookmark,
@@ -62,6 +63,10 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const dismissDrawer = useAnimatedDismiss(drawerRef, () => setIsMobileDrawerOpen(false), isMobileDrawerOpen);
+  const dismissDrawerRef = useRef(dismissDrawer); dismissDrawerRef.current = dismissDrawer;
+  const questionPresentation = useRef<HTMLDivElement>(null);
+  useVisualTransition(questionPresentation, sequential ? currentIndex : 'free', 10);
   const canReviewSequential = sequential && quiz.questions.every((_, index) => questionLimit(index) === 0);
   const submitted=useRef(false),startedAt=useRef(Date.now()),deadline=useRef(0),indexRef=useRef(0),answersRef=useRef(userAnswers),bookmarksRef=useRef(bookmarks),submitRef=useRef(onSubmit),attempt=useRef(attemptKey??crypto.randomUUID()),ready=useRef(false),owner=useRef(false),questionHeading=useRef<HTMLHeadingElement>(null),saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   submitRef.current=onSubmit;
@@ -159,7 +164,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
     drawerRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
     const closeOnDesktop = () => { if (window.innerWidth >= 1024) setIsMobileDrawerOpen(false); };
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setIsMobileDrawerOpen(false); }
+      if (event.key === 'Escape') { event.preventDefault(); dismissDrawerRef.current(); }
       if (event.key !== 'Tab') return;
       const controls = drawerRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex="0"]');
       if (!controls?.length) return;
@@ -250,7 +255,7 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
       <main className="quiz-exam-main">
         {notice && <div className="quiz-session-notice" role="status">{notice}</div>}
         <div className="quiz-workspace">
-          <div className="quiz-question-column">
+          <div ref={questionPresentation} className="quiz-question-column">
             <div className="quiz-section-heading"><span>{sequential ? `Soal ${currentIndex + 1} dari ${total}` : 'Pertanyaan kuis'}</span><span>{answered} / {total} terjawab</span></div>
             {sequential ? renderQuestion(quiz.questions[currentIndex], currentIndex) : quiz.questions.map(renderQuestion)}
             {sequential && <div className="quiz-desktop-controls">
@@ -275,10 +280,10 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
         {submitButton()}
       </nav>
     </div>
-    {isMobileDrawerOpen && <div className="quiz-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) setIsMobileDrawerOpen(false); }}>
+    {isMobileDrawerOpen && <div className="quiz-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) dismissDrawer(); }}>
       <div id="quiz-navigation-drawer" ref={drawerRef} className="quiz-navigation-drawer animate-quiz-drawer" role="dialog" aria-modal="true" aria-labelledby="quiz-drawer-title">
         <div className="quiz-drawer-handle" />
-        <div className="quiz-navigation-heading"><div><h2 id="quiz-drawer-title">Navigasi soal</h2><p>Soal {currentIndex + 1} dari {total} · {progressPercent}% selesai</p></div><button type="button" className="quiz-icon-button" aria-label="Tutup navigasi" onClick={() => setIsMobileDrawerOpen(false)}><X size={20} /></button></div>
+        <div className="quiz-navigation-heading"><div><h2 id="quiz-drawer-title">Navigasi soal</h2><p>Soal {currentIndex + 1} dari {total} · {progressPercent}% selesai</p></div><button type="button" className="quiz-icon-button" aria-label="Tutup navigasi" onClick={dismissDrawer}><X size={20} /></button></div>
         {palette()}{legend()}
         {sequential && !canReviewSequential && <p className="quiz-navigation-help"><LockKeyhole size={13} />Jawaban dikunci setelah beralih soal.</p>}
         {submitButton()}

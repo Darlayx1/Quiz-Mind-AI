@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { presentationTestHost } from './presentation-test-host.js';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QuestionInput, stableShuffle } from '../src/components/QuestionInput.js';
@@ -39,7 +40,7 @@ runtime.__runnerHooks = {
   useRef(value: any) { const i = cursor++; return slots[i] ??= { current: value }; },
   useEffect(fn: any, deps: any[]) { const i = cursor++; if (!slots[i] || deps.some((d, n) => !Object.is(d, slots[i][n]))) effects.push(fn); slots[i] = deps; },
 };
-const compiled = await build({ entryPoints: ['src/components/QuizRunner.tsx'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'runner-host', setup(p) {
+const compiled = await build({ entryPoints: ['src/components/QuizRunner.tsx'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [presentationTestHost, { name: 'runner-host', setup(p) {
   p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/(Button|ConfirmModal|Select)\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
   p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => {
     const names = ['Clock','Bookmark','ChevronRight','Send','Infinity','ChevronLeft','Download','X','LogOut','LockKeyhole','Check','ArrowRight','ArrowUp','ArrowDown'];

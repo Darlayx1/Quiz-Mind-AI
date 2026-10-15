@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { build } from 'esbuild';
+import { presentationTestHost } from './presentation-test-host.js';
 import { preparationSummary } from '../src/quizPreparation.js';
 import { normalizeQuizConfig } from '../src/quizConfig.js';
 import { effectiveLanguageStyle } from '../src/languageStyles.js';
@@ -54,7 +55,7 @@ runtime.__preparationHooks = {
   useEffect() { cursor++; },
 };
 const compiled = await build({ entryPoints: ['src/components/QuizPreparation.tsx'], bundle: true, write: false, platform: 'node', format: 'esm',
-  plugins: [{ name: 'preparation-hooks', setup(p) {
+  plugins: [presentationTestHost, { name: 'preparation-hooks', setup(p) {
     p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$/ }, args => ({ path: args.path, namespace: 'host' }));
     p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => ({ contents: path === 'react'
       ? 'export const {useRef,useState,useEffect}=globalThis.__preparationHooks;'

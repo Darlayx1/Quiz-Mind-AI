@@ -1,9 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AnimatePresence, m, useIsPresent } from 'motion/react';
 import { ArrowRight, BookOpenText, FileText, Image as ImageIcon, LoaderCircle, Paperclip, X } from 'lucide-react';
 import { Button } from './Button.js';
 import { MaterialContextEditor } from './MaterialContextEditor.js';
 import { attachmentFingerprint, attachmentKind, FILE_ACCEPT, ingestAttachment, MAX_FILES, validateAttachment } from '../materialIngestion.js';
 import { composerSources, type ComposerDraft } from '../composerDraft.js';
+import { useMotionPreferences } from '../ui/motion.js';
+
+function AttachmentRow({ className, children }: { className: string; children: ReactNode }) {
+  const present = useIsPresent();
+  const { reduced } = useMotionPreferences();
+  return <m.li inert={!present} className={className} initial={reduced ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+    exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }} transition={{ duration: reduced ? 0 : .22 }}>
+    {children}
+  </m.li>;
+}
 
 export function QuizComposer({ draft, patch, onContinue, busy, saving, saveError }: {
   draft: ComposerDraft; patch: (change: Partial<ComposerDraft> | ((d: ComposerDraft) => ComposerDraft)) => void;
@@ -54,11 +65,11 @@ export function QuizComposer({ draft, patch, onContinue, busy, saving, saveError
       onDrop={e => { e.preventDefault(); setDragging(false); if (!busy) upload([...e.dataTransfer.files]); }}>
       <label htmlFor="composer-topic" className="sr-only">Topik atau instruksi kuis</label>
       <textarea ref={textarea} id="composer-topic" placeholder="Masukkan topik atau instruksi kuis..." value={draft.topic} maxLength={6000} disabled={busy} onChange={e => patch({ topic: e.target.value })} aria-describedby="composer-help" />
-      {draft.attachments.length > 0 && <ul className="attachment-list" aria-label="Lampiran kuis">{draft.attachments.map(file => <li key={file.id} className={`attachment-chip ${file.status}`}>
+      <ul className="attachment-list" aria-label="Lampiran kuis"><AnimatePresence initial={false}>{draft.attachments.map(file => <AttachmentRow key={file.id} className={`attachment-chip ${file.status}`}>
         {file.status === 'processing' ? <LoaderCircle size={18} className="processing-icon" /> : file.kind === 'image' ? <ImageIcon size={18} /> : <FileText size={18} />}
         <div><button type="button" className="attachment-name" title={file.name} disabled={file.status !== 'ready'} onClick={() => setPreview(file.id)}>{file.name}</button><span>{file.status === 'ready' ? file.kind === 'image' ? 'Teks OCR siap · periksa hasil' : 'Teks siap · lihat hasil' : file.status === 'processing' ? 'Membaca materi…' : 'Gagal dibaca'}</span>{file.error && <p role="alert">{file.error}</p>}</div>
         <button type="button" className="icon-button" aria-label={'Hapus lampiran ' + file.name} onClick={() => remove(file.id)}><X size={16} /></button>
-      </li>)}</ul>}
+      </AttachmentRow>)}</AnimatePresence></ul>
       {draft.studyMaterial.trim() && <button type="button" className="context-indicator" onClick={() => setContextOpen(true)}><BookOpenText size={15} />Konteks ditambahkan<span>{draft.studyMaterial.length.toLocaleString('id-ID')} karakter</span></button>}
       <div className="composer-toolbar"><div className="composer-tools">
         <button type="button" className="composer-tool" aria-label="Unggah lampiran" title="Unggah lampiran" disabled={busy} onClick={() => input.current?.click()}><Paperclip size={21} /></button>

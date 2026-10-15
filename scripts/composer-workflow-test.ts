@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { presentationTestHost } from './presentation-test-host.js';
 import { zipSync, strToU8 } from 'fflate';
 import { restoreComposerDraft, composerSources, applyQuickStart, QUICK_STARTS } from '../src/composerDraft.js';
 import { checkedText, ingestAttachment, openXmlEntries, validateAttachment } from '../src/materialIngestion.js';
@@ -68,7 +69,7 @@ globalThis.setTimeout = ((fn: () => void) => { const id = ++timerId; timers.set(
 globalThis.clearTimeout = ((id: number) => { timers.delete(id); }) as any;
 try {
   const compiled = await build({ entryPoints: ['src/components/QuizCreator.tsx'], bundle: true, write: false, platform: 'node', format: 'esm',
-    plugins: [{ name: 'creator-host', setup(p) {
+    plugins: [presentationTestHost, { name: 'creator-host', setup(p) {
       p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|\/Button\.js$|\/QuizComposer\.js$|\/QuestionComposition\.js$|\/QuestionScoring\.js$|\/LanguageStyleSelector\.js$|\/DurationControl\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
       p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => {
         let contents = '';

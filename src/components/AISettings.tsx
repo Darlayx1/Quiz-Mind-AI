@@ -13,6 +13,7 @@ import { localImportPayload } from '../workspace/localRepository.js';
 import { testKey } from '../workspace/ai.js';
 import { AIEvaluationSettings } from './AIEvaluationSettings.js';
 import { defaultEvaluationSettings } from '../evaluationSettings.js';
+import { useAnimatedDismiss, useSelectionIndicator, useVisualTransition } from '../ui/motion.js';
 
 export type SettingsTab = 'account' | 'keys' | 'models' | 'history';
 const tabs = [{ id: 'account', label: 'Akun', icon: UserRound }, { id: 'keys', label: 'API key', icon: KeyRound },
@@ -37,9 +38,13 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
   const [importPreview, setImportPreview] = useState<Awaited<ReturnType<typeof localImportPayload>> | null>(null);
   const [selectedImports, setSelectedImports] = useState<string[]>([]); const [importPreferences, setImportPreferences] = useState(false);
   const dialog = useRef<HTMLDivElement>(null); const mounted = useRef(true); const currentScope = useRef(w.scope); currentScope.current = w.scope;
+  const tabNavigation = useRef<HTMLDivElement>(null), tabContent = useRef<HTMLElement>(null);
+  useSelectionIndicator(tabNavigation, tab);
+  useVisualTransition(tabContent, tab, 6);
+  const dismiss = useAnimatedDismiss(dialog, onClose);
   const titleId = 'ai-settings-title';
   const dirty = Boolean(editing && (label.trim() || secret) || parallelSecret.trim());
-  const close = () => { if (!busy && (!dirty || confirm('Form API key belum disimpan. Tutup pengaturan?'))) onClose(); };
+  const close = () => { if (!busy && (!dirty || confirm('Form API key belum disimpan. Tutup pengaturan?'))) dismiss(); };
   const closeRef = useRef(close); closeRef.current = close;
   useEffect(() => {
     mounted.current = true; const prior = document.activeElement as HTMLElement | null; const overflow = document.body.style.overflow;
@@ -81,12 +86,12 @@ export function AISettings({ workspace: w, initialTab = 'account', onClose, onSe
       <header className="settings-header"><div><span className="settings-eyebrow">PREFERENSI & AKSES</span><h2 id={titleId}>Pengaturan AI</h2></div><button className="icon-button" aria-label="Tutup pengaturan AI" disabled={busy} onClick={close}><X size={21} /></button></header>
       <div className="settings-layout">
         <aside className="settings-sidebar"><div className="settings-sidebar-label">PENGATURAN AI</div>
-          <div role="tablist" aria-label="Pengaturan AI" className="settings-tabs">{tabs.map(({ id, label: text, icon: Icon }, i) => <button key={id} role="tab" id={`settings-tab-${id}`} aria-controls={`settings-panel-${id}`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} className={tab === id ? 'active' : ''} onClick={() => chooseTab(id)} onKeyDown={event => {
+          <div ref={tabNavigation} role="tablist" aria-label="Pengaturan AI" className="settings-tabs motion-selection">{tabs.map(({ id, label: text, icon: Icon }, i) => <button key={id} role="tab" id={`settings-tab-${id}`} aria-controls={`settings-panel-${id}`} aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} className={tab === id ? 'active' : ''} onClick={() => chooseTab(id)} onKeyDown={event => {
             if (['ArrowDown','ArrowRight','ArrowUp','ArrowLeft','Home','End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? 3 : (i + (event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : 3)) % 4; chooseTab(tabs[next].id); document.getElementById(`settings-tab-${tabs[next].id}`)?.focus(); }
           }}><Icon size={20} /><span>{text}</span></button>)}</div>
           <div className="settings-storage"><span className="storage-icon">{w.mode === 'guest' ? <Monitor size={17} /> : <Cloud size={17} />}</span><strong>{w.mode === 'guest' ? 'Penyimpanan lokal' : 'Penyimpanan akun'}</strong><p>{w.mode === 'guest' ? 'Data bertahan di browser ini.' : 'Data hanya milik akun aktif.'}</p></div>
         </aside>
-        <section id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="settings-content">
+        <section ref={tabContent} id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="settings-content">
           <div className="settings-scope"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{scopeLabel}</span><span role="status">{busy || w.saving ? 'Menyimpan / memproses…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : w.ready ? 'Penyimpanan siap' : 'Penyimpanan belum siap'}</span></div>
           {(error || w.error) && <div role="alert" className="settings-alert error">{error || w.error}{w.mode !== 'reauth_required' && <button onClick={() => act(w.refresh)} disabled={busy || w.storageLoading}>Muat ulang data</button>}</div>}
           {message && <div role="status" className="settings-alert success"><Check size={16} />{message}</div>}

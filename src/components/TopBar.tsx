@@ -9,6 +9,9 @@ import {
 } from "lucide-react";
 import { Button } from "./Button.js";
 import type { AppView } from '../types/app.js';
+import { useRef } from 'react';
+import { useSelectionIndicator } from '../ui/motion.js';
+import { MotionToggle } from './MotionPrimitives.js';
 interface TopBarProps {
   activeView: AppView;
   pageTitle?: string;
@@ -34,12 +37,15 @@ export const TopBar: React.FC<TopBarProps> = ({
   onBack,
   processingMode,
   isCancelling,
-}) => activeView === 'preparation' || processingMode ? (
+}) => {
+  const navigation = useRef<HTMLElement>(null);
+  useSelectionIndicator(navigation, `${activeView}:${processingMode ?? ''}`);
+  return activeView === 'preparation' || processingMode ? (
   <header className="app-header preparation-header print:hidden">
     <div className="header-inner">
       <button type="button" className="preparation-back" aria-label={processingMode ? (isCancelling ? 'Membatalkan proses…' : 'Batalkan proses dan kembali') : 'Kembali ke konfigurasi'} aria-busy={processingMode ? isCancelling : undefined} disabled={processingMode ? isCancelling : isBusy} onClick={onBack}><ArrowLeft size={21} aria-hidden="true" /></button>
       <h1 id={processingMode ? 'processing-title' : 'preparation-title'}>{pageTitle || 'Persiapan Kuis'}</h1>
-      <span className="preparation-header-spacer" aria-hidden="true" />
+      <MotionToggle />
     </div>
   </header>
 ) : (
@@ -58,7 +64,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           QuizMind<span className="brand-ai">AI</span>
         </span>
       </button>
-      <nav aria-label="Navigasi utama" className="header-nav">
+      <nav ref={navigation} aria-label="Navigasi utama" className="header-nav motion-selection">
         {activeView !== 'results' && <button
           aria-current={activeView === "creator" || activeView === "configuration" ? "page" : undefined}
           disabled={isBusy}
@@ -75,6 +81,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </nav>
       <div className="header-actions">
+        <MotionToggle />
         <button
           onClick={onOpenSettings}
           className="header-settings-button"
@@ -107,3 +114,4 @@ export const TopBar: React.FC<TopBarProps> = ({
     </div>
   </header>
 );
+};

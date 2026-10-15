@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { presentationTestHost } from './presentation-test-host.js';
 import { emptyWorkspace, keyPaused } from '../src/workspace/types.js';
 import { fixtures } from './assessment-fixtures.js';
 import { validateQuestion } from '../src/questionValidation.js';
@@ -27,12 +28,12 @@ runtime.__workspace = { scope: 'account-fixture', mode: 'account', ready: true, 
 const pending: any[] = [];
 runtime.__generate = (...args: any[]) => new Promise((resolve, reject) => pending.push({ args, resolve, reject }));
 const compiled = await build({ entryPoints: ['src/App.tsx'], bundle: true, write: false, platform: 'node', format: 'esm',
-  plugins: [{ name: 'app-host', setup(p) {
+  plugins: [presentationTestHost, { name: 'app-host', setup(p) {
     p.onResolve({ filter: /^(react|react\/jsx-runtime|lucide-react)$|components\/|workspace\/|scoring\.js$/ }, args => ({ path: args.path, namespace: 'host' }));
     p.onLoad({ filter: /.*/, namespace: 'host' }, ({ path }) => {
       let contents = '';
       if (path === 'react') contents = 'export const {useState,useRef,useCallback,useEffect}=globalThis.__hooks;';
-      else if (path === 'react/jsx-runtime') contents = 'export const Fragment="Fragment";export const jsx=(type,props)=>({type,props});export const jsxs=jsx;';
+      else if (path === 'react/jsx-runtime') contents = 'export const Fragment="Fragment";export const jsx=(type,props,key)=>({type,props,key});export const jsxs=jsx;';
       else if (path.includes('useWorkspace')) contents = 'export const useWorkspace=()=>globalThis.__workspace;';
       else if (path.includes('/types.js')) contents = 'export const keyPaused=globalThis.__keyPaused;';
       else if (path.includes('/ai.js')) contents = 'export const availableKeys=()=>[{}];export const generateWorkspaceQuiz=(...a)=>globalThis.__generate(...a);';
@@ -50,6 +51,11 @@ function find(tree: any, type: string): any { if (!tree) return; if (Array.isArr
   if (tree.type === type) return tree; return find(tree.props?.children, type); }
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 render();
+find(render(), 'TopBar').props.onOpenSettings();
+const settingsTree = render();
+const siblingKeys = settingsTree.props.children.flat(Infinity).filter((node: any) => node?.key !== undefined).map((node: any) => node.key);
+assert.equal(new Set(siblingKeys).size, siblingKeys.length, 'Settings and toast presence must have unique sibling keys so dismissal removes the correct dialog');
+find(settingsTree, 'AISettings').props.onClose(); render();
 runtime.__workspace.ready = false; runtime.__workspace.storageLoading = true;
 assert.ok(JSON.stringify(render()).includes('Memuat penyimpanan akun'), 'Account loading must have a loading screen');
 assert.ok(!JSON.stringify(render()).includes('Penyimpanan perlu diperiksa'), 'Loading must not show a storage failure');

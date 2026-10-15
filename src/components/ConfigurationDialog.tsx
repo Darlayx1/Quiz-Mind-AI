@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { motionTiming } from '../ui/motion.js';
 
 /** Native modal supplies inert background, focus containment and Escape semantics. */
 export function ConfigurationDialog({ title, description, onClose, children, returnFocus }: {
@@ -20,7 +21,7 @@ export function ConfigurationDialog({ title, description, onClose, children, ret
   const close = () => {
     if (closing) return;
     setClosing(true);
-    timer.current = setTimeout(onClose, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220);
+    timer.current = setTimeout(onClose, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : motionTiming.exit);
   };
   return <dialog ref={dialog} className={`configuration-dialog ${closing ? 'is-closing' : ''}`} aria-labelledby="selector-title" aria-describedby="selector-description"
     onKeyDown={event => {

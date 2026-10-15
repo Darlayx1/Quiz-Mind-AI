@@ -18,6 +18,7 @@ import { applyQuickStart, composerSources, QUICK_STARTS } from '../composerDraft
 import { buildComposerConfig, configurationState } from '../configurationState.js';
 import { LanguageStyleSelector } from './LanguageStyleSelector.js';
 import { LANGUAGE_STYLES } from '../languageStyles.js';
+import { useVisualTransition } from '../ui/motion.js';
 
 interface QuizCreatorProps {
   onGenerate: (config: QuizConfig) => void; isLoading: boolean; errorMessage: string | null;
@@ -39,6 +40,8 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
   const [transitioning, setTransitioning] = useState(false), [validationError, setValidationError] = useState('');
   const guard = useRef(false), heading = useRef<HTMLHeadingElement>(null), previousStage = useRef(stage), alive = useRef(true);
   const keyboardEditing = useMobileKeyboard();
+  const presentation = useRef<HTMLDivElement>(null);
+  useVisualTransition(presentation, stage, 0);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { if (previousStage.current !== stage) { previousStage.current = stage; heading.current?.focus(); } }, [stage]);
   const sources = composerSources(draft), enableGrounding = preferences.grounding, model = preferences.model;
@@ -60,7 +63,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     catch (error) { if (alive.current) setValidationError((error as Error).message); }
     finally { guard.current = false; if (alive.current) setTransitioning(false); }
   };
-  if (stage === 'creator') return <div className="page-shell smart-home">
+  if (stage === 'creator') return <div ref={presentation} className="page-shell smart-home">
     <div className="home-heading"><div className="eyebrow"><span className="home-eyebrow-line" /> RUANG UNTUK RASA INGIN TAHU</div><h1 ref={heading} tabIndex={-1}>Apa yang ingin Anda<br /><span>pelajari hari ini?</span></h1><p>Ubah topik, catatan, atau materi Anda menjadi kuis yang bermakna.</p></div>
     {errorMessage && <div className="form-alert" role="alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
     <QuizComposer draft={draft} patch={patch} onContinue={() => void navigate('configuration')} busy={transitioning || isLoading} saving={saving || pending} saveError={saveError} />
@@ -68,7 +71,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     {continueLearning}
     <div className="home-ai-note"><BrainCircuit size={16} /><span>{modelName(model)}</span><span className="home-note-separator">·</span><button onClick={onOpenSettings}>{hasApiKey ? 'Kelola AI' : 'Hubungkan AI Anda'}<ArrowRight size={13} /></button></div>
   </div>;
-  return <div className="page-shell menu-page configuration-page">
+  return <div ref={presentation} className="page-shell menu-page configuration-page">
     <div className="configuration-toolbar"><button type="button" className="configuration-back" disabled={transitioning || isLoading} onClick={() => void navigate('creator')}><ArrowLeft size={17} />Kembali</button><span className={`draft-status ${saveError ? 'error' : ''}`} role="status">{saveError ? 'Draft belum tersimpan' : saving || pending ? 'Menyimpan draft…' : 'Draft tersimpan'}</span></div>
     <div className="menu-heading"><div><div className="eyebrow">LANGKAH 2 · SESUAIKAN LATIHAN</div><h1 ref={heading} tabIndex={-1}>Konfigurasi Kuis</h1><p>Rancang latihan yang pas untuk rasa ingin tahu Anda.</p></div></div>
     {(errorMessage || validationError || saveError) && <div role="alert" className="form-alert"><strong>Kuis belum dapat dibuat</strong><p>{validationError || saveError || errorMessage}</p></div>}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { Button } from "./Button.js";
 import { AlertTriangle, X } from "lucide-react";
+import { useAnimatedDismiss } from '../ui/motion.js';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -24,8 +25,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   onCancel,
 }) => {
   const dialog = useRef<HTMLDivElement>(null);
-  const cancelAction = useRef(onCancel);
-  cancelAction.current = onCancel;
+  const dismiss = useAnimatedDismiss(dialog, onCancel, isOpen);
+  const cancelAction = useRef(dismiss);
+  cancelAction.current = dismiss;
   useEffect(() => {
     if (!isOpen) return;
     const previousFocus = document.activeElement as HTMLElement;
@@ -61,10 +63,10 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-xs transition-opacity">
+    <div className="confirm-overlay fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-xs">
       <div
         ref={dialog}
-        className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-xl shadow-xl border border-slate-200 p-6 flex flex-col gap-4 animate-in fade-in slide-in-from-bottom sm:slide-in-from-bottom-2 duration-150"
+        className="confirm-window w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-xl shadow-xl border border-slate-200 p-6 flex flex-col gap-4"
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
@@ -88,7 +90,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             </h3>
           </div>
           <button
-            onClick={onCancel}
+            onClick={dismiss}
             className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
             aria-label="Tutup dialog"
           >
@@ -104,7 +106,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             variant="outline"
             size="md"
             iconPosition="none"
-            onClick={onCancel}
+            onClick={dismiss}
           />
           <Button
             label={confirmLabel}

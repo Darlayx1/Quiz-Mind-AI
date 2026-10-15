@@ -1,7 +1,8 @@
 import { Select } from './Select.js';
 import { questionLabels,questionType } from '../questionState.js';
 import { exportJSON } from '../quizStorage.js';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import { useListReflow } from '../ui/motion.js';
 import { Quiz, QuizResult } from '../types/quiz.js';
 import { Button } from './Button.js';
 import { difficultyName } from '../models.js';
@@ -46,10 +47,12 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const calibration = difficultyCalibration(historyItems);
+  const historyList = useRef<HTMLDivElement>(null);
+  useListReflow(historyList, historyItems.map(item => item.quiz.id).join('|'));
 
   if (historyItems.length === 0) {
     return (
-      <div className="w-full max-w-3xl mx-auto py-16 px-4 text-center">
+      <div className="history-empty w-full max-w-3xl mx-auto py-16 px-4 text-center">
         <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-4">
           <BookOpen className="w-8 h-8" />
         </div>
@@ -70,7 +73,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6">
+    <div className="history-page w-full max-w-4xl mx-auto py-8 px-4 sm:px-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 mb-6">
         <div>
@@ -96,7 +99,7 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
       <button type="button" className="topic-chip mb-4" onClick={()=>exportJSON('quizmind-riwayat.json',historyItems)}>Ekspor riwayat & jawaban</button>
       {calibration.length > 0 && <details className="surface p-4 mb-4"><summary>Hasil menjawab menurut tingkat kesulitan</summary><p className="field-help">Memakai pengerjaan pertama setiap kuis pada ruang ini. Persentase aktual termasuk tebakan dan bukan ukuran kemampuan seluruh populasi. Bandingkan topik, model, dan tipe soal yang sama. Jawaban yang belum dinilai dipisahkan.</p><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr><th>Materi</th><th>Kesulitan</th><th>Mode & model</th><th>Soal dinilai</th><th>Benar aktual</th><th>Menunggu nilai</th></tr></thead><tbody>{calibration.map((row, i) => <tr key={i}><td>{row.topic}</td><td>{row.difficulty}<br />{questionLabels[row.type]}</td><td>{row.mode}<br />{row.model}</td><td>{row.assessed} dari {row.quizCount} kuis</td><td>{row.observedCorrectPercent === null ? '—' : `${row.observedCorrectPercent}%`}</td><td>{row.pending}</td></tr>)}</tbody></table></div><button type="button" className="topic-chip mt-3" onClick={() => exportJSON('quizmind-kalibrasi-difficulty.json', calibration)}>Ekspor hasil kalibrasi</button></details>}
       {/* History List */}
-      <div className="space-y-4">
+      <div ref={historyList} className="space-y-4">
         {historyItems.map((item) => {
           const { quiz, lastResult, savedAt, results } = item;
           const formattedDate = new Date(savedAt).toLocaleDateString('id-ID', {
@@ -110,7 +113,8 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
           return (
             <div
               key={quiz.id}
-              className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+              data-motion-key={quiz.id}
+              className="history-card bg-white rounded-xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
             >
               <div className="space-y-1.5 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Info } from 'lucide-react';
+import { AmbientVisual } from './MotionPrimitives.js';
+import { useMotionPreferences } from '../ui/motion.js';
 
 export interface ContextBadge {
   id?: string;
@@ -35,6 +37,7 @@ export function ProcessingLayout({
   const [reducedMotion, setReducedMotion] = useState(false);
   const [paused, setPaused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const motionPreference = useMotionPreferences();
   const elapsed = Math.max(0, Math.floor((now - (startedAt ?? mountedAt.current)) / 1000));
   const active = contextBadges[activeIndex % Math.max(1, contextBadges.length)];
   const percent = typeof progressPercent === 'number' && Number.isFinite(progressPercent)
@@ -54,15 +57,15 @@ export function ProcessingLayout({
     return () => preference.removeEventListener('change', sync);
   }, []);
   useEffect(() => {
-    if (reducedMotion || paused || isCancelling || contextBadges.length < 2) return;
+    if (reducedMotion || paused || motionPreference.paused || motionPreference.hidden || isCancelling || contextBadges.length < 2) return;
     const timer = window.setInterval(() => {
       if (!document.hidden) setActiveIndex(index => (index + 1) % contextBadges.length);
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [contextBadges.length, reducedMotion, paused, isCancelling]);
+  }, [contextBadges.length, reducedMotion, paused, motionPreference.paused, motionPreference.hidden, isCancelling]);
 
   return <section ref={content} tabIndex={-1} className={`processing-page${isCancelling ? ' is-cancelling' : ''}`} aria-labelledby="processing-title">
-    <div className="processing-visual">{illustration}</div>
+    <AmbientVisual className="processing-visual">{illustration}</AmbientVisual>
     <div className="processing-intro">
       <span className="processing-eyebrow">{eyebrow}</span>
       <h2>{title}</h2>

@@ -5,6 +5,7 @@ import { TopBar } from '../src/components/TopBar.js';
 import { buildResult } from '../src/scoring.js';
 import { reviewFixture, type ReviewScenario } from './results-review-fixture.js';
 import '../src/index.css';
+import '../src/styles/motion.css';
 
 // Isolated local preview: callbacks never call an AI provider or account storage.
 function Preview() {

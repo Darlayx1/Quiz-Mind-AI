@@ -52,7 +52,7 @@ export const Button: React.FC<ButtonProps> = ({
       disabled={disabled}
       aria-label={label}
       title={isIconOnly ? label : undefined}
-      className={`inline-flex items-center justify-center gap-2 font-semibold select-none whitespace-nowrap rounded-xl outline-none ${sizeStyles} ${variantStyles} ${disabledStyles} ${className}`}
+      className={`qm-button inline-flex items-center justify-center gap-2 font-semibold select-none whitespace-nowrap rounded-xl outline-none ${sizeStyles} ${variantStyles} ${disabledStyles} ${className}`}
     >
       {icon && (iconPosition === 'leading' || iconPosition === 'only') && (
         <span className="shrink-0 flex items-center justify-center">{icon}</span>

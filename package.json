@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:motion": "node --import tsx scripts/motion-policy-test.ts",
     "test:runner": "node --import tsx scripts/quiz-runner-test.ts",
     "test:auth": "node --import tsx scripts/google-auth-test.ts",
     "test:results": "node --import tsx scripts/results-review-test.ts",

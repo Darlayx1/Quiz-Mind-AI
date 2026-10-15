@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, ListChecks } from 'lucide-react';
 import type { Quiz } from '../types/quiz.js';
 import { preparationSummary } from '../quizPreparation.js';
+import { AmbientVisual } from './MotionPrimitives.js';
 
 function PreparationVisual() {
-  return <div className="preparation-visual" aria-hidden="true">
+  return <AmbientVisual className="preparation-visual">
     <div className="preparation-pedestal" />
     <div className="preparation-shadow" />
     <div className="preparation-scene">
@@ -18,7 +19,7 @@ function PreparationVisual() {
         </div>
       </div>
     </div>
-  </div>;
+  </AmbientVisual>;
 }
 
 export function QuizPreparation({ quiz, onStart }: { quiz: Quiz; onStart: () => void }) {

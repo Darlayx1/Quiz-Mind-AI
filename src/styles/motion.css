@@ -1,0 +1,211 @@
+/* Presentation layer: shared timing, restrained depth, and coordinated motion. */
+:root {
+  --motion-press: 110ms;
+  --motion-select: 220ms;
+  --motion-enter: 340ms;
+  --motion-exit: 200ms;
+  --motion-ease: cubic-bezier(.16,1,.3,1);
+  --motion-shadow: 0 12px 32px -20px #17375b42, 0 2px 5px #17375b05;
+}
+
+@keyframes qm-reveal {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes qm-surface-in {
+  from { opacity: 0; transform: translateY(14px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes qm-opacity { from { opacity: 0; } to { opacity: 1; } }
+@keyframes qm-mark-in {
+  from { opacity: 0; transform: scale(.65) rotate(-12deg); }
+  to { opacity: 1; transform: scale(1) rotate(0); }
+}
+@keyframes qm-complete-light {
+  0% { opacity: 0; transform: translateX(-105%) skewX(-15deg); }
+  25% { opacity: .65; }
+  100% { opacity: 0; transform: translateX(105%) skewX(-15deg); }
+}
+@keyframes qm-progress-arrive {
+  from { opacity: .65; transform: scaleY(.6); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+
+/* Buttons respond on every input method; only fine pointers get hover elevation. */
+.qm-button, .settings-primary, .settings-secondary, .quiz-primary-button, .quiz-secondary-button,
+.icon-button, .composer-tool, .configuration-back, .preparation-back, .motion-toggle {
+  transition: transform var(--motion-press) var(--motion-ease), background-color var(--motion-select),
+    border-color var(--motion-select), color var(--motion-select), box-shadow var(--motion-select);
+}
+.qm-button { position: relative; isolation: isolate; }
+.qm-button:active:not(:disabled), .settings-primary:active:not(:disabled), .settings-secondary:active:not(:disabled),
+.quiz-primary-button:active:not(:disabled), .quiz-secondary-button:active:not(:disabled),
+.composer-tool:active:not(:disabled), .icon-button:active:not(:disabled) { transform: scale(.985); }
+.qm-button > span > svg, .settings-primary > svg, .composer-tool > svg { transition: transform var(--motion-select) var(--motion-ease); }
+.composer-cta, .generate-button, .preparation-start {
+  background-image: linear-gradient(135deg,#315f93,#17375b);
+  box-shadow: 0 4px 10px #17375b18, inset 0 1px 0 #ffffff1c;
+}
+.motion-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 44px; height: 44px; border: 1px solid #e1e7ef; border-radius: 12px;
+  color: #60738d; background: #ffffffbf;
+}
+.motion-toggle[aria-pressed=true] { background: #edf3fa; color: var(--qm-blue-600); border-color: #c5d4e7; }
+.motion-toggle:focus-visible, .history-card button:focus-visible { outline: 3px solid #8baacf; outline-offset: 3px; }
+
+/* A measured underlay travels between the real controls, including responsive tabs. */
+.motion-selection { position: relative; isolation: isolate; }
+.motion-selection::before {
+  content: ''; position: absolute; top: 0; left: 0; z-index: -1; pointer-events: none;
+  width: var(--indicator-width,0px); height: var(--indicator-height,0px);
+  transform: translate(var(--indicator-x,0px),var(--indicator-y,0px));
+  opacity: var(--indicator-opacity,0); border-radius: 9px; background: white;
+  box-shadow: 0 2px 6px #17375b0c, 0 0 0 1px #17375b04;
+  transition: transform var(--motion-enter) var(--motion-ease), width var(--motion-enter) var(--motion-ease),
+    height var(--motion-enter) var(--motion-ease), opacity var(--motion-select);
+}
+.header-nav.motion-selection button[aria-current] { background: transparent; box-shadow: none; }
+.settings-tabs.motion-selection::before { background: #e7eff9; box-shadow: inset 0 0 0 1px #214f8208; }
+.settings-tabs.motion-selection button.active { background: transparent; }
+
+/* Soft light gives the opening composition depth without an endless moving background. */
+.smart-home { position: relative; isolation: isolate; }
+.smart-home::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  inset: 10px 0 auto; height: 470px; border-radius: 50%;
+  background: radial-gradient(ellipse at 70% 45%,#dce9f750,transparent 67%);
+}
+.smart-home .home-heading .eyebrow { animation: qm-reveal 450ms var(--motion-ease) both; }
+.smart-home .home-heading h1 { animation: qm-reveal 520ms var(--motion-ease) 35ms both; }
+.smart-home .home-heading p { animation: qm-reveal 520ms var(--motion-ease) 70ms both; }
+.smart-home .quiz-composer { animation: qm-reveal 500ms var(--motion-ease) 100ms both; }
+.smart-home .quick-start-section { animation: qm-reveal 450ms var(--motion-ease) 145ms both; }
+.home-heading h1 span { background: linear-gradient(110deg,#17375b 10%,#427db9 90%); background-clip: text; -webkit-text-fill-color: transparent; }
+.quiz-composer {
+  background: linear-gradient(160deg,#fff,#fcfdff); border-color: #d7e1ef;
+  box-shadow: 0 16px 48px -32px #214f8238, 0 2px 6px #17375b04, inset 0 1px 0 #fff;
+  transition: border-color var(--motion-select), box-shadow var(--motion-enter);
+}
+.quiz-composer:focus-within { border-color: #8baacc; box-shadow: 0 0 0 4px #376ea80a,0 18px 48px -28px #214f8238; }
+.quiz-composer.is-dragging { border-color: #376ea8; box-shadow: 0 0 0 5px #376ea812,0 16px 48px -28px #214f8240; }
+.composer-drop { animation: qm-opacity var(--motion-select) ease-out both; }
+.attachment-list:empty { display: none; }
+.attachment-chip { overflow: hidden; transition: background-color var(--motion-select), border-color var(--motion-select); }
+.attachment-chip.ready > svg { animation: qm-mark-in 300ms var(--motion-ease) both; }
+.quick-starts > button { position: relative; box-shadow: 0 2px 6px #17375b03; transition: transform var(--motion-select) var(--motion-ease), border-color var(--motion-select), box-shadow var(--motion-select), background-color var(--motion-select); }
+.quick-starts > button[aria-pressed=true] { border-color: #8baacc; background: linear-gradient(135deg,#f4f8ff,#fff); box-shadow: inset 0 0 0 1px #214f8212,0 6px 20px -16px #214f8240; }
+.quick-starts .preset-icon { transition: transform var(--motion-enter) var(--motion-ease), background-color var(--motion-select); }
+.quick-starts > button[aria-pressed=true] .preset-icon { transform: scale(1.06); }
+
+/* Configuration: tactile selections and small, local changes. */
+.configuration-page .menu-heading, .configuration-page .menu-layout { animation: qm-reveal 400ms var(--motion-ease) both; }
+.configuration-page .menu-layout { animation-name: qm-opacity; animation-delay: 45ms; }
+.configuration-page .menu-section { transition: border-color var(--motion-select), box-shadow var(--motion-select); }
+.configuration-page .menu-section:focus-within { border-color: #afc4dd; }
+.segmented-control input + span { transition: background-color var(--motion-select), color var(--motion-select), box-shadow var(--motion-select), transform var(--motion-select) var(--motion-ease); }
+.segmented-control input:checked + span { box-shadow: 0 3px 8px #17375b18, inset 0 1px 0 #ffffff18; }
+.duration-preset { transition: transform var(--motion-press) var(--motion-ease), border-color var(--motion-select), background-color var(--motion-select), box-shadow var(--motion-select); }
+.duration-preset[aria-pressed=true] { box-shadow: 0 4px 12px #214f8210, inset 0 0 0 1px #214f8208; }
+.duration-preset:active { transform: scale(.98); }
+.duration-selected-mark { animation: qm-mark-in 280ms var(--motion-ease) both; }
+.conditional-reveal { animation-duration: var(--motion-enter); animation-timing-function: var(--motion-ease); }
+
+/* Layered surfaces: matching entrance and bounded dismissal with focus retained until close. */
+.settings-overlay, .confirm-overlay { animation: qm-opacity var(--motion-select) ease-out both; }
+.settings-window, .confirm-window, .material-dialog[open] { animation: qm-surface-in var(--motion-enter) var(--motion-ease) both; }
+.settings-overlay:has([data-closing=true]), .confirm-overlay:has([data-closing=true]) { animation: backdrop-exit var(--motion-exit) ease-in forwards; }
+[data-closing=true] { pointer-events: none; }
+.material-dialog::backdrop { animation: qm-opacity var(--motion-select) ease-out both; }
+.material-dialog[data-closing=true]::backdrop { animation: backdrop-exit var(--motion-exit) ease-in forwards; }
+.configuration-dialog[open] { animation-duration: var(--motion-enter); animation-timing-function: var(--motion-ease); }
+.configuration-dialog.is-closing, .configuration-dialog.is-closing::backdrop { animation-duration: var(--motion-exit); }
+.select-options { transform-origin: top center; animation: qm-surface-in 180ms var(--motion-ease) both; }
+.quiz-drawer-backdrop { animation: qm-opacity var(--motion-select) ease-out both; }
+.quiz-drawer-backdrop:has([data-closing=true]) { animation: backdrop-exit var(--motion-exit) ease-in forwards; }
+.quiz-navigation-drawer { animation-timing-function: var(--motion-ease); }
+
+/* Processing art retains the existing poses, with more defined light and depth. */
+.processing-scene-glow { background: radial-gradient(ellipse,#c2d9f15c,transparent 67%); }
+.processing-object-face, .preparation-card-face { box-shadow: inset 1px 1px 0 #ffffffd9, inset -1px -1px 0 #214f8208; }
+.processing-intro { animation: qm-reveal 450ms var(--motion-ease) 60ms both; }
+.processing-progress { animation: qm-reveal 450ms var(--motion-ease) 120ms both; }
+.processing-track-fill { box-shadow: 0 0 12px #376ea824; }
+.processing-long-wait, .processing-error { animation: qm-reveal var(--motion-enter) var(--motion-ease) both; }
+.preparation-summary > li { animation: qm-reveal 420ms var(--motion-ease) 50ms both; }
+.preparation-summary > li:nth-child(2) { animation-delay: 85ms; }
+.preparation-summary > li:nth-child(3) { animation-delay: 120ms; }
+.preparation-description, .preparation-start { animation: qm-reveal 420ms var(--motion-ease) 160ms both; }
+[data-ambient-active=false] *, [data-ambient-visible=false] *,
+html[data-ambient-paused=true] :is(.processing-visual,.preparation-visual) * { animation-play-state: paused !important; }
+html[data-ambient-paused=true] .processing-track.is-indeterminate .processing-track-fill { animation-play-state: paused !important; }
+
+/* The exam stays quiet: selection carries the feedback, decoration never loops. */
+.quiz-exam .quiz-edge-progress-fill { animation: none; background-size: 100% 100%; box-shadow: 0 0 8px #2563eb30; }
+.quiz-exam .quiz-timer.is-critical { animation: none; box-shadow: 0 0 0 3px #e5484d08; }
+.quiz-exam .quiz-question-card { animation: none; transition: border-color var(--motion-select), box-shadow var(--motion-select); }
+.quiz-exam .quiz-option-interactive.is-selected { box-shadow: inset 0 0 0 1px #214f820b, 0 3px 10px -8px #214f8250; }
+.quiz-exam .quiz-choice-mark > svg { animation: qm-mark-in 220ms var(--motion-ease) both; }
+.quiz-exam .quiz-flag-button.is-flagged svg { animation: qm-mark-in 250ms var(--motion-ease) both; }
+.quiz-exam .quiz-palette-item { transition: background-color var(--motion-select), border-color var(--motion-select), box-shadow var(--motion-select); }
+.quiz-exam .quiz-answer-status { animation-duration: var(--motion-select); }
+.quiz-exam .quiz-ordering li { transition: background-color var(--motion-select), border-color var(--motion-select); }
+.quiz-exam .quiz-text-editor:focus-within { box-shadow: 0 0 0 3px #376ea80a; }
+
+/* Completion gets one local highlight; revising a value does not replay it. */
+.results-page .result-summary { position: relative; isolation: isolate; overflow: clip; }
+.results-page .result-summary::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(110deg,transparent 25%,#d1e6fc52 50%,transparent 75%); opacity: 0;
+}
+.results-page .result-summary[data-celebrate=true]::after { animation: qm-complete-light 1200ms var(--motion-ease) both; }
+.results-page .result-score-value strong { font-variant-numeric: tabular-nums; }
+.results-page .result-score-track > span { transition: width 800ms var(--motion-ease); }
+.results-page .result-score-track > span::after { animation: none; opacity: 0; }
+.results-page .result-summary[data-celebrate=true] .result-score-track > span::after { animation: result-polish 1100ms var(--motion-ease) 150ms both; }
+.results-page .review-filters button { transition-duration: var(--motion-select); }
+.history-card { transition: border-color var(--motion-select), box-shadow var(--motion-select); }
+.history-empty > :first-child { background: linear-gradient(145deg,#eef4fc,#f8fafc); box-shadow: 0 8px 24px -16px #214f8260; animation: qm-surface-in 450ms var(--motion-ease) both; }
+.app-toast { box-shadow: 0 12px 32px #14273e20,0 2px 6px #14273e0a; }
+
+@media (hover:hover) and (pointer:fine) {
+  .qm-button:hover:not(:disabled):not(:active), .settings-primary:hover:not(:disabled):not(:active) { transform: translateY(-1px); }
+  .composer-cta:hover:not(:disabled), .generate-button:hover:not(:disabled), .preparation-start:hover:not(:disabled) { box-shadow: 0 8px 18px -8px #17375b55, inset 0 1px 0 #ffffff26; }
+  .composer-cta:hover:not(:disabled) > span:last-child svg, .generate-button:hover:not(:disabled) > span:last-child svg, .preparation-start:hover:not(:disabled) > svg { transform: translateX(3px); }
+  .motion-toggle:hover { background: #f0f5fb; color: #214f82; }
+  .quick-starts > button:hover { transform: translateY(-3px); border-color: #b0c5df; box-shadow: var(--motion-shadow); }
+  .quick-starts > button:active { transform: translateY(0) scale(.99); }
+  .history-card:hover { border-color: #b0c5df; box-shadow: var(--motion-shadow); }
+  .quiz-exam .quiz-option-interactive:hover { transform: none; }
+}
+@media (max-width:767px) {
+  .motion-toggle { width: 44px; height: 44px; border-radius: 10px; }
+  .header-actions { gap: 6px; }
+  .smart-home::before { inset-inline: 0; height: 330px; }
+  .settings-window { animation-name: qm-reveal; }
+}
+@media (min-width:768px) and (max-width:1023px) {
+  .header-settings-button > span { display: none; }
+  .header-settings-button { min-width: 44px; justify-content: center; }
+  .header-actions { gap: 6px; }
+}
+@media (max-width:374px) {
+  .app-header:not(.preparation-header) .header-inner { gap: 6px; }
+  .header-actions { gap: 2px; }
+  .app-header .brand { gap: 6px; font-size: 16px; }
+  .app-header .brand-mark { width: 32px; height: 32px; }
+  .configuration-header .header-actions > .qm-button { padding-inline: 10px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  html *, html *::before, html *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .qm-button:hover, .settings-primary:hover, .quick-starts > button:hover,
+  .quiz-option-interactive:hover, .quiz-option-interactive:active { transform: none !important; }
+  .composer-cta:hover > span:last-child svg, .generate-button:hover > span:last-child svg,
+  .preparation-start:hover > svg, .quick-starts > button .preset-icon { transform: none !important; }
+  .results-page .result-summary::after, .results-page .result-score-track > span::after { display: none; }
+}
+@media print {
+  .motion-toggle, .smart-home::before, .results-page .result-summary::after { display: none !important; }
+  html *, html *::before, html *::after { animation: none !important; transition: none !important; }
+  .home-heading h1 span { background: none; -webkit-text-fill-color: currentColor; }
+}

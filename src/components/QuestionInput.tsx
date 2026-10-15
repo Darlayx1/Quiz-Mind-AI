@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useListReflow } from '../ui/motion.js';
 import { Check, ArrowUp, ArrowDown } from 'lucide-react';
 import { Select } from './Select.js';
 import type { AnswerValue, Question, StoredAnswer } from '../types/quiz.js';
@@ -26,6 +27,8 @@ export interface QuestionInputProps {
 
 export function QuestionInput({ question: q, value, onChange, seed = '', disabled = false }: QuestionInputProps) {
   const a = normalizedAnswer(q, value), id = 'answer-' + q.id;
+  const orderList = useRef<HTMLOListElement>(null);
+  useListReflow(orderList, q.id + (a?.type === 'ordering' ? a.orderedItemIds.join('|') : ''));
   if (q.type === undefined || q.type === 'single_choice' || q.type === 'multiple_select') {
     const ids = optionIds(q), multi = q.type === 'multiple_select';
     const count = a?.type === 'multiple_select' ? a.selectedOptionIds.length : 0;
@@ -95,9 +98,9 @@ export function QuestionInput({ question: q, value, onChange, seed = '', disable
   };
   return <div className="quiz-ordering">
     <p className="quiz-input-hint">Susun dari awal ke akhir dengan tombol panah.</p>
-    <ol>{ordered.map((itemId, i) => {
+    <ol ref={orderList}>{ordered.map((itemId, i) => {
       const item = q.items.find(v => v.id === itemId)!;
-      return <li key={itemId}><span className="quiz-option-letter">{i + 1}</span><span>{item.text}</span>
+      return <li key={itemId} data-motion-key={itemId}><span className="quiz-option-letter">{i + 1}</span><span>{item.text}</span>
         <button type="button" className="quiz-icon-button" disabled={disabled || !i} aria-label={'Naikkan ' + item.text} onClick={() => move(i, -1)}><ArrowUp size={16} /></button>
         <button type="button" className="quiz-icon-button" disabled={disabled || i === ordered.length - 1} aria-label={'Turunkan ' + item.text} onClick={() => move(i, 1)}><ArrowDown size={16} /></button>
       </li>;

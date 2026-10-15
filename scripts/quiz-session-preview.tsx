@@ -7,6 +7,7 @@ import type { QuizProgress } from '../src/workspace/types.js';
 import { validateQuestion } from '../src/questionValidation.js';
 import { fixtures } from './assessment-fixtures.js';
 import '../src/index.css';
+import '../src/styles/motion.css';
 
 const prompts = [
   'Manakah contoh penerapan konsep yang paling tepat?',

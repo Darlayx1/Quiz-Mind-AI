@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { QuizResult, QuestionEvaluation } from '../types/quiz.js';
 import { Button } from './Button.js';
+import { AnimatedScore } from './AnimatedScore.js';
 import { QuestionReview } from './QuestionReview.js';
 import { AnswerDiscussion } from './AnswerDiscussion.js';
 import { questionLabels, questionType } from '../questionState.js';
@@ -60,7 +61,7 @@ export const QuizResults: React.FC<Props> = ({ result, onRetake, onRegenerate, i
         <div className="result-score-top">
         <div>
         <span className="result-score-label">Skor · {score === null ? 'Belum final' : 'Final'}</span>
-        <p className="result-score-value"><strong key={score ?? 'pending'}>{score ?? '—'}</strong><span>/ 100</span></p>
+        <p className="result-score-value">{score === null ? <strong>—</strong> : <AnimatedScore value={score} resultId={`${result.quiz.id}:${result.submission.completedAt}`} />}<span>/ 100</span></p>
         </div>
         </div>
         {score !== null && <div className="result-score-track" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, score))}%` }} /></div>}
