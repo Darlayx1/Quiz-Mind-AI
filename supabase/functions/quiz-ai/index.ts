@@ -128,7 +128,9 @@ Deno.serve(async request => {
         policyVersion: jobRow.policy_version,
         complete: jobRow.status === 'completed',
         quiz: jobRow.status === 'completed' ? jobRow.result : undefined,
-        error: ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(jobRow.status) ? (jobRow.result?.error || 'Operasi gagal.') : undefined
+        error: ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(jobRow.status) ? (jobRow.result?.error || 'Operasi gagal.') : undefined,
+        code: jobRow.result?.code,
+        statusCode: jobRow.result?.statusCode
       });
     }
 
@@ -265,7 +267,10 @@ Deno.serve(async request => {
             await outcome(key.id, userId, 'available');
             break;
           } catch (error) {
-            cancellation.signal.throwIfAborted();
+            if (cancellation.signal.aborted) {
+              if (cancellation.signal.reason?.name === 'TimeoutError') throw classifyApiError(cancellation.signal.reason, preferences?.model);
+              cancellation.signal.throwIfAborted();
+            }
             const classified = classifyApiError(error, preferences?.model);
             await outcome(key.id, userId, statusOf(classified));
             if (statusOf(classified) !== 'quota' || attempt + 1 >= candidates.length) throw classified;
@@ -287,9 +292,11 @@ Deno.serve(async request => {
 
         return json({ quiz, complete: true });
       } catch (error) {
+        const timedOut = cancellation.signal.aborted && cancellation.signal.reason?.name === 'TimeoutError';
+        if (timedOut) error = classifyApiError(cancellation.signal.reason, preferences?.model);
         if (job && userId) {
           const isReserved = Boolean(job.dispatch_reserved_at || (job.model_call_count && job.model_call_count > 0));
-          const targetStatus = error?.name === 'AbortError' || cancellation.signal.aborted
+          const targetStatus = !timedOut && (error?.name === 'AbortError' || cancellation.signal.aborted)
             ? 'cancelled'
             : (isReserved ? 'failed_after_dispatch' : 'failed_preflight');
           try {
@@ -297,7 +304,7 @@ Deno.serve(async request => {
               p_user: userId,
               p_id: job.id,
               p_lease: job.lease_token,
-              p_result: { ...(job.result || {}), error: error?.message || 'Operasi gagal.' },
+              p_result: { ...(job.result || {}), error: error?.message || 'Operasi gagal.', code: error?.code, statusCode: error?.status },
               p_status: targetStatus
             });
           } catch { /* Best effort commit */ }
@@ -330,7 +337,7 @@ Deno.serve(async request => {
           p_user: userId,
           p_id: job.id,
           p_lease: job.lease_token,
-          p_result: { ...(job.result || {}), error: error?.message || 'Operasi gagal.' },
+          p_result: { ...(job.result || {}), error: error?.message || 'Operasi gagal.', code: error?.code, statusCode: error?.status },
           p_status: targetStatus
         });
       } catch { /* Best effort commit */ }

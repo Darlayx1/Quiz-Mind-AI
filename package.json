@@ -10,7 +10,7 @@
     "test:composer": "node --import tsx scripts/composer-workflow-test.ts && node --import tsx scripts/configuration-redesign-test.ts && node --import tsx scripts/configuration-generation-test.ts && node --import tsx scripts/app-operation-test.ts && node --import tsx scripts/quiz-preparation-test.ts",
     "test:quality": "node --import tsx scripts/quiz-quality-test.ts",
     "benchmark:quality": "node --import tsx scripts/quality-benchmark.ts",
-    "test:generation": "node --import tsx scripts/quiz-stream-test.ts && node --import tsx scripts/generation-efficiency-test.ts && node --import tsx scripts/generation-quality-gate-test.ts",
+    "test:generation": "node --import tsx scripts/quiz-stream-test.ts && node --import tsx scripts/generation-timeout-test.ts && node --import tsx scripts/generation-efficiency-test.ts && node --import tsx scripts/generation-quality-gate-test.ts",
     "benchmark:generation": "node --import tsx scripts/generation-comparison.ts",
     "test:parallel": "node scripts/test-parallel.mjs",
     "build:edge": "node scripts/build-edge.mjs",
@@ -27,7 +27,7 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
+    "@google/genai": "2.27.0",
     "@supabase/supabase-js": "^2.117.3",
     "@tailwindcss/vite": "^4.3.3",
     "@tesseract.js-data/eng": "^1.0.0",

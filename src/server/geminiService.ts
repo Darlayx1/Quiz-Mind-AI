@@ -57,7 +57,9 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       warnings.push('Referensi web tidak sesuai topik. Kuis dibuat tanpa referensi web.');
     }
   }
-  const ai = new GoogleGenAI({ apiKey, httpOptions: { retryOptions: { attempts: 1 } } });
+  // Set both the local abort deadline and the SDK/provider request deadline.
+  // An AbortSignal alone does not configure Google's X-Server-Timeout header.
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 180000, retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
   const strategy = generationStrategy(model, options.experiment);
   const gemma = model === 'gemma-4-31b-it';
@@ -90,12 +92,15 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
     const request = { model,
       contents,
       config: { abortSignal: signal, thinkingConfig: { thinkingLevel: strategy.thinkingLevel as any }, ...(gemma ? {} : { systemInstruction: prompt.systemInstruction }),
-        ...(structured ? { responseMimeType: 'application/json', responseJsonSchema: {
-          ...schema, properties: { ...schema.properties, questions: {
-            ...schema.properties.questions, minItems: config.questionCount, maxItems: config.questionCount,
-          } },
-        } } : {}),
-        maxOutputTokens: Math.max(8192, Math.min(65536, config.questionCount * 600 + 4096)),
+        // Exact outer array bounds multiply nested matching/rubric constraints
+        // and can make Google's schema compiler reject an otherwise valid quiz.
+        // The prompt requests the exact count; local validation enforces it.
+        ...(structured ? { responseMimeType: 'application/json', responseJsonSchema: schema } : {}),
+        // Thinking and the visible answer share the generation budget. HIGH
+        // reasoning can exhaust the old 8–10k cap before ten questions finish.
+        maxOutputTokens: structured
+          ? Math.max(32768, Math.min(65536, config.questionCount * 1200 + 16384))
+          : Math.max(8192, Math.min(65536, config.questionCount * 600 + 4096)),
         ...(!gemma && config.enableGrounding && !research ? { tools: [{ googleSearch: {} }] } : {}) },
     };
     const response = options.stream && structured
@@ -200,15 +205,19 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
     return err;
   }
 
-  const msg = String(err?.message || err);
-  const status = Number(err?.status ?? err?.error?.code ?? (typeof err?.code === 'number' ? err.code : undefined)
-    ?? /\b(400|401|403|404|429|500|502|503|504)\b/.exec(msg)?.[1]);
-  const code = String(err?.code ?? err?.error?.status ?? '');
+  // Fetch/SDK errors often hide the useful transport code in `cause`.
+  // Bound traversal even when a third-party error contains a cyclic cause.
+  const causes: any[] = [];
+  for (let cause = err; cause && causes.length < 4 && !causes.includes(cause); cause = cause.cause) causes.push(cause);
+  const msg = causes.map(cause => String(cause?.message || cause)).join(' ');
+  const status = Number(causes.map(cause => cause?.status ?? cause?.error?.code ?? (typeof cause?.code === 'number' ? cause.code : undefined))
+    .find(value => value !== undefined) ?? /\b(400|401|403|404|408|429|500|502|503|504)\b/.exec(msg)?.[1]);
+  const code = causes.map(cause => [cause?.code, cause?.error?.status, cause?.name].filter(value => value !== undefined).join(' ')).join(' ');
   const isGemma = modelId === 'gemma-4-31b-it';
   const modelLabel = isGemma ? 'Gemma 4 31B' : 'Gemini';
 
   // Use the HTTP status first: numbers inside quota values are not status codes.
-  if (errorKind(err).kind === 'quota') {
+  if (errorKind({ status, message: msg, code }).kind === 'quota') {
     return new QuizGenerationError(geminiQuotaMessage(err, modelId), 429, 'RATE_LIMIT_EXCEEDED');
   }
 
@@ -253,12 +262,16 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // 504 Deadline Exceeded / Timeout
-  if (status === 504 || err?.name === 'TimeoutError' || /DEADLINE_EXCEEDED|timeout|ETIMEDOUT|UND_ERR_HEADERS_TIMEOUT/i.test(msg + code)) {
+  if (status === 408 || status === 504 || /TimeoutError|DEADLINE_EXCEEDED|timed?\s*out|timeout|ETIMEDOUT/i.test(msg + code)) {
     return new QuizGenerationError(
-      `Permintaan pembuatan kuis dengan ${modelLabel} melebihi batas waktu eksekusi (504 Gateway Timeout). Silakan coba lagi.`,
+      `Respons ${modelLabel} belum selesai hingga batas waktu permintaan. Kurangi jumlah soal atau panjang materi, lalu coba kembali.`,
       504,
       'TIMEOUT'
     );
+  }
+
+  if (status === 502) {
+    return new QuizGenerationError(`Koneksi perantara ke ${modelLabel} terputus saat membuat kuis (502 Bad Gateway). Coba kembali setelah memeriksa koneksi atau kurangi jumlah soal.`, 502, 'PROVIDER_GATEWAY_ERROR');
   }
 
   // 500 Internal Error
@@ -271,9 +284,9 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // Network connection error
-  if (/failed to fetch|fetch failed|load failed|NetworkError|ECONNRESET|ENOTFOUND|network/i.test(msg + code)) {
+  if (/failed to fetch|fetch failed|load failed|NetworkError|ECONNRESET|ECONNABORTED|EPIPE|ENOTFOUND|UND_ERR_SOCKET|terminated|socket.*clos|Incomplete JSON segment at the end|network/i.test(msg + code)) {
     return new QuizGenerationError(
-      `Gagal terhubung ke server Google AI saat memanggil ${modelLabel}. Periksa koneksi internet dan apakah browser, VPN, atau ekstensi memblokir permintaan ke Google AI.`,
+      `Koneksi ke ${modelLabel} gagal atau terputus sebelum respons kuis selesai. Periksa koneksi internet; untuk respons yang lama, coba kurangi jumlah soal atau panjang materi.`,
       504,
       'NETWORK_ERROR'
     );

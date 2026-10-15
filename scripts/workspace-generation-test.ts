@@ -74,9 +74,8 @@ try {
       const config = requests.at(-1).generationConfig;
       const schema = quizSchemaFor(type);
       assert.equal(config.responseMimeType, 'application/json');
-      assert.deepEqual(config.responseJsonSchema, { ...schema, properties: { ...schema.properties,
-        questions: { ...schema.properties.questions, minItems: 1, maxItems: 1 } } });
-      assert.equal(config.maxOutputTokens, 8192);
+      assert.deepEqual(config.responseJsonSchema, schema);
+      assert.equal(config.maxOutputTokens, 32768);
       assert.equal(Boolean(requests.at(-1).tools?.length), grounded);
       assert.equal(quiz.usedGrounding, grounded);
       assert.equal(Boolean(quiz.webCheckedAt), grounded);
@@ -191,6 +190,7 @@ const commits: any[] = [];
 const preferences = { ...emptyWorkspace().preferences, grounding: false };
 const operationId = crypto.randomUUID();
 let cancelledInDatabase = false;
+let polledJob: any;
 const admin = {
   auth: { getUser: async () => ({ data: { user: { id: 'account-fixture' } }, error: null }) },
   from: (table: string) => {
@@ -201,7 +201,7 @@ const admin = {
         eq: (field: string, value: unknown) => { if (progressWrite) progressWrite.filters[field] = value; return query; },
         update: (data: unknown) => { progressWrite = { data, filters: {} }; accountProgressWrites.push(progressWrite); return query; },
         then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
-        single: async () => ({ data: { status: cancelledInDatabase ? 'cancelled' : 'running', lease_token: 'fixture-lease' }, error: null }) };
+        single: async () => ({ data: polledJob ?? { status: cancelledInDatabase ? 'cancelled' : 'running', lease_token: 'fixture-lease' }, error: null }) };
       return query;
     }
     const query: any = { select: () => query, eq: () => query, order: () => query,
@@ -299,6 +299,48 @@ try {
   response=await handler!(request({...preferences,keyId:accountFirst.id}));
   assert.equal(response.status,200);assert.equal(accountCalls-beforePaused,1,'Account bypasses a paused primary key');
   let providerSignal: AbortSignal | undefined;
+  const originalTimeout = AbortSignal.timeout;
+  const previousProviderCall = runtime.__accountGenerationCall;
+  const previousEdgeRuntime = runtime.EdgeRuntime;
+  try {
+    AbortSignal.timeout = ms => originalTimeout(ms === 145000 ? 25 : ms);
+    runtime.__accountGenerationCall = (params: any) => new Promise((_resolve, reject) => {
+      params.config.abortSignal.addEventListener('abort', () => reject(params.config.abortSignal.reason), { once: true });
+    });
+    const beforeTimeout = commits.length;
+    response = await handler!(request());
+    assert.equal(response.status, 504, 'Account deadline is a timeout, never a user cancellation');
+    assert.equal((await response.json()).code, 'TIMEOUT');
+    assert.ok(commits.length > beforeTimeout);
+    for (const commit of commits.slice(beforeTimeout)) {
+      assert.equal(commit.p_status, 'failed_after_dispatch');
+      assert.equal(commit.p_result.code, 'TIMEOUT');
+      assert.equal(commit.p_result.statusCode, 504);
+    }
+    let background: Promise<unknown> | undefined;
+    runtime.EdgeRuntime = { waitUntil: (promise: Promise<unknown>) => { background = promise; } };
+    const backgroundRequest = request();
+    const backgroundBody = await backgroundRequest.json();
+    response = await handler!(new Request(backgroundRequest.url, { method: 'POST', headers: backgroundRequest.headers,
+      body: JSON.stringify({ ...backgroundBody, action: 'start' }) }));
+    assert.equal(response.status, 202);
+    assert.ok(background);
+    await background;
+    const failedCommit = commits.at(-1);
+    assert.equal(failedCommit.p_status, 'failed_after_dispatch');
+    polledJob = { status: failedCommit.p_status, result: failedCommit.p_result };
+    response = await handler!(new Request(backgroundRequest.url, { method: 'POST', headers: backgroundRequest.headers,
+      body: JSON.stringify({ action: 'status', operationId }) }));
+    const polled = await response.json();
+    assert.equal(polled.code, 'TIMEOUT', 'Polling preserves the background failure diagnosis');
+    assert.equal(polled.statusCode, 504);
+    assert.match(polled.error, /batas waktu/);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    runtime.__accountGenerationCall = previousProviderCall;
+    runtime.EdgeRuntime = previousEdgeRuntime;
+    polledJob = undefined;
+  }
   let providerStarted!: () => void;
   const providerCalled = new Promise<void>(resolve => { providerStarted = resolve; });
   runtime.__accountGenerationCall = (params: any) => new Promise((_resolve, reject) => {

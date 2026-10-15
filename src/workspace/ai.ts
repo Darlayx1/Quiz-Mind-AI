@@ -127,8 +127,8 @@ export async function generateWorkspaceQuiz(input: QuizConfig, preferences: Pref
           }
           if (pollRes.error || ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(pollRes.status)) {
             throw Object.assign(new Error(pollRes.error || 'Operasi pembuatan kuis di server belum berhasil.'), {
-              code: 'GENERATION_FAILED',
-              status: 502
+              code: pollRes.code || 'GENERATION_FAILED',
+              status: pollRes.statusCode || 502
             });
           }
           if (pollRes.status === 'cancelled') {

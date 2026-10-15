@@ -42,9 +42,8 @@ try {
     assert.equal(requests.length, 1, 'Exactly one provider request for all ten questions');
     const generation = requests[0].generationConfig;
     assert.equal(generation.thinkingConfig.thinkingLevel, 'HIGH');
-    assert.deepEqual(generation.responseJsonSchema, { ...quizSchemaFor(type), properties: {
-      ...quizSchemaFor(type).properties, questions: { ...quizSchemaFor(type).properties.questions, minItems: 10, maxItems: 10 }
-    } });
+    assert.deepEqual(generation.responseJsonSchema, quizSchemaFor(type), 'Do not expand nested schemas with exact outer counts');
+    assert.equal(generation.maxOutputTokens, 32768, 'Allow room for HIGH thinking and complete answers');
     assert.equal(quiz.questions.length, 10);
     assert.deepEqual(progress, [10], 'Progress reflects complete question objects received in this chunk');
     assert.equal(quiz.generationMetrics![0].transport, 'stream');
@@ -69,7 +68,8 @@ try {
       assert.ok(prompt.systemInstruction.includes(quality));
     assert.equal((prompt.userPrompt.match(/Materi unik/g) || []).length, 1);
     assert.equal((prompt.userPrompt.match(/Preferensi unik/g) || []).length, 1);
-    assert.equal(requests[0].generationConfig.responseJsonSchema.properties.questions.minItems, 10);
+    assert.equal(requests[0].generationConfig.responseJsonSchema.properties.questions.minItems, undefined);
+    assert.ok(requests[0].contents[0].parts[0].text.includes('Generate exactly 10 question(s).'));
   }
   for (const model of ['gemma-4-31b-it', 'custom-model']) {
     requests = [];
@@ -86,7 +86,7 @@ try {
   });
   await assert.rejects(generateQuizBatch(base, 'fixture-key-never-display', [], undefined, undefined, undefined, { stream: true }),
     (error: any) => error.code === 'INCOMPLETE_RESPONSE' && error.diagnostics.finishReason === 'MAX_TOKENS'
-      && error.diagnostics.thinkingTokens === 8000 && error.diagnostics.maxOutputTokens === 10096);
+      && error.diagnostics.thinkingTokens === 8000 && error.diagnostics.maxOutputTokens === 32768);
   assert.equal(requests.length, 1, 'Output exhaustion is terminal, never a hidden retry');
   globalThis.fetch = successFetch;
   assert.ok(generationRiskFactors({ ...base, questionType: 'essay', questionDistribution: { essay: 10 }, difficulty: 'hard' }).includes('essay-rubric'));
