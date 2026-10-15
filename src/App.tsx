@@ -21,7 +21,7 @@ import type { GenerationJob, QuizProgress } from './workspace/types.js';
 import { resumableQuiz } from './resumableSession.js';
 import { quizRegeneration } from './quizRegeneration.js';
 import { AnimatePresence, m } from 'motion/react';
-import { useMotionPreferences, useVisualTransition } from './ui/motion.js';
+import { useVisualTransition } from './ui/motion.js';
 
 export default function App() {
   const w = useWorkspace();
@@ -36,7 +36,6 @@ export default function App() {
   const [cancelling, setCancelling] = useState(false);
   const [toast, setToastState] = useState<{ kind: 'success' | 'error'; message: string; scope: string } | null>(null);
   const setToast = (next: { kind: 'success' | 'error'; message: string } | null) => setToastState(next ? { ...next, scope: w.scope } : null);
-  const { reduced: reducedMotion } = useMotionPreferences();
   const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number; startedAt: number; isSaving: boolean; preferences?: import('./workspace/types.js').Preferences }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0, startedAt: 0, isSaving: false });
   const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
   const activeGeneration = useRef<Promise<void> | null>(null);
@@ -304,6 +303,6 @@ export default function App() {
     </PageContainer>
     {!examActive && !processingMode && <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>}
     {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
-    <AnimatePresence key={`toast:${w.scope}`}>{toast?.scope === w.scope && <m.div key={toast.message} initial={reducedMotion ? false : { opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: reducedMotion ? 0 : .2 }} className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</m.div>}</AnimatePresence>
+    <AnimatePresence key={`toast:${w.scope}`}>{toast?.scope === w.scope && <m.div key={toast.message} initial={{ opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: .2 }} className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</m.div>}</AnimatePresence>
   </div>;
 }

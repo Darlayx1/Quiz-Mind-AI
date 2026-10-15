@@ -11,10 +11,10 @@ import { DurationControl } from './DurationControl.js';
 import { effectiveCount } from '../questionComposition.js';
 import { questionLabels } from '../questionState.js';
 import { defaultEvaluationSettings } from '../evaluationSettings.js';
-import { ArrowLeft, ArrowRight, BrainCircuit, Check, ChevronLeft, ChevronRight, ShieldCheck, Sparkles, Zap, GraduationCap, Lightbulb } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BrainCircuit, Check, ChevronLeft, ChevronRight, ShieldCheck, Sparkles } from 'lucide-react';
 import { QuizComposer } from './QuizComposer.js';
 import { useComposerDraft } from './useComposerDraft.js';
-import { applyQuickStart, composerSources, QUICK_STARTS } from '../composerDraft.js';
+import { composerSources } from '../composerDraft.js';
 import { buildComposerConfig, configurationState } from '../configurationState.js';
 import { LanguageStyleSelector } from './LanguageStyleSelector.js';
 import { LANGUAGE_STYLES } from '../languageStyles.js';
@@ -67,7 +67,6 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
     <div className="home-heading"><div className="eyebrow"><span className="home-eyebrow-line" /> RUANG UNTUK RASA INGIN TAHU</div><h1 ref={heading} tabIndex={-1}>Apa yang ingin Anda<br /><span>pelajari hari ini?</span></h1><p>Ubah topik, catatan, atau materi Anda menjadi kuis yang bermakna.</p></div>
     {errorMessage && <div className="form-alert" role="alert"><strong>Kuis belum berhasil dibuat</strong><p>{errorMessage}</p></div>}
     <QuizComposer draft={draft} patch={patch} onContinue={() => void navigate('configuration')} busy={transitioning || isLoading} saving={saving || pending} saveError={saveError} />
-    <section className="quick-start-section" aria-labelledby="quick-start-title"><div className="home-section-heading"><h2 id="quick-start-title">Mulai dengan ritme Anda</h2><span>Preset opsional</span></div><div className="quick-starts">{QUICK_STARTS.map((preset, i) => { const Icon = [Zap, GraduationCap, Lightbulb][i]; return <button type="button" key={preset.id} aria-pressed={draft.preset === preset.id} onClick={() => patch(d => applyQuickStart(d, preset.id))}><span className="preset-icon"><Icon size={19} /></span><span><strong>{preset.label}</strong><small>{preset.description}</small></span><ArrowRight size={16} /></button>; })}</div></section>
     {continueLearning}
     <div className="home-ai-note"><BrainCircuit size={16} /><span>{modelName(model)}</span><span className="home-note-separator">·</span><button onClick={onOpenSettings}>{hasApiKey ? 'Kelola AI' : 'Hubungkan AI Anda'}<ArrowRight size={13} /></button></div>
   </div>;
@@ -118,7 +117,7 @@ export const QuizCreator: React.FC<QuizCreatorProps> = ({ onGenerate, isLoading,
         <div className="summary-ai-status"><BrainCircuit size={17} /><span>{hasApiKey ? 'AI siap' : 'AI belum terhubung'}<small>{modelName(model)}</small></span></div>
         <p className={`summary-readiness ${missingReason ? 'needs-attention' : ''}`} role="status">{isLoading || transitioning ? 'Menyiapkan kuis…' : missingReason ? 'Pengaturan perlu dilengkapi' : 'Siap dibuat'}{!missingReason && !isLoading && !transitioning && <Check size={15} />}</p>
         <Button type="submit" label={isLoading || transitioning ? 'Menyiapkan kuis…' : 'Buat kuis dengan AI'} icon={<ArrowRight size={17} />} iconPosition="trailing" className="w-full generate-button" disabled={!canGenerate || transitioning} aria-describedby="generate-help" />
-        <p id="generate-help" className="menu-submit-help">{missingReason ? <button type="button" className="validation-link" onClick={() => { if (sources.error) void navigate('creator'); else if (state.error) { const field = document.getElementById(state.errorTarget); field?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); if (field?.matches('input,textarea,button')) field.focus({ preventScroll: true }); } else onOpenSettings(); }}>{missingReason}</button> : 'Pembuatan kuis menggunakan kuota AI Anda.'}</p><p className="menu-privacy-note"><ShieldCheck size={13} />{storageLabel}</p>
+        <p id="generate-help" className="menu-submit-help">{missingReason ? <button type="button" className="validation-link" onClick={() => { if (sources.error) void navigate('creator'); else if (state.error) { const field = document.getElementById(state.errorTarget); field?.scrollIntoView({ block: 'center', behavior: 'smooth' }); if (field?.matches('input,textarea,button')) field.focus({ preventScroll: true }); } else onOpenSettings(); }}>{missingReason}</button> : 'Pembuatan kuis menggunakan kuota AI Anda.'}</p><p className="menu-privacy-note"><ShieldCheck size={13} />{storageLabel}</p>
       </aside>
       <div className={`mobile-action-bar ${keyboardEditing ? 'editing' : ''}`}><a href="#quiz-summary" className="mobile-summary-link" aria-label="Lihat ringkasan kuis"><strong>{validCount ? questionCount : '—'} soal · {difficultyName(difficulty)}</strong><span>{missingReason ? 'Lengkapi pengaturan' : timerLabel + (sequential && !unlimited ? ' / soal' : '')} · Ringkasan ↑</span></a><Button type="submit" label={isLoading || transitioning ? 'Menyiapkan kuis…' : 'Buat kuis dengan AI'} icon={<ArrowRight size={16} />} iconPosition="trailing" className="generate-button" disabled={!canGenerate || transitioning} aria-describedby="generate-help" /></div>
     </form>

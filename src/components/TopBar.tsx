@@ -11,7 +11,6 @@ import { Button } from "./Button.js";
 import type { AppView } from '../types/app.js';
 import { useRef } from 'react';
 import { useSelectionIndicator } from '../ui/motion.js';
-import { MotionToggle } from './MotionPrimitives.js';
 interface TopBarProps {
   activeView: AppView;
   pageTitle?: string;
@@ -45,7 +44,6 @@ export const TopBar: React.FC<TopBarProps> = ({
     <div className="header-inner">
       <button type="button" className="preparation-back" aria-label={processingMode ? (isCancelling ? 'Membatalkan proses…' : 'Batalkan proses dan kembali') : 'Kembali ke konfigurasi'} aria-busy={processingMode ? isCancelling : undefined} disabled={processingMode ? isCancelling : isBusy} onClick={onBack}><ArrowLeft size={21} aria-hidden="true" /></button>
       <h1 id={processingMode ? 'processing-title' : 'preparation-title'}>{pageTitle || 'Persiapan Kuis'}</h1>
-      <MotionToggle />
     </div>
   </header>
 ) : (
@@ -72,16 +70,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <LayoutGrid size={16} /> Beranda
         </button>}
-        <button
+        {activeView !== "configuration" && <button
           aria-current={activeView === "history" ? "page" : undefined}
           disabled={isBusy || activeView === "runner"}
           onClick={() => onNavigate("history")}
         >
           <History size={16} /> Riwayat
-        </button>
+        </button>}
       </nav>
       <div className="header-actions">
-        <MotionToggle />
         <button
           onClick={onOpenSettings}
           className="header-settings-button"
@@ -98,7 +95,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             {storageLabel}
           </span>
         ) : (
-          activeView !== "runner" && (
+          activeView === "results" && (
             <Button
               label="Kuis baru"
               icon={<Plus size={16} />}

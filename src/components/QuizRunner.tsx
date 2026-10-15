@@ -125,9 +125,9 @@ export const QuizRunner: React.FC<QuizRunnerProps> = ({quiz,onSubmit,onQuit,atte
     setCurrentIndex(index);
     setIsMobileDrawerOpen(false);
     if (sequential) {
-      window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      document.getElementById('question-' + quiz.questions[index].id)?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      document.getElementById('question-' + quiz.questions[index].id)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
     save();
   };

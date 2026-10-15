@@ -5,13 +5,11 @@ import { Button } from './Button.js';
 import { MaterialContextEditor } from './MaterialContextEditor.js';
 import { attachmentFingerprint, attachmentKind, FILE_ACCEPT, ingestAttachment, MAX_FILES, validateAttachment } from '../materialIngestion.js';
 import { composerSources, type ComposerDraft } from '../composerDraft.js';
-import { useMotionPreferences } from '../ui/motion.js';
 
 function AttachmentRow({ className, children }: { className: string; children: ReactNode }) {
   const present = useIsPresent();
-  const { reduced } = useMotionPreferences();
-  return <m.li inert={!present} className={className} initial={reduced ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
-    exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }} transition={{ duration: reduced ? 0 : .22 }}>
+  return <m.li inert={!present} className={className} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+    exit={{ opacity: 0, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }} transition={{ duration: .22 }}>
     {children}
   </m.li>;
 }
@@ -26,7 +24,18 @@ export function QuizComposer({ draft, patch, onContinue, busy, saving, saveError
   const live = useRef(draft); live.current = draft;
   const operations = useRef(new Map<string, AbortController>()), alive = useRef(true), queue = useRef(Promise.resolve());
   useEffect(() => { alive.current = true; return () => { alive.current = false; operations.current.forEach(controller => controller.abort()); }; }, []);
-  useEffect(() => { if (textarea.current) { textarea.current.style.height = 'auto'; textarea.current.style.height = Math.min(280, Math.max(136, textarea.current.scrollHeight)) + 'px'; } }, [draft.topic]);
+  useEffect(() => {
+    const element = textarea.current;
+    if (!element) return;
+    const resize = () => { element.style.height = 'auto'; element.style.height = Math.min(280, element.scrollHeight) + 'px'; };
+    resize();
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth !== width) { width = element.clientWidth; resize(); }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [draft.topic]);
   const change = (fn: (d: ComposerDraft) => ComposerDraft) => { if (!alive.current) return; live.current = fn(live.current); patch(fn); };
   const remove = (id: string) => { operations.current.get(id)?.abort(); change(d => ({ ...d, attachments: d.attachments.filter(a => a.id !== id) })); };
   const upload = (files: File[]) => {
@@ -64,7 +73,7 @@ export function QuizComposer({ draft, patch, onContinue, busy, saving, saveError
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
       onDrop={e => { e.preventDefault(); setDragging(false); if (!busy) upload([...e.dataTransfer.files]); }}>
       <label htmlFor="composer-topic" className="sr-only">Topik atau instruksi kuis</label>
-      <textarea ref={textarea} id="composer-topic" placeholder="Masukkan topik atau instruksi kuis..." value={draft.topic} maxLength={6000} disabled={busy} onChange={e => patch({ topic: e.target.value })} aria-describedby="composer-help" />
+      <textarea ref={textarea} id="composer-topic" rows={1} placeholder="Masukkan topik atau instruksi kuis..." value={draft.topic} maxLength={6000} disabled={busy} onChange={e => patch({ topic: e.target.value })} aria-describedby="composer-help" />
       <ul className="attachment-list" aria-label="Lampiran kuis"><AnimatePresence initial={false}>{draft.attachments.map(file => <AttachmentRow key={file.id} className={`attachment-chip ${file.status}`}>
         {file.status === 'processing' ? <LoaderCircle size={18} className="processing-icon" /> : file.kind === 'image' ? <ImageIcon size={18} /> : <FileText size={18} />}
         <div><button type="button" className="attachment-name" title={file.name} disabled={file.status !== 'ready'} onClick={() => setPreview(file.id)}>{file.name}</button><span>{file.status === 'ready' ? file.kind === 'image' ? 'Teks OCR siap · periksa hasil' : 'Teks siap · lihat hasil' : file.status === 'processing' ? 'Membaca materi…' : 'Gagal dibaca'}</span>{file.error && <p role="alert">{file.error}</p>}</div>

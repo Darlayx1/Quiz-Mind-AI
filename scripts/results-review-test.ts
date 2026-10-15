@@ -146,12 +146,14 @@ test('Export JSON retains exact nested answers, evaluations, revisions and sourc
     assert.equal(await blob!.text(), JSON.stringify(result, null, 2));
   } finally { URL.createObjectURL = originalURL; URL.revokeObjectURL = originalRevoke; globalThis.document = originalDocument; }
 });
-test('Rules frontmatter and print/reduced-motion safeguards persist', () => {
+test('Rules frontmatter and print safeguards persist', () => {
   const rules = readFileSync('.agents/rules/anti-loop.md', 'utf8');
   assert.match(rules, /^---\r?\ntrigger: always_on\r?\ndescription: "[^"\n]+"\r?\n---/);
   const css = readFileSync('src/index.css', 'utf8');
   assert.match(css, /@media print[\s\S]*\.results-page \.review-filtered \{ display: block;/);
-  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.results-page/);
+  assert.match(css, /\.results-page \.result-score-value strong \{ font-size: 60px; color: black; background: none; -webkit-text-fill-color: black;/);
+  const motionCss = readFileSync('src/styles/motion.css', 'utf8');
+  assert.match(motionCss, /@media print[\s\S]*animation: none !important; transition: none !important;/);
 });
 
 test('Answer discussion preserves all seven types and safely encodes complete prompts', () => {

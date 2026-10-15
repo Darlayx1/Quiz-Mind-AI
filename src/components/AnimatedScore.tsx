@@ -5,12 +5,12 @@ import { motionTiming, useMotionPreferences } from '../ui/motion.js';
 const presented = new Set<string>();
 export function AnimatedScore({ value, resultId }: { value: number; resultId: string }) {
   const number = useRef<HTMLSpanElement>(null);
-  const { reduced, hidden } = useMotionPreferences();
+  const { hidden } = useMotionPreferences();
   useLayoutEffect(() => {
     const element = number.current;
     if (!element) return;
     element.textContent = String(value);
-    if (presented.has(resultId) || reduced || hidden) { presented.add(resultId); return; }
+    if (presented.has(resultId) || hidden) { presented.add(resultId); return; }
     presented.add(resultId);
     if (presented.size > 100) presented.delete(presented.values().next().value!);
     const summary = element.closest<HTMLElement>('.result-summary');
@@ -29,6 +29,6 @@ export function AnimatedScore({ value, resultId }: { value: number; resultId: st
       cancelAnimationFrame(frame); clearTimeout(timer); element.textContent = String(value);
       if (summary) delete summary.dataset.celebrate;
     };
-  }, [value, resultId, reduced, hidden]);
+  }, [value, resultId, hidden]);
   return <strong><span ref={number} aria-hidden="true">{value}</span><span className="sr-only">{value}</span></strong>;
 }

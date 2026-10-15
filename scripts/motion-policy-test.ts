@@ -19,7 +19,7 @@ runtime.__motionPolicyHooks = {
   useRef: (current: unknown) => ({ current }),
   useEffect: (effect: () => void | (() => void)) => { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); },
   useLayoutEffect: (effect: () => void | (() => void)) => { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); },
-  useSyncExternalStore: (subscribe: (listener: () => void) => () => void, snapshot: () => number) => {
+  useSyncExternalStore: (subscribe: (listener: () => void) => () => void, snapshot: () => boolean) => {
     cleanups.push(subscribe(() => updates++)); return snapshot();
   },
 };
@@ -41,13 +41,10 @@ function animatedElement() {
   return { ref: { current: element }, resolve, calls: () => calls };
 }
 try {
-  assert.deepEqual(policy.useMotionPreferences(), { reduced: false, paused: false, hidden: false });
-  policy.toggleAmbientMotion();
-  assert.equal(updates, 1, 'Pause immediately notifies subscribers');
-  assert.equal(policy.useMotionPreferences().paused, true);
-  policy.toggleAmbientMotion();
+  assert.deepEqual(policy.useMotionPreferences(), { hidden: false });
   media.matches = true; mediaChange();
-  assert.equal(policy.useMotionPreferences().reduced, true, 'Live OS preference updates are observed');
+  assert.deepEqual(policy.useMotionPreferences(), { hidden: false }, 'OS motion settings do not disable application animations');
+  assert.equal(mediaQueries.length, 0, 'Application does not read system motion preferences');
   doc.hidden = true; doc.dispatchEvent(new Event('visibilitychange'));
   assert.equal(policy.useMotionPreferences().hidden, true);
   cleanup();
@@ -58,7 +55,9 @@ try {
   let closed = 0;
   const reduced = animatedElement();
   policy.useAnimatedDismiss(reduced.ref, () => closed++)();
-  assert.equal(closed, 1); assert.equal(reduced.calls(), 0, 'Reduced motion dismisses without waiting');
+  assert.equal(closed, 0); assert.equal(reduced.calls(), 1, 'Dismissal still animates when OS reduced motion is enabled');
+  reduced.resolve(); await Promise.resolve();
+  assert.equal(closed, 1);
   cleanup(); media.matches = false; doc.hidden = false;
 
   const normal = animatedElement();
@@ -79,9 +78,9 @@ try {
   assert.equal(entrance.calls(), 1); cleanup();
   media.matches = true;
   policy.useVisualTransition(entrance.ref, 'history');
-  assert.equal(entrance.calls(), 1, 'Reduced motion does not create an entrance animation');
+  assert.equal(entrance.calls(), 2, 'Entrance animation remains enabled with OS reduced motion');
   cleanup();
-  console.log('PASS: live reduced motion, user pause, document visibility, listener cleanup, immediate reduced dismissal, duplicate dismissal guard, unmount cancellation and entrance policy.');
+  console.log('PASS: animations ignore OS motion settings, document visibility, listener cleanup, animated dismissal, duplicate dismissal guard, unmount cancellation and entrance policy.');
 } finally {
   cleanup(); runtime.window = originalWindow; runtime.document = originalDocument; delete runtime.__motionPolicyHooks;
 }

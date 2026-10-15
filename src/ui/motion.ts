@@ -5,41 +5,27 @@ export const motionTiming = {
   ease: 'cubic-bezier(.16,1,.3,1)',
 } as const;
 
-let paused = false;
-let mediaPreference: MediaQueryList | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach(listener => listener());
-const snapshot = () => typeof window === 'undefined' ? 1
-  : ((mediaPreference ?? window.matchMedia('(prefers-reduced-motion: reduce)')).matches ? 1 : 0)
-    | (paused ? 2 : 0) | (document.hidden ? 4 : 0);
+const snapshot = () => typeof document !== 'undefined' && document.hidden;
 function subscribe(listener: () => void) {
-  if (!listeners.size) {
-    mediaPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
-    mediaPreference.addEventListener('change', notify);
-    document.addEventListener('visibilitychange', notify);
-  }
+  if (!listeners.size) document.addEventListener('visibilitychange', notify);
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
-    if (!listeners.size) {
-      mediaPreference?.removeEventListener('change', notify);
-      mediaPreference = null;
-      document.removeEventListener('visibilitychange', notify);
-    }
+    if (!listeners.size) document.removeEventListener('visibilitychange', notify);
   };
 }
 export function useMotionPreferences() {
-  const flags = useSyncExternalStore(subscribe, snapshot, () => 1);
-  return { reduced: Boolean(flags & 1), paused: Boolean(flags & 2), hidden: Boolean(flags & 4) };
+  const hidden = useSyncExternalStore(subscribe, snapshot, () => false);
+  return { hidden };
 }
-export function toggleAmbientMotion() { paused = !paused; notify(); }
 
 /** Dismiss presentation only; business actions must never wait for this callback. */
 export function useAnimatedDismiss<T extends HTMLElement>(ref: RefObject<T | null>, onClose: () => void, enabled = true) {
   const callback = useRef(onClose); callback.current = onClose;
   const running = useRef(false);
   const cleanup = useRef<() => void>(() => {});
-  const { reduced } = useMotionPreferences();
   useEffect(() => {
     running.current = false;
     return () => { cleanup.current(); running.current = false; };
@@ -47,7 +33,7 @@ export function useAnimatedDismiss<T extends HTMLElement>(ref: RefObject<T | nul
   return () => {
     if (!enabled || running.current) return;
     const element = ref.current;
-    if (!element || reduced || !element.animate) { callback.current(); return; }
+    if (!element || !element.animate) { callback.current(); return; }
     running.current = true;
     element.dataset.closing = 'true';
     const animation = element.animate([{ opacity: 1, transform: 'translateY(0) scale(1)' },
@@ -64,7 +50,6 @@ export function useAnimatedDismiss<T extends HTMLElement>(ref: RefObject<T | nul
 /** FLIP for existing keyed rows: moving an item preserves its focused button. */
 export function useListReflow(ref: RefObject<HTMLElement | null>, identity: string) {
   const previous = useRef(new Map<string, { left: number; top: number }>());
-  const { reduced } = useMotionPreferences();
   useLayoutEffect(() => {
     const animations: Animation[] = [];
     const next = new Map<string, { left: number; top: number }>();
@@ -78,7 +63,7 @@ export function useListReflow(ref: RefObject<HTMLElement | null>, identity: stri
       const rect = child.getBoundingClientRect(), old = previous.current.get(key);
       const position = { left: rect.left - bounds.left, top: rect.top - bounds.top };
       next.set(key, position);
-      if (reduced || !child.animate || rect.top > window.innerHeight || rect.bottom < 0) return;
+      if (!child.animate || rect.top > window.innerHeight || rect.bottom < 0) return;
       if (old && (old.left !== position.left || old.top !== position.top)) {
         animations.push(child.animate([{ transform: `translate(${old.left - position.left}px,${old.top - position.top}px)` },
           { transform: 'translate(0,0)' }], { duration: motionTiming.enter, easing: motionTiming.ease }));
@@ -89,25 +74,24 @@ export function useListReflow(ref: RefObject<HTMLElement | null>, identity: stri
     });
     previous.current = next;
     return () => animations.forEach(animation => animation.cancel());
-  }, [ref, identity, reduced]);
+  }, [ref, identity]);
 }
 
 /** Animate the existing node: inputs, draft ownership and domain effects stay mounted. */
 export function useVisualTransition<T extends HTMLElement>(ref: RefObject<T | null>, identity: string | number, distance = 12) {
-  const { reduced } = useMotionPreferences();
   const previous = useRef(identity);
   useLayoutEffect(() => {
     const element = ref.current;
     const backwards = typeof identity === 'number' && typeof previous.current === 'number' && identity < previous.current;
     previous.current = identity;
-    if (!element || reduced || !element.animate) return;
+    if (!element || !element.animate) return;
     const frames = distance === 0 ? [{ opacity: 0 }, { opacity: 1 }] : [
       { opacity: 0, transform: `translate${typeof identity === 'number' ? 'X' : 'Y'}(${backwards ? -distance : distance}px)` },
       { opacity: 1, transform: 'translate(0,0)' },
     ];
     const animation = element.animate(frames, { duration: motionTiming.enter, easing: motionTiming.ease });
     return () => animation.cancel();
-  }, [identity, reduced, ref, distance]);
+  }, [identity, ref, distance]);
 }
 
 /** Measured indicator follows selection without mounting a second interactive control. */
@@ -133,7 +117,7 @@ export function useSelectionIndicator<T extends HTMLElement>(ref: RefObject<T | 
 }
 
 export function useAmbientActivity(ref: RefObject<HTMLElement | null>) {
-  const { reduced, paused, hidden } = useMotionPreferences();
+  const { hidden } = useMotionPreferences();
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -143,5 +127,5 @@ export function useAmbientActivity(ref: RefObject<HTMLElement | null>) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [ref]);
-  return !reduced && !paused && !hidden;
+  return !hidden;
 }
