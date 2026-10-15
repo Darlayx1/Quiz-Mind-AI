@@ -14,6 +14,8 @@ interface TopBarProps {
   pageTitle?: string;
   onBack?: () => void;
   isBusy?: boolean;
+  processingMode?: 'generation' | 'evaluation';
+  isCancelling?: boolean;
   onNavigate: (view: "creator" | "history") => void;
   onOpenSettings: () => void;
   storageLabel: string;
@@ -30,11 +32,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   onNewQuizClick,
   pageTitle,
   onBack,
-}) => activeView === 'preparation' ? (
+  processingMode,
+  isCancelling,
+}) => activeView === 'preparation' || processingMode ? (
   <header className="app-header preparation-header print:hidden">
     <div className="header-inner">
-      <button type="button" className="preparation-back" aria-label="Kembali ke konfigurasi" disabled={isBusy} onClick={onBack}><ArrowLeft size={21} aria-hidden="true" /></button>
-      <h1 id="preparation-title">{pageTitle || 'Persiapan Kuis'}</h1>
+      <button type="button" className="preparation-back" aria-label={processingMode ? (isCancelling ? 'Membatalkan proses…' : 'Batalkan proses dan kembali') : 'Kembali ke konfigurasi'} aria-busy={processingMode ? isCancelling : undefined} disabled={processingMode ? isCancelling : isBusy} onClick={onBack}><ArrowLeft size={21} aria-hidden="true" /></button>
+      <h1 id={processingMode ? 'processing-title' : 'preparation-title'}>{pageTitle || 'Persiapan Kuis'}</h1>
       <span className="preparation-header-spacer" aria-hidden="true" />
     </div>
   </header>

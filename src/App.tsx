@@ -32,10 +32,12 @@ export default function App() {
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
-  const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0 });
+  const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number; startedAt: number; isSaving: boolean; preferences?: import('./workspace/types.js').Preferences }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0, startedAt: 0, isSaving: false });
   const abort = useRef<AbortController | null>(null); const scope = useRef(w.scope); scope.current = w.scope;
   const activeGeneration = useRef<Promise<void> | null>(null);
   const activeJobId = useRef<string | null>(null);
+  const generationReturnView = useRef<AppView>('configuration');
+  const workspaceEpoch = useRef(0);
   const restoredScope = useRef<string | null>(null);
   const attemptedProgress = useRef('');
   const resettingRemedial = useRef(false);
@@ -45,6 +47,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
+    workspaceEpoch.current++;
     abort.current?.abort(new Error('Sesi atau ruang penyimpanan berubah. Operasi sebelumnya dihentikan.')); abort.current = null;
     setLoading(false); setIsEvaluating(false); setActiveEvaluation(null); setCancelling(false); setCancellingEvaluation(false); setToast(null); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
   }, [w.scope, w.mode]);
@@ -57,7 +60,7 @@ export default function App() {
     }
   }, [w.ready, w.scope, w.data.progress, w.data.history]);
   useEffect(() => { if (w.passwordRecovery || w.authError) setSettings('account'); }, [w.passwordRecovery, w.authError]);
-  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view, loading, isEvaluating]);
   const persistDraft = useCallback((draft: Record<string, unknown>) => w.update(d => ({ ...d, draft }), w.scope), [w.update, w.scope]);
   const persistProgress = useCallback((progress: QuizProgress) => {
     const serialized = JSON.stringify(progress); if (attemptedProgress.current === serialized) return;
@@ -70,17 +73,19 @@ export default function App() {
     const origin = w.scope; const repository = w.repository;
     const preferences = structuredClone(resume?.preferences || originalPreferences || w.data.preferences);
     const controller = new AbortController(); abort.current = controller;
-    setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0 });
+    generationReturnView.current = view;
     const started = Date.now(); let currentJob: GenerationJob | undefined;
+    setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0, startedAt: started, isSaving: false, preferences });
     activeJobId.current = null;
     try {
       const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
         controller.signal.throwIfAborted();
         if (scope.current !== origin || abort.current !== controller) throw new Error('Operasi sebelumnya sudah dihentikan.');
         currentJob = job; activeJobId.current = job.id; await w.update(d => ({ ...d, job }), origin);
-      }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration({ config, completed }); });
+      }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration(previous => ({ ...previous, completed })); });
       controller.signal.throwIfAborted(); if (scope.current !== origin || abort.current !== controller) return;
       const savedQuiz: Quiz = { ...generated, generationConfig: structuredClone(currentJob?.config ?? config), generationPreferences: structuredClone(preferences) };
+      setGeneration(previous => ({ ...previous, isSaving: true }));
       await w.update(d => ({ ...d, job: null, history: [{ quiz: savedQuiz, savedAt: new Date().toISOString() }, ...d.history.filter(h => h.quiz.id !== generated.id)],
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: generated.model!, status: 'success' as const, durationMs: Date.now() - started }, ...d.activity].slice(0, 2000) }), origin);
       controller.signal.throwIfAborted();
@@ -95,16 +100,19 @@ export default function App() {
       await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
           detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
-    } finally { if (scope.current === origin && abort.current === controller) { setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
+    } finally { if (scope.current === origin && abort.current === controller) { if (!controller.signal.aborted) setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
   };
   const startGeneration = (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
+    if (abort.current || loading || isEvaluating || cancelling) return;
     const task = generate(config, resume, originalPreferences);
     activeGeneration.current = task;
     void task.finally(() => { if (activeGeneration.current === task) activeGeneration.current = null; });
   };
   const cancelGeneration = async () => {
-    if (cancelling || !abort.current) return;
+    if (cancelling || !abort.current || abort.current.signal.aborted) return;
     const origin = scope.current;
+    const epoch = workspaceEpoch.current;
+    const returnView = generationReturnView.current;
     const jobId = activeJobId.current;
     const task = activeGeneration.current;
     setCancelling(true);
@@ -113,8 +121,9 @@ export default function App() {
       ? accountRpc(origin, 'qm_cancel_job', { p_id: jobId })
       : Promise.resolve();
     const [, serverResult] = await Promise.allSettled([task ?? Promise.resolve(), cancelOnServer]);
-    if (scope.current !== origin) return;
-    setView('creator');
+    if (scope.current !== origin || workspaceEpoch.current !== epoch) return;
+    setView(returnView);
+    setLoading(false);
     if (serverResult.status === 'fulfilled') {
       setError('');
       setToast({ kind: 'success', message: 'Pembuatan kuis berhasil dibatalkan.' });
@@ -125,13 +134,15 @@ export default function App() {
   };
   const saveResult = (next:QuizResult,origin=w.scope) => w.update(d=>({...d,progress:null,history:d.history.map(h=>h.quiz.id===next.quiz.id?{...h,lastResult:next,savedAt:new Date().toISOString(),attempts:[...(h.attempts??(h.lastResult?[h.lastResult]:[])).filter(r=>r.submission.completedAt!==next.submission.completedAt),next]}:h)}),origin);
   const cancelEvaluation = () => {
-    if (cancellingEvaluation || !abort.current) return;
+    if (cancellingEvaluation || !abort.current || abort.current.signal.aborted) return;
     setCancellingEvaluation(true);
     abort.current.abort(new DOMException('Evaluasi kuis dibatalkan pengguna.', 'AbortError'));
   };
-  const runEvaluation = async (source:QuizResult,targets?:string[]) => {
-    if(isEvaluating||loading||!w.repository||!w.ready)return;
-    const origin=w.scope,repository=w.repository,controller=new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
+  const runEvaluation = async (source:QuizResult,targets?:string[],prepared?:{controller:AbortController;origin:string;startedAt:number}) => {
+    if((!prepared&&(isEvaluating||abort.current))||loading||!w.repository||!w.ready)return;
+    if(prepared&&(scope.current!==prepared.origin||abort.current!==prepared.controller||prepared.controller.signal.aborted))return;
+    const origin=w.scope,repository=w.repository,controller=prepared?.controller??new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
+    const started=prepared?.startedAt??Date.now();
     const targetIds = targets ?? Object.entries(source.evaluations ?? {})
       .filter(([, e]) => e.earnedPoints === null && e.status !== 'needs_review')
       .map(([id]) => id);
@@ -142,6 +153,7 @@ export default function App() {
       if (idx >= 0) qNum = idx + 1;
     }
     setActiveEvaluation({
+      startedAt: started,
       targetIds,
       totalTargets: targetIds.length,
       completedCount: 0,
@@ -150,7 +162,6 @@ export default function App() {
       savingConfirmed: true,
       isSavingCheckpoint: false,
     });
-    const started=Date.now();
     try{
       const evaluated=await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async (next,meta)=>{
         controller.signal.throwIfAborted();
@@ -166,6 +177,7 @@ export default function App() {
             totalTargets: meta ? meta.total : prev.totalTargets,
           } : null);
         }
+        controller.signal.throwIfAborted();
       });
       controller.signal.throwIfAborted();if(scope.current!==origin||abort.current!==controller)return;
       const failed=Object.values(evaluated.evaluations??{}).some(e=>e.status==='failed');
@@ -183,23 +195,34 @@ export default function App() {
     }
   };
   const finish = (submission:QuizSubmission) => {
-    if(!quiz)return;const settings=quiz.evaluationSettings??w.data.preferences.evaluation;
+    if(!quiz||abort.current||isEvaluating)return;const settings=quiz.evaluationSettings??w.data.preferences.evaluation;
     const next=buildResult(quiz,submission,undefined,settings);setResult(next);setView('results');
     const needsEval=Boolean(settings?.enabled&&(next.pendingCount??0)>0);
+    const origin=w.scope,controller=new AbortController(),startedAt=Date.now();
     if(needsEval){
+      abort.current=controller;
       const targetIds=Object.entries(next.evaluations??{}).filter(([,e])=>e.earnedPoints===null&&e.status!=='needs_review').map(([id])=>id);
-      setActiveEvaluation({targetIds,totalTargets:targetIds.length,completedCount:0,isReEvaluation:false,savingConfirmed:false,isSavingCheckpoint:false});
+      setActiveEvaluation({startedAt,targetIds,totalTargets:targetIds.length,completedCount:0,isReEvaluation:false,savingConfirmed:false,isSavingCheckpoint:false});
       setIsEvaluating(true);
     }
-    void saveResult(next).then(()=>{
+    void saveResult(next,origin).then(()=>{
+      if(scope.current!==origin||(needsEval&&abort.current!==controller))return;
       if(needsEval){
-        setActiveEvaluation(prev=>prev?{...prev,savingConfirmed:true}:null);
-        void runEvaluation(next);
+        if(controller.signal.aborted){
+          setError('Evaluasi dibatalkan. Jawaban tetap tersimpan.');
+          setIsEvaluating(false);setActiveEvaluation(null);setCancellingEvaluation(false);abort.current=null;
+        }else{
+          setActiveEvaluation(prev=>prev?{...prev,savingConfirmed:true}:null);
+          void runEvaluation(next,undefined,{controller,origin,startedAt});
+        }
       }
-    }).catch(()=>{
+    }).catch((failure)=>{
+      if(scope.current!==origin||(needsEval&&abort.current!==controller))return;
+      setError(`Jawaban belum berhasil disimpan: ${String(failure?.message||failure)}`);
       if(needsEval){
         setIsEvaluating(false);
         setActiveEvaluation(null);
+        setCancellingEvaluation(false);abort.current=null;
       }
     });
   };
@@ -234,10 +257,11 @@ export default function App() {
   const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
   const examActive = w.ready && !loading && !isEvaluating && view === 'runner' && Boolean(quiz);
   const PageContainer = examActive ? 'div' : 'main';
+  const processingMode = loading ? 'generation' : isEvaluating ? 'evaluation' : undefined;
   return <div className="app-frame min-h-screen text-slate-900 flex flex-col font-sans">
-    {!examActive && <TopBar activeView={view} pageTitle="Persiapan Kuis" onBack={() => { setView('configuration'); setQuiz(null); }} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />}
-    {!examActive && <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>}
-    <PageContainer className="flex-1 w-full" aria-busy={loading || w.storageLoading}>
+    {!examActive && <TopBar activeView={view} processingMode={processingMode} isCancelling={cancelling || cancellingEvaluation} pageTitle={loading ? 'Membuat Kuis' : isEvaluating ? 'Evaluasi Jawaban' : 'Persiapan Kuis'} onBack={loading ? cancelGeneration : isEvaluating ? cancelEvaluation : () => { setView('configuration'); setQuiz(null); }} isBusy={loading || isEvaluating} onNavigate={setView} onOpenSettings={() => setSettings('account')} isKeyConfigured={hasKey} storageLabel={storageLabel} onNewQuizClick={newQuiz} />}
+    {!examActive && !processingMode && <div className="workspace-strip"><span>{w.mode === 'guest' ? <Monitor size={14} /> : <Cloud size={14} />}{storageLabel}</span><span role="status">{w.saving ? 'Menyimpan…' : w.storageLoading ? 'Memuat penyimpanan…' : w.mode === 'reauth_required' ? 'Sesi perlu dipulihkan' : !w.ready ? 'Penyimpanan belum siap' : 'Data mengikuti ruang aktif'}</span></div>}
+    <PageContainer className={`flex-1 w-full${processingMode ? ' processing-main' : ''}`} aria-busy={w.storageLoading}>
       {w.error && <div className="page-shell !pb-0 !pt-5"><div className="settings-alert error" role="alert"><span>{w.error}</span>{w.mode !== 'reauth_required' && <button disabled={w.storageLoading} onClick={() => void w.refresh()}><RefreshCw size={15} />Muat ulang data</button>}</div></div>}
       {w.ready && <div hidden={loading || isEvaluating || !['creator', 'configuration'].includes(view)}>
         <QuizCreator key={`${w.scope}:${w.mode}`} stage={view === 'configuration' ? 'configuration' : 'creator'} onNavigate={setView} onGenerate={config => startGeneration(config)} isLoading={loading} errorMessage={error || null} preferences={w.data.preferences} hasApiKey={hasKey} storageLabel={storageLabel} onOpenSettings={() => setSettings('keys')} onGroundingChange={grounding => { void w.update(d=>({...d,preferences:{...d.preferences,grounding}})).catch(()=>{}); }}
@@ -252,20 +276,16 @@ export default function App() {
         <GenerationLoader
           config={generation.config}
           completedCount={generation.completed}
-          enableGrounding={w.data.preferences.grounding}
-          model={w.data.preferences.model}
-          onCancel={cancelGeneration}
+          enableGrounding={generation.preferences?.grounding}
+          model={generation.preferences?.model}
+          startedAt={generation.startedAt}
+          isSaving={generation.isSaving}
           isCancelling={cancelling}
         />
-        <div className="generation-controls" style={{ display: 'none' }}>
-          <span>{generation.completed}/{generation.config.questionCount} soal diterima</span>
-          <button className="settings-secondary" disabled={cancelling} onClick={cancelGeneration}>{cancelling ? 'Membatalkan…' : 'Batalkan pembuatan'}</button>
-        </div>
       </> : isEvaluating && result && activeEvaluation ? (
         <EvaluationLoader
           result={result}
           evaluationState={activeEvaluation}
-          onCancel={cancelEvaluation}
           isCancelling={cancellingEvaluation}
           error={error}
         />
@@ -275,7 +295,7 @@ export default function App() {
       : view === 'history' ? <QuizHistoryView historyItems={w.data.history} onSelectQuiz={selectQuiz} onClearHistory={() => void w.update(d => ({ ...d, history: [], progress: null })).catch(() => {})} onDeleteItem={id => void w.update(d => ({ ...d, history: d.history.filter(h => h.quiz.id !== id), progress: d.progress?.quizId === id ? null : d.progress })).catch(() => {})} onNewQuiz={newQuiz} />
       : <div className="workspace-loading"><p>Mulai sesi belajar baru.</p><button onClick={newQuiz} className="settings-primary">Buat kuis <ArrowRight size={16} /></button></div>}
     </PageContainer>
-    {!examActive && <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>}
+    {!examActive && !processingMode && <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>}
     {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
     {toast && <div className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</div>}
   </div>;

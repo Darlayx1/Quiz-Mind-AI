@@ -5,6 +5,7 @@ import { fixtures } from './assessment-fixtures.js';
 import { validateQuestion } from '../src/questionValidation.js';
 import { buildResult } from '../src/scoring.js';
 import { normalizeQuizConfig } from '../src/quizConfig.js';
+import { defaultEvaluationSettings } from '../src/evaluationSettings.js';
 
 // Render the real App with an isolated hook host and deferred provider operations.
 const runtime = globalThis as any;
@@ -36,7 +37,7 @@ const compiled = await build({ entryPoints: ['src/App.tsx'], bundle: true, write
       else if (path.includes('/types.js')) contents = 'export const keyPaused=globalThis.__keyPaused;';
       else if (path.includes('/ai.js')) contents = 'export const availableKeys=()=>[{}];export const generateWorkspaceQuiz=(...a)=>globalThis.__generate(...a);';
       else if (path.includes('supabase')) contents = 'export const accountRpc=async()=>{};';
-      else if (path.includes('evaluation')) contents = 'export const evaluateWorkspace=async()=>{};';
+      else if (path.includes('evaluation')) contents = 'export const evaluateWorkspace=(...a)=>globalThis.__evaluate(...a);';
       else if (path.includes('scoring')) contents = 'export const buildResult=(...args)=>globalThis.__buildResult(...args);';
       else { const names = path === 'lucide-react' ? ['Settings2','Monitor','Cloud','ArrowRight','RefreshCw'] : [path.split('/').at(-1)!.replace('.js','')];
         contents = names.map(name => `export const ${name}="${name}";`).join(''); }
@@ -87,15 +88,11 @@ runtime.__generate = (...args: any[]) => new Promise((_resolve, reject) => {
 find(render(), 'QuizRunner').props.onQuit();
 find(render(), 'QuizCreator').props.onGenerate({ topic: 'Cancel', questionCount: 1 });
 const loadingTree = render();
-const controls = (function byClass(node: any): any {
-  if (!node) return;
-  if (Array.isArray(node)) return node.map(byClass).find(Boolean);
-  if (node.props?.className === 'generation-controls') return node;
-  return byClass(node.props?.children);
-})(loadingTree);
-assert.ok(controls, 'Cancel controls are shown during generation');
-const cancelButton = controls.props.children.find((child: any) => child?.type === 'button');
-await cancelButton.props.onClick();
+const processingHeader = find(loadingTree, 'TopBar');
+assert.equal(processingHeader.props.processingMode, 'generation');
+assert.equal(processingHeader.props.pageTitle, 'Membuat Kuis');
+assert.ok(!JSON.stringify(loadingTree).includes('generation-controls'), 'No duplicate footer cancellation controls');
+await processingHeader.props.onBack();
 assert.equal(pending[2].args[5].aborted, true, 'Cancel reaches the active provider signal');
 assert.ok(find(render(), 'QuizCreator'), 'Cancel returns to the creator');
 assert.equal(find(render(), 'GenerationLoader'), undefined);
@@ -176,3 +173,63 @@ assert.equal(find(render(), 'QuizRunner').props.quiz.id, 'regenerate-fresh');
 assert.equal(runtime.__workspace.data.history.length, earlierHistoryCount + 2, 'Original result and earlier unrelated history remain preserved');
 assert.equal(runtime.__workspace.data.history.find((h: any) => h.quiz.id === originalQuiz.id).attempts.length, 2);
 console.log('PASS: regeneration reuses exact config/preferences with one new provider dispatch; remedial uses identical questions, fresh progress, no provider call, and preserves attempts/history.');
+
+// Cancellation returns to the entry view, including configuration and regeneration.
+find(render(), 'QuizRunner').props.onQuit();
+find(render(), 'QuizCreator').props.onNavigate('configuration');
+runtime.__generate = (...args: any[]) => new Promise((resolve, reject) => {
+  args[5].addEventListener('abort', () => reject(args[5].reason), { once: true });
+  pending.push({ args, resolve, reject });
+});
+find(render(), 'QuizCreator').props.onGenerate(originalConfig);
+await find(render(), 'TopBar').props.onBack();
+assert.equal(find(render(), 'TopBar').props.activeView, 'configuration');
+find(render(), 'TopBar').props.onNavigate('history');
+find(render(), 'QuizHistoryView').props.onSelectQuiz(firstGenerated);
+const preservedResult = find(render(), 'QuizResults').props.result;
+find(render(), 'QuizResults').props.onRegenerate();
+const back = find(render(), 'TopBar').props.onBack;
+await Promise.all([back(), back()]);
+assert.equal(find(render(), 'QuizResults').props.result, preservedResult, 'Back from regeneration preserves the original result');
+
+// Exercise initial-save cancellation, provider cancellation, and partial checkpoints.
+const essayQuiz = { ...originalQuiz, id: 'evaluation-fixture', evaluationSettings: defaultEvaluationSettings,
+  questions: [validateQuestion({ ...fixtures.essay, id: 'essay' }, 0, 'Konsep', [], 'essay')!] };
+runtime.__workspace.data.history.push({ quiz: essayQuiz, savedAt: '' });
+find(render(), 'TopBar').props.onNavigate('history');
+find(render(), 'QuizHistoryView').props.onSelectQuiz(essayQuiz);
+const normalUpdate = runtime.__workspace.update;
+let finishSave: () => void;
+runtime.__workspace.update = (updater: any) => new Promise<void>(resolve => {
+  finishSave = () => { runtime.__workspace.data = updater(runtime.__workspace.data); resolve(); };
+});
+const evaluationCalls: any[] = [];
+runtime.__evaluate = (...args: any[]) => new Promise((resolve, reject) => {
+  args[5].addEventListener('abort', () => reject(args[5].reason), { once: true });
+  evaluationCalls.push({ args, resolve, reject });
+});
+find(render(), 'QuizRunner').props.onSubmit({ ...submission, quizId: essayQuiz.id, userAnswers: { essay: { type: 'essay', text: 'Penjelasan lengkap' } } });
+assert.equal(find(render(), 'EvaluationLoader').props.evaluationState.savingConfirmed, false);
+find(render(), 'TopBar').props.onBack();
+assert.equal(find(render(), 'TopBar').props.isCancelling, true);
+finishSave!(); await settle();
+assert.equal(evaluationCalls.length, 0, 'Back during initial save never dispatches AI evaluation');
+assert.equal(find(render(), 'EvaluationLoader'), undefined);
+assert.ok(find(render(), 'QuizResults').props.result.submission.userAnswers.essay);
+runtime.__workspace.update = normalUpdate;
+find(render(), 'QuizResults').props.onEvaluate();
+assert.equal(evaluationCalls.length, 1);
+assert.equal(find(render(), 'TopBar').props.processingMode, 'evaluation');
+const evaluationBack = find(render(), 'TopBar').props.onBack;
+evaluationBack(); evaluationBack(); await settle();
+assert.equal(evaluationCalls[0].args[5].aborted, true);
+assert.ok(find(render(), 'QuizResults'));
+find(render(), 'QuizResults').props.onEvaluate();
+const currentEvaluation = evaluationCalls.at(-1);
+const partial = { ...find(render(), 'EvaluationLoader').props.result, testCheckpoint: 'saved' };
+await currentEvaluation.args[6](partial, { completed: 1, total: 1 });
+find(render(), 'TopBar').props.onBack(); await settle();
+assert.equal(find(render(), 'QuizResults').props.result.testCheckpoint, 'saved', 'Saved checkpoints survive cancellation');
+currentEvaluation.resolve(partial); await settle();
+assert.equal(find(render(), 'EvaluationLoader'), undefined, 'Late responses cannot reopen a cancelled operation');
+console.log('PASS: header cancellation returns to origin, guards duplicate clicks, aborts initial-save/provider evaluation and preserves submitted answers/checkpoints.');

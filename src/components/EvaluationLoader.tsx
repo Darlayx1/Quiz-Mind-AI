@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { CheckSquare, Hash, Sparkles, FileText, Bookmark } from 'lucide-react';
 import type { QuizResult } from '../types/quiz.js';
 import { modelName } from '../models.js';
@@ -6,6 +6,7 @@ import { ProcessingLayout, ContextBadge } from './ProcessingLayout.js';
 import { EvaluationIllustration } from './ProcessingIllustrations.js';
 
 export interface ActiveEvaluationState {
+  startedAt?: number;
   targetIds: string[];
   totalTargets: number;
   completedCount: number;
@@ -18,7 +19,6 @@ export interface ActiveEvaluationState {
 export interface EvaluationLoaderProps {
   result: QuizResult;
   evaluationState: ActiveEvaluationState;
-  onCancel?: () => void;
   isCancelling?: boolean;
   error?: string;
 }
@@ -26,16 +26,9 @@ export interface EvaluationLoaderProps {
 export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
   result,
   evaluationState,
-  onCancel,
   isCancelling = false,
   error,
 }) => {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const {
     totalTargets,
@@ -50,6 +43,7 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
   const contextBadges: ContextBadge[] = [
     {
       id: 'topic',
+      caption: 'Topik kuis',
       label: result.quiz.topic || result.quiz.title,
       icon: <Hash size={13} />,
     },
@@ -58,17 +52,20 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
   if (isReEvaluation && questionNumber) {
     contextBadges.push({
       id: 'target',
+      caption: 'Jawaban ditinjau',
       label: `Soal ${questionNumber}`,
       icon: <FileText size={13} />,
     });
     contextBadges.push({
       id: 'mode',
+      caption: 'Mode evaluasi',
       label: 'Penilaian Ulang',
       icon: <Bookmark size={13} />,
     });
   } else {
     contextBadges.push({
       id: 'target',
+      caption: 'Target evaluasi',
       label: `${totalTargets} Jawaban Ditelaah`,
       icon: <CheckSquare size={13} />,
     });
@@ -76,12 +73,14 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
     if (totalTargets < totalQuizQuestions) {
       contextBadges.push({
         id: 'mode',
+        caption: 'Mode evaluasi',
         label: 'Evaluasi Lanjutan',
         icon: <Bookmark size={13} />,
       });
     } else {
       contextBadges.push({
         id: 'mode',
+        caption: 'Mode evaluasi',
         label: 'Evaluasi Lengkap',
         icon: <Bookmark size={13} />,
       });
@@ -92,6 +91,7 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
   if (evalModel) {
     contextBadges.push({
       id: 'model',
+      caption: 'Model AI',
       label: modelName(evalModel),
       icon: <Sparkles size={13} />,
     });
@@ -105,7 +105,7 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
   if (isCancelling) {
     statusMessage = 'Membatalkan evaluasi...';
   } else if (isSavingCheckpoint) {
-    statusMessage = 'Menyimpan checkpoint hasil evaluasi...';
+    statusMessage = 'Menyimpan hasil penilaian...';
   } else if (!savingConfirmed) {
     statusMessage = 'Menyimpan jawaban Anda sebelum evaluasi...';
   } else if (isReEvaluation && questionNumber) {
@@ -139,14 +139,10 @@ export const EvaluationLoader: React.FC<EvaluationLoaderProps> = ({
       statusMessage={statusMessage}
       progressPercent={progressPercent}
       progressLabel={progressLabel}
-      elapsedSeconds={elapsed}
+      startedAt={evaluationState.startedAt}
       longWaitThreshold={20}
       longWaitMessage="Penelaahan masih berlangsung. Waktu proses bergantung pada jumlah dan panjang jawaban yang dinilai."
-      onCancel={onCancel}
-      cancelLabel="Batalkan evaluasi"
-      cancellingLabel="Membatalkan evaluasi..."
       isCancelling={isCancelling}
-      footerNote="Jawaban dan hasil yang telah tersimpan tidak akan hilang saat dibatalkan."
       error={error}
     />
   );

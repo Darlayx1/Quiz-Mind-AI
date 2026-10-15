@@ -122,7 +122,6 @@ const genWaiting = renderToString(
     enableGrounding={true}
     model="gemini-2.5-flash"
     completedCount={0}
-    onCancel={() => {}}
   />
 );
 fs.writeFileSync(path.join(outDir, 'generation-waiting.html'), buildHtml('Loading Generate — Menunggu AI', genWaiting));
@@ -142,7 +141,6 @@ const genProgress = renderToString(
     enableGrounding={false}
     model="gemini-2.5-flash"
     completedCount={3}
-    onCancel={() => {}}
   />
 );
 fs.writeFileSync(path.join(outDir, 'generation-progress-390.html'), buildHtml('Loading Generate — 3 dari 5 Soal', genProgress, 390));
@@ -158,7 +156,6 @@ const evalProgress = renderToString(
       isReEvaluation: false,
       savingConfirmed: true
     }}
-    onCancel={() => {}}
   />
 );
 fs.writeFileSync(path.join(outDir, 'evaluation-progress.html'), buildHtml('Loading Evaluasi — 2 dari 3 Jawaban', evalProgress));
@@ -175,7 +172,6 @@ const evalReEval = renderToString(
       questionNumber: 3,
       savingConfirmed: true
     }}
-    onCancel={() => {}}
   />
 );
 fs.writeFileSync(path.join(outDir, 'evaluation-reeval-360.html'), buildHtml('Loading Evaluasi — Penilaian Ulang Soal 3', evalReEval, 360));

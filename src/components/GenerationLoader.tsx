@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { BookOpen, Sparkles, Search, Layers, BarChart2, Hash } from 'lucide-react';
 import type { QuizConfig } from '../types/quiz.js';
 import { questionLabels } from '../questionState.js';
@@ -15,7 +15,7 @@ export interface GenerationLoaderProps {
   model?: AIModel;
   isSaving?: boolean;
   isCancelling?: boolean;
-  onCancel?: () => void;
+  startedAt?: number;
 }
 
 export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
@@ -27,14 +27,8 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   model,
   isSaving = false,
   isCancelling = false,
-  onCancel,
+  startedAt,
 }) => {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const topic = config?.topic || rawTopic || 'Kuis Pembelajaran';
   const totalCount = config?.questionCount || rawQuestionCount || 1;
@@ -56,11 +50,13 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   const contextBadges: ContextBadge[] = [
     {
       id: 'topic',
+      caption: 'Topik kuis',
       label: topic,
       icon: <Hash size={13} />,
     },
     {
       id: 'count',
+      caption: 'Jumlah soal',
       label: `${totalCount} Soal`,
       icon: <Layers size={13} />,
     },
@@ -69,6 +65,7 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   if (typeLabel) {
     contextBadges.push({
       id: 'type',
+      caption: 'Jenis soal',
       label: typeLabel,
       icon: <BookOpen size={13} />,
     });
@@ -77,6 +74,7 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   if (config?.difficulty) {
     contextBadges.push({
       id: 'difficulty',
+      caption: 'Tingkat kesulitan',
       label: difficultyName(config.difficulty),
       icon: <BarChart2 size={13} />,
     });
@@ -85,6 +83,7 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   if (enableGrounding) {
     contextBadges.push({
       id: 'grounding',
+      caption: 'Referensi',
       label: 'Referensi Web Aktif',
       icon: <Search size={13} />,
     });
@@ -93,6 +92,7 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   if (model) {
     contextBadges.push({
       id: 'model',
+      caption: 'Model AI',
       label: modelName(model),
       icon: <Sparkles size={13} />,
     });
@@ -125,14 +125,10 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
       statusMessage={statusMessage}
       progressPercent={progressPercent}
       progressLabel={progressLabel}
-      elapsedSeconds={elapsed}
+      startedAt={startedAt}
       longWaitThreshold={20}
       longWaitMessage="Pembuatan kuis masih berlangsung. Waktu proses dapat berbeda sesuai jumlah soal dan respons layanan AI."
-      onCancel={onCancel}
-      cancelLabel="Batalkan pembuatan"
-      cancellingLabel="Membatalkan pembuatan..."
       isCancelling={isCancelling}
-      footerNote="Sesi dapat dibatalkan sewaktu-waktu tanpa mengurangi data kuis lainnya."
     />
   );
 };

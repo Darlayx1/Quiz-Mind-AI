@@ -4,6 +4,44 @@ import { questionLabels } from '../src/questionState.js';
 import { difficultyName } from '../src/models.js';
 import { buildResult } from '../src/scoring.js';
 import type { Quiz, QuizSubmission, QuestionEvaluation } from '../src/types/quiz.js';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { GenerationLoader } from '../src/components/GenerationLoader.js';
+import { ProcessingLayout } from '../src/components/ProcessingLayout.js';
+import { TopBar } from '../src/components/TopBar.js';
+
+test('Actual loading components use an open layout, accurate progress and an enabled header back button', () => {
+  const render = (completedCount: number) => renderToStaticMarkup(createElement(GenerationLoader, {
+    config: { topic: 'Biologi', questionCount: 10, questionType: 'essay', difficulty: 'easy', timeLimitMinutes: 10, language: 'id', enableGrounding: false }, completedCount,
+  }));
+  const waiting = render(0), progress = render(3);
+  assert.ok(waiting.includes('processing-page'));
+  assert.ok(!waiting.includes('surface') && !waiting.includes('qm-processing-card'));
+  assert.ok(!waiting.includes('<h1') && waiting.includes('<h2'));
+  assert.ok(!waiting.includes('Batalkan') && !waiting.includes('onCancel'));
+  assert.ok(waiting.includes('is-indeterminate') && !waiting.includes('aria-valuenow='));
+  assert.ok(progress.includes('aria-valuenow="30"'));
+  assert.ok(progress.includes('3 dari 10 soal telah diterima.'));
+  assert.ok(waiting.includes('aria-label="Jenis soal: Esai"'));
+  const props = { activeView: 'configuration' as const, processingMode: 'generation' as const, isBusy: true,
+    pageTitle: 'Membuat Kuis', onBack() {}, onNavigate() {}, onOpenSettings() {}, storageLabel: '', isKeyConfigured: true, onNewQuizClick() {} };
+  const header = renderToStaticMarkup(createElement(TopBar, props));
+  assert.ok(header.includes('id="processing-title"') && !header.includes('header-nav'));
+  assert.ok(header.includes('Batalkan proses dan kembali') && !header.includes('disabled'));
+  assert.ok(renderToStaticMarkup(createElement(TopBar, { ...props, isCancelling: true })).includes('disabled'));
+});
+
+test('Actual response clock uses operation time and only shows the quiet notice after its threshold', () => {
+  const props = { eyebrow: 'PROSES', title: 'Memproses', description: '', illustration: null,
+    statusMessage: 'Menunggu AI', longWaitMessage: 'Masih berlangsung.', startedAt: Date.now() - 25_000 };
+  const late = renderToStaticMarkup(createElement(ProcessingLayout, props));
+  assert.ok(late.includes('00:25') && late.includes('processing-long-wait'));
+  const initial = renderToStaticMarkup(createElement(ProcessingLayout, { ...props, startedAt: Date.now() }));
+  assert.ok(initial.includes('00:00') && !initial.includes('processing-long-wait'));
+  const cancelling = renderToStaticMarkup(createElement(ProcessingLayout, { ...props, isCancelling: true }));
+  assert.ok(!cancelling.includes('processing-long-wait'));
+  assert.ok(!late.includes('aria-busy="true"'), 'Do not suppress status announcements with a permanently busy live region');
+});
 
 test('Matriks 1: Question type badges and difficulty names map correctly', () => {
   assert.equal(questionLabels.essay, 'Esai');
