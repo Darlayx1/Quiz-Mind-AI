@@ -1,25 +1,32 @@
-import { Select } from './Select.js';
-import { questionLabels,questionType } from '../questionState.js';
-import { exportJSON } from '../quizStorage.js';
 import React, { useRef, useState } from 'react';
-import { useListReflow } from '../ui/motion.js';
-import { Quiz, QuizResult } from '../types/quiz.js';
+import { Select } from './Select.js';
 import { Button } from './Button.js';
-import { difficultyName } from '../models.js';
-import { durationLabel, quizTimerSeconds } from '../quizConfig.js';
 import { ConfirmModal } from './ConfirmModal.js';
-import { difficultyCalibration } from '../difficultyCalibration.js';
+import { AmbientVisual } from './MotionPrimitives.js';
+import { useListReflow } from '../ui/motion.js';
+import { questionLabels, questionType } from '../questionState.js';
+import { exportJSON } from '../quizStorage.js';
+import { Quiz, QuizResult } from '../types/quiz.js';
+import { difficultyName, modelName } from '../models.js';
+import { durationLabel, quizTimerSeconds } from '../quizConfig.js';
 import {
   History,
   Trash2,
   Play,
-  CheckCircle,
+  Check,
   Clock,
-  BookOpen,
   ArrowRight,
+  Download,
+  Search,
+  X,
+  Sparkles,
+  Layers,
+  RotateCcw,
+  Award,
+  CheckCircle2,
 } from 'lucide-react';
 
-interface SavedHistoryItem {
+export interface SavedHistoryItem {
   quiz: Quiz;
   lastResult?: QuizResult;
   results?: QuizResult[];
@@ -27,149 +34,547 @@ interface SavedHistoryItem {
   savedAt: string;
 }
 
-interface QuizHistoryViewProps {
+export interface QuizHistoryViewProps {
   historyItems: SavedHistoryItem[];
   onSelectQuiz: (quiz: Quiz) => void;
   onViewResult?: (result: QuizResult) => void;
+  onRetakeQuiz?: (quiz: Quiz) => void;
   onClearHistory: () => void;
   onDeleteItem: (quizId: string) => void;
   onNewQuiz: () => void;
+}
+
+type HistoryFilter = 'all' | 'completed' | 'unstarted';
+type HistorySort = 'newest' | 'score' | 'title' | 'questions';
+
+function HistoryEmptyVisual() {
+  return (
+    <AmbientVisual className="history-visual">
+      <div className="history-pedestal" />
+      <div className="history-shadow" />
+      <div className="history-scene">
+        <div className="history-orbit">
+          <span />
+        </div>
+        <div className="history-card-3d history-card-3d-back history-card-3d-far">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="history-card-3d history-card-3d-back history-card-3d-near">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="history-card-3d history-card-3d-main">
+          <div className="history-card-3d-face">
+            <History size={28} strokeWidth={1.6} />
+            <span className="history-card-3d-title" />
+            <span className="history-card-3d-line" />
+            {[0, 1, 2].map((row) => (
+              <div className="history-card-3d-check" key={row}>
+                <span>{row < 2 && <Check size={11} strokeWidth={3} />}</span>
+                <i />
+              </div>
+            ))}
+            <span className="history-card-3d-seal">
+              <Sparkles size={16} strokeWidth={2.2} />
+            </span>
+          </div>
+        </div>
+      </div>
+    </AmbientVisual>
+  );
+}
+
+function getEffectiveScore(result?: QuizResult): number | null {
+  if (!result) return null;
+  if (result.finalScore === null) return null;
+  const val = result.finalScore ?? result.score;
+  return Number.isFinite(val) ? Math.round(val * 10) / 10 : null;
 }
 
 export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
   historyItems,
   onSelectQuiz,
   onViewResult,
+  onRetakeQuiz,
   onClearHistory,
   onDeleteItem,
   onNewQuiz,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const calibration = difficultyCalibration(historyItems);
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<HistorySort>('newest');
   const historyList = useRef<HTMLDivElement>(null);
-  useListReflow(historyList, historyItems.map(item => item.quiz.id).join('|'));
+
+  const totalQuizzes = historyItems.length;
+  const totalQuestions = historyItems.reduce((sum, item) => sum + item.quiz.questions.length, 0);
+  const completedItems = historyItems.filter((item) => Boolean(item.lastResult));
+  const completedCount = completedItems.length;
+  const unstartedCount = totalQuizzes - completedCount;
+
+  const totalAttempts = historyItems.reduce((sum, item) => {
+    const sessions = item.attempts?.length ? item.attempts : item.results ?? (item.lastResult ? [item.lastResult] : []);
+    return sum + sessions.length;
+  }, 0);
+
+  const finalizedScores = completedItems
+    .map((item) => getEffectiveScore(item.lastResult))
+    .filter((score): score is number => score !== null);
+
+  const avgScore =
+    finalizedScores.length > 0
+      ? Math.round((finalizedScores.reduce((sum, s) => sum + s, 0) / finalizedScores.length) * 10) / 10
+      : null;
+
+  const activeFilter: HistoryFilter =
+    (filter === 'completed' && completedCount === 0) || (filter === 'unstarted' && unstartedCount === 0)
+      ? 'all'
+      : filter;
+
+  const query = search.trim().toLowerCase();
+
+  const visibleItems = historyItems
+    .filter((item) => {
+      if (activeFilter === 'completed' && !item.lastResult) return false;
+      if (activeFilter === 'unstarted' && item.lastResult) return false;
+      if (!query) return true;
+      const typeNames = [...new Set(item.quiz.questions.map(questionType))]
+        .map((t) => questionLabels[t])
+        .join(' ');
+      const haystack = `${item.quiz.title} ${item.quiz.topic} ${item.quiz.summary || ''} ${difficultyName(item.quiz.difficulty)} ${typeNames}`.toLowerCase();
+      return haystack.includes(query);
+    })
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === 'score') {
+        const sA = getEffectiveScore(a.lastResult) ?? -1;
+        const sB = getEffectiveScore(b.lastResult) ?? -1;
+        if (sB !== sA) return sB - sA;
+      } else if (sortBy === 'title') {
+        return a.quiz.title.localeCompare(b.quiz.title, 'id');
+      } else if (sortBy === 'questions') {
+        if (b.quiz.questions.length !== a.quiz.questions.length) {
+          return b.quiz.questions.length - a.quiz.questions.length;
+        }
+      }
+      return (b.savedAt || '').localeCompare(a.savedAt || '');
+    });
+
+  useListReflow(
+    historyList,
+    `${activeFilter}:${sortBy}:${ visibleItems.map((item) => item.quiz.id).join('|') }`
+  );
 
   if (historyItems.length === 0) {
     return (
-      <div className="history-empty w-full max-w-3xl mx-auto py-16 px-4 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-4">
-          <BookOpen className="w-8 h-8" />
-        </div>
-        <h2 className="text-xl font-bold text-slate-900 mb-2">Belum Ada Riwayat Kuis</h2>
-        <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-          Kuis yang Anda buat akan tersimpan pada ruang penyimpanan aktif untuk dipelajari kembali.
+      <section className="page-shell history-empty" aria-labelledby="history-empty-title">
+        <HistoryEmptyVisual />
+        <p className="history-eyebrow">ARSIP &amp; REKAP BELAJAR</p>
+        <h1 id="history-empty-title">Belum Ada Riwayat Kuis</h1>
+        <p className="history-empty-description">
+          Setiap kuis yang Anda rancang dan selesaikan akan tersimpan secara otomatis pada ruang aktif ini untuk dipelajari kembali kapan saja.
         </p>
         <Button
           label="Buat Kuis Pertama Sekarang"
           variant="primary"
           size="md"
+          className="history-empty-cta"
           icon={<Play className="w-4 h-4" />}
           iconPosition="leading"
           onClick={onNewQuiz}
         />
-      </div>
+      </section>
     );
   }
 
+  const filterOptions: { id: HistoryFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'Semua kuis', count: totalQuizzes },
+    { id: 'completed', label: 'Selesai', count: completedCount },
+    { id: 'unstarted', label: 'Belum dikerjakan', count: unstartedCount },
+  ];
+
   return (
-    <div className="history-page w-full max-w-4xl mx-auto py-8 px-4 sm:px-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <History className="w-6 h-6 text-blue-600" />
-            <span>Riwayat Kuis Tersimpan</span>
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Kuis dan catatan skor pada ruang penyimpanan aktif.
+    <div className="page-shell history-page">
+      {/* Editorial Hero Header */}
+      <header className="history-header">
+        <div className="history-header-copy">
+          <p className="history-eyebrow">ARSIP &amp; REKAP BELAJAR</p>
+          <h1>Riwayat Kuis Tersimpan</h1>
+          <p className="history-subtitle">
+            Kuis, progres pengerjaan, dan rekap evaluasi pada ruang penyimpanan aktif Anda.
           </p>
         </div>
 
-        <Button
-          label="Kosongkan Riwayat"
-          variant="outline"
-          size="sm"
-          icon={<Trash2 className="w-3.5 h-3.5 text-red-500" />}
-          iconPosition="leading"
-          onClick={() => setShowClearConfirm(true)}
-        />
-      </div>
+        <div className="history-header-actions">
+          <button
+            type="button"
+            className="history-utility-btn"
+            onClick={() => exportJSON('quizmind-riwayat.json', historyItems)}
+          >
+            <Download size={15} aria-hidden="true" />
+            <span>Ekspor riwayat &amp; jawaban</span>
+          </button>
 
-      <button type="button" className="topic-chip mb-4" onClick={()=>exportJSON('quizmind-riwayat.json',historyItems)}>Ekspor riwayat & jawaban</button>
-      {calibration.length > 0 && <details className="surface p-4 mb-4"><summary>Hasil menjawab menurut tingkat kesulitan</summary><p className="field-help">Memakai pengerjaan pertama setiap kuis pada ruang ini. Persentase aktual termasuk tebakan dan bukan ukuran kemampuan seluruh populasi. Bandingkan topik, model, dan tipe soal yang sama. Jawaban yang belum dinilai dipisahkan.</p><div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr><th>Materi</th><th>Kesulitan</th><th>Mode & model</th><th>Soal dinilai</th><th>Benar aktual</th><th>Menunggu nilai</th></tr></thead><tbody>{calibration.map((row, i) => <tr key={i}><td>{row.topic}</td><td>{row.difficulty}<br />{questionLabels[row.type]}</td><td>{row.mode}<br />{row.model}</td><td>{row.assessed} dari {row.quizCount} kuis</td><td>{row.observedCorrectPercent === null ? '—' : `${row.observedCorrectPercent}%`}</td><td>{row.pending}</td></tr>)}</tbody></table></div><button type="button" className="topic-chip mt-3" onClick={() => exportJSON('quizmind-kalibrasi-difficulty.json', calibration)}>Ekspor hasil kalibrasi</button></details>}
-      {/* History List */}
-      <div ref={historyList} className="space-y-4">
-        {historyItems.map((item) => {
-          const { quiz, lastResult, savedAt, results } = item;
-          const formattedDate = new Date(savedAt).toLocaleDateString('id-ID', {
-            day: 'numeric',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          });
+          <Button
+            label="Kosongkan Riwayat"
+            variant="outline"
+            size="sm"
+            className="history-clear-btn"
+            icon={<Trash2 className="w-3.5 h-3.5" />}
+            iconPosition="leading"
+            onClick={() => setShowClearConfirm(true)}
+          />
+        </div>
+      </header>
 
-          return (
-            <div
-              key={quiz.id}
-              data-motion-key={quiz.id}
-              className="history-card bg-white rounded-xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      {/* Systematic Overview & Telemetry Strip */}
+      <section className="history-overview" aria-label="Ringkasan arsip kuis">
+        <div className="history-metric-card">
+          <div className="history-metric-top">
+            <span className="history-metric-label">Koleksi Tersimpan</span>
+            <span className="history-metric-icon" aria-hidden="true">
+              <Layers size={16} />
+            </span>
+          </div>
+          <p className="history-metric-value">
+            <strong>{totalQuizzes}</strong>
+            <span>kuis</span>
+          </p>
+          <p className="history-metric-foot">
+            {totalQuestions} butir soal terarsip di ruang ini
+          </p>
+        </div>
+
+        <div className="history-metric-card">
+          <div className="history-metric-top">
+            <span className="history-metric-label">Status Pengerjaan</span>
+            <span className="history-metric-icon is-emerald" aria-hidden="true">
+              <CheckCircle2 size={16} />
+            </span>
+          </div>
+          <p className="history-metric-value">
+            <strong>{completedCount}</strong>
+            <span>/ {totalQuizzes} selesai</span>
+          </p>
+          <p className="history-metric-foot">
+            {totalAttempts > 0 ? `${totalAttempts} sesi pengerjaan tercatat` : 'Belum ada sesi yang diselesaikan'}
+            {unstartedCount > 0 ? ` · ${unstartedCount} siap dimulai` : ''}
+          </p>
+        </div>
+
+        <div className="history-metric-card is-highlight">
+          <div className="history-metric-top">
+            <span className="history-metric-label">Rata-rata Skor Final</span>
+            <span className="history-metric-icon is-accent" aria-hidden="true">
+              <Award size={16} />
+            </span>
+          </div>
+          <p className="history-metric-value">
+            <strong>{avgScore !== null ? avgScore : '—'}</strong>
+            {avgScore !== null && <span>/ 100</span>}
+          </p>
+          {avgScore !== null ? (
+            <div className="history-overview-track" aria-hidden="true">
+              <span style={{ width: `${Math.max(0, Math.min(100, avgScore))}%` }} />
+            </div>
+          ) : (
+            <p className="history-metric-foot">
+              Selesaikan kuis untuk melihat rata-rata capaian
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Dynamic Filter, Search & Sort Toolbar */}
+      <section className="history-toolbar" aria-label="Filter dan pencarian riwayat">
+        <div className="history-filters" role="group" aria-label="Filter status kuis">
+          {filterOptions.map(
+            (opt) =>
+              (opt.id === 'all' || opt.count > 0) && (
+                <button
+                  key={opt.id}
+                  type="button"
+                  aria-pressed={activeFilter === opt.id}
+                  onClick={() => setFilter(opt.id)}
+                >
+                  <span>{opt.label}</span>
+                  <small>{opt.count}</small>
+                </button>
+              )
+          )}
+        </div>
+
+        <div className="history-controls">
+          <label className="history-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="search"
+              aria-label="Cari riwayat kuis"
+              placeholder="Cari judul, topik, atau tipe soal…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                className="history-search-clear"
+                aria-label="Bersihkan pencarian"
+                onClick={() => setSearch('')}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+
+          <div className="history-sort">
+            <Select
+              aria-label="Urutkan riwayat kuis"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as HistorySort)}
             >
-              <div className="space-y-1.5 flex-1">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span className="font-semibold text-blue-700">{quiz.topic}</span>
-                  <span>·</span>
-                  <span>{difficultyName(quiz.difficulty)}</span>
-                  <span>·</span>
-                  <span>{quiz.questions.length} Soal</span>
-                  <span>·</span>
-                  <span>{formattedDate}</span>
+              <option value="newest">Urutan: Terbaru</option>
+              <option value="score">Urutan: Skor tertinggi</option>
+              <option value="title">Urutan: Judul A–Z</option>
+              <option value="questions">Urutan: Jumlah soal</option>
+            </Select>
+          </div>
+        </div>
+      </section>
+
+      {/* Filtered Empty State */}
+      {visibleItems.length === 0 ? (
+        <div className="history-filtered-empty" role="status">
+          <p>Tidak ditemukan kuis yang cocok dengan filter atau kata kunci pencarian Anda.</p>
+          <button
+            type="button"
+            className="topic-chip"
+            onClick={() => {
+              setFilter('all');
+              setSearch('');
+            }}
+          >
+            Tampilkan semua kuis
+          </button>
+        </div>
+      ) : (
+        /* History Card List */
+        <div ref={historyList} className="history-list">
+          {visibleItems.map((item, index) => {
+            const { quiz, lastResult, savedAt } = item;
+            const sessionList = item.attempts?.length
+              ? item.attempts
+              : item.results ?? [];
+            const effectiveScore = getEffectiveScore(lastResult);
+            const isPendingScore = Boolean(lastResult && lastResult.finalScore === null);
+            const timerSeconds = quizTimerSeconds(quiz);
+            const timerDescription =
+              timerSeconds > 0
+                ? `${durationLabel(timerSeconds)}${quiz.displayMode === 'sequential' ? ' / soal' : ' total'}`
+                : durationLabel(0);
+            const uniqueTypes = [...new Set(quiz.questions.map(questionType))]
+              .map((t) => questionLabels[t])
+              .join(' · ');
+
+            const formattedDate = savedAt
+              ? new Date(savedAt).toLocaleDateString('id-ID', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : 'Baru tersimpan';
+
+            const scoreTone = !lastResult
+              ? 'unstarted'
+              : isPendingScore
+                ? 'pending'
+                : (effectiveScore ?? 0) >= 80
+                  ? 'high'
+                  : (effectiveScore ?? 0) >= 60
+                    ? 'mid'
+                    : 'low';
+
+            return (
+              <article
+                key={quiz.id}
+                data-motion-key={quiz.id}
+                style={{ '--card-delay': `${Math.min(index, 6) * 40}ms` } as React.CSSProperties}
+                className={`history-card status-${scoreTone}`}
+              >
+                <div className="history-card-body">
+                  <div className="history-card-meta">
+                    <span className="history-topic-badge">{quiz.topic}</span>
+                    <span className="history-difficulty-badge">
+                      {difficultyName(quiz.difficulty)}
+                    </span>
+                    <time className="history-date" dateTime={savedAt}>
+                      {formattedDate}
+                    </time>
+                  </div>
+
+                  <h3 className="history-card-title">{quiz.title}</h3>
+
+                  {quiz.summary && (
+                    <p className="history-card-summary">{quiz.summary}</p>
+                  )}
+
+                  <div className="history-specs">
+                    <span className="history-spec-chip">
+                      <Layers size={12} aria-hidden="true" />
+                      {quiz.questions.length} Soal
+                    </span>
+                    <span className="history-spec-chip">{uniqueTypes}</span>
+                    <span className="history-spec-chip">
+                      <Clock size={12} aria-hidden="true" />
+                      {quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'} · {timerDescription}
+                    </span>
+                    {quiz.model && (
+                      <span className="history-spec-chip is-model">
+                        <Sparkles size={11} aria-hidden="true" />
+                        {modelName(quiz.model)}
+                      </span>
+                    )}
+                  </div>
+
+                  {sessionList.length > 1 && (
+                    <div className="history-session-picker">
+                      <span className="history-session-label">
+                        Riwayat pengerjaan ({sessionList.length} sesi):
+                      </span>
+                      <Select
+                        className="field-input"
+                        aria-label={'Pilih hasil sesi ' + quiz.title}
+                        value={
+                          lastResult?.submission.attemptId ??
+                          lastResult?.submission.completedAt
+                        }
+                        onChange={(e) => {
+                          const selected = sessionList.find(
+                            (r) =>
+                              (r.submission.attemptId ??
+                                r.submission.completedAt) === e.target.value
+                          );
+                          if (selected) {
+                            if (onViewResult) onViewResult(selected);
+                            else onSelectQuiz(quiz);
+                          }
+                        }}
+                      >
+                        {sessionList.map((r, i) => (
+                          <option
+                            key={r.submission.attemptId ?? r.submission.completedAt}
+                            value={r.submission.attemptId ?? r.submission.completedAt}
+                          >
+                            Sesi {i + 1} ·{' '}
+                            {new Date(r.submission.completedAt).toLocaleString('id-ID')} ·{' '}
+                            {r.finalScore === null ? 'Belum final' : `${r.score}/100`}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
                 </div>
 
-                <h3 className="text-base font-bold text-slate-900 leading-snug">
-                  {quiz.title}
-                </h3>
+                {/* Score Showcase & Action Cluster */}
+                <div className="history-card-aside">
+                  {lastResult ? (
+                    <div className={`history-score-panel tone-${scoreTone}`}>
+                      <div className="history-score-head">
+                        <span className="history-score-caption">
+                          {isPendingScore ? 'Evaluasi' : 'Skor Akhir'}
+                        </span>
+                        {sessionList.length > 1 && (
+                          <span className="history-attempt-pill">
+                            {sessionList.length}x
+                          </span>
+                        )}
+                      </div>
+                      <div className="history-score-readout">
+                        {isPendingScore ? (
+                          <strong className="is-pending-text">Belum final</strong>
+                        ) : (
+                          <>
+                            <strong>{effectiveScore ?? lastResult.score}</strong>
+                            <span>/100</span>
+                          </>
+                        )}
+                      </div>
+                      {!isPendingScore && effectiveScore !== null && (
+                        <div className="history-score-bar" aria-hidden="true">
+                          <span
+                            style={{
+                              width: `${Math.max(0, Math.min(100, effectiveScore))}%`,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="history-unstarted-panel">
+                      <span className="history-unstarted-dot" aria-hidden="true" />
+                      <div>
+                        <strong>Belum dikerjakan</strong>
+                        <span>Siap dimulai kapan saja</span>
+                      </div>
+                    </div>
+                  )}
 
-                <p className="text-xs text-slate-500 line-clamp-1">{quiz.summary}</p><p className="field-help">{[...new Set(quiz.questions.map(questionType))].map(t=>questionLabels[t]).join(' · ')}</p>{results&&results.length>1&&<Select className="field-input" aria-label={'Pilih hasil sesi '+quiz.title} value={lastResult?.submission.attemptId??lastResult?.submission.completedAt} onChange={e=>{const r=results.find(r=>(r.submission.attemptId??r.submission.completedAt)===e.target.value);if(r)onViewResult?.(r);}}>{results.map((r,i)=><option key={r.submission.attemptId??r.submission.completedAt} value={r.submission.attemptId??r.submission.completedAt}>Sesi {i+1} · {new Date(r.submission.completedAt).toLocaleString('id-ID')} · {r.finalScore===null?'Belum final':r.score+'/100'}</option>)}</Select>}
-                <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-1"><Clock size={12} />{quiz.displayMode === 'sequential' ? 'Sekuensial' : 'Non sekuensial'} · {durationLabel(quizTimerSeconds(quiz))}{quizTimerSeconds(quiz) > 0 ? quiz.displayMode === 'sequential' ? ' / soal' : ' total' : ''}</p>
-              </div>
+                  <div className="history-card-actions">
+                    <Button
+                      label={lastResult ? 'Lihat hasil' : 'Lanjutkan kuis'}
+                      icon={
+                        lastResult ? (
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        ) : (
+                          <Play className="w-3.5 h-3.5" />
+                        )
+                      }
+                      iconPosition={lastResult ? 'trailing' : 'leading'}
+                      variant="primary"
+                      size="sm"
+                      className="history-primary-action"
+                      onClick={() =>
+                        lastResult && onViewResult
+                          ? onViewResult(lastResult)
+                          : onSelectQuiz(quiz)
+                      }
+                    />
 
-              {/* Score or Action */}
-              <div className="flex items-center gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 shrink-0">
-                {lastResult && (
-                  <div className="text-right px-3 py-1 bg-blue-50/80 rounded-lg border border-blue-100">
-                    <span className="text-[10px] text-slate-500 uppercase block">Skor</span>
-                    <span className="text-base font-bold text-blue-700 font-mono tabular-nums">
-                      {lastResult.finalScore===null?'Belum final':lastResult.score+'/100'}
-                    </span>
+                    {lastResult && (
+                      <button
+                        type="button"
+                        className="history-retake-btn"
+                        onClick={() =>
+                          onRetakeQuiz ? onRetakeQuiz(quiz) : onSelectQuiz(quiz)
+                        }
+                        title="Kerjakan ulang kuis ini dari awal"
+                      >
+                        <RotateCcw size={14} aria-hidden="true" />
+                        <span>Lanjutkan kuis</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setDeletingId(quiz.id)}
+                      className="history-delete-btn"
+                      aria-label="Hapus kuis ini"
+                      title="Hapus kuis ini"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-                )}
-
-                <Button
-                  label={lastResult?'Lihat hasil':'Lanjutkan kuis'}
-                  icon={<Play className="w-3.5 h-3.5" />}
-                  iconPosition="leading"
-                  variant="primary"
-                  size="sm"
-                  onClick={() => lastResult&&onViewResult?onViewResult(lastResult):onSelectQuiz(quiz)}
-                />
-                {lastResult&&<button type="button" className="topic-chip" onClick={()=>onSelectQuiz(quiz)}>Lanjutkan kuis</button>}
-
-                <button
-                  type="button"
-                  onClick={() => setDeletingId(quiz.id)}
-                  className="p-2 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-50 transition-colors"
-                  aria-label="Hapus kuis ini"
-                  title="Hapus kuis ini"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
 
       {/* Confirmation Clear All */}
       <ConfirmModal

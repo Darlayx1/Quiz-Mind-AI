@@ -131,7 +131,7 @@
 .preparation-summary > li:nth-child(3) { animation-delay: 120ms; }
 .preparation-description, .preparation-start { animation: qm-reveal 420ms var(--motion-ease) 160ms both; }
 [data-ambient-active=false] *, [data-ambient-visible=false] *,
-html[data-ambient-paused=true] :is(.processing-visual,.preparation-visual) * { animation-play-state: paused !important; }
+html[data-ambient-paused=true] :is(.processing-visual,.preparation-visual,.history-visual) * { animation-play-state: paused !important; }
 html[data-ambient-paused=true] .processing-track.is-indeterminate .processing-track-fill { animation-play-state: paused !important; }
 
 /* The exam stays quiet: selection carries the feedback, decoration never loops. */
@@ -158,17 +158,25 @@ html[data-ambient-paused=true] .processing-track.is-indeterminate .processing-tr
 .results-page .result-score-track > span::after { animation: none; opacity: 0; }
 .results-page .result-summary[data-celebrate=true] .result-score-track > span::after { animation: result-polish 1100ms var(--motion-ease) 150ms both; }
 .results-page .review-filters button { transition-duration: var(--motion-select); }
-.history-card { transition: border-color var(--motion-select), box-shadow var(--motion-select); }
-.history-empty > :first-child { background: linear-gradient(145deg,#eef4fc,#f8fafc); box-shadow: 0 8px 24px -16px #214f8260; animation: qm-surface-in 450ms var(--motion-ease) both; }
+.history-header { animation: qm-reveal 440ms var(--motion-ease) both; }
+.history-overview > .history-metric-card { animation: qm-reveal 460ms var(--motion-ease) 55ms both; }
+.history-overview > .history-metric-card:nth-child(2) { animation-delay: 95ms; }
+.history-overview > .history-metric-card:nth-child(3) { animation-delay: 135ms; }
+.history-toolbar { animation: qm-reveal 460ms var(--motion-ease) 160ms both; }
+.history-page .history-card { animation: qm-reveal 420ms var(--motion-ease) var(--card-delay, 0ms) both; }
+.history-card { transition: transform var(--motion-select) var(--motion-ease), border-color var(--motion-select), box-shadow var(--motion-select); }
+.history-empty > :not(.history-visual) { animation: qm-reveal 440ms var(--motion-ease) 80ms both; }
 .app-toast { box-shadow: 0 12px 32px #14273e20,0 2px 6px #14273e0a; }
 
 @media (hover:hover) and (pointer:fine) {
   .qm-button:hover:not(:disabled):not(:active), .settings-primary:hover:not(:disabled):not(:active) { transform: translateY(-1px); }
-  .composer-cta:hover:not(:disabled), .generate-button:hover:not(:disabled), .preparation-start:hover:not(:disabled) { box-shadow: 0 8px 18px -8px #17375b55, inset 0 1px 0 #ffffff26; }
-  .composer-cta:hover:not(:disabled) > span:last-child svg, .generate-button:hover:not(:disabled) > span:last-child svg, .preparation-start:hover:not(:disabled) > svg { transform: translateX(3px); }
+  .composer-cta:hover:not(:disabled), .generate-button:hover:not(:disabled), .preparation-start:hover:not(:disabled), .history-empty-cta:hover:not(:disabled), .history-primary-action:hover:not(:disabled) { box-shadow: 0 8px 18px -8px #17375b55, inset 0 1px 0 #ffffff26; }
+  .composer-cta:hover:not(:disabled) > span:last-child svg, .generate-button:hover:not(:disabled) > span:last-child svg, .preparation-start:hover:not(:disabled) > svg, .history-primary-action:hover:not(:disabled) > span:last-child svg { transform: translateX(3px); }
   .quick-starts > button:hover { transform: translateY(-3px); border-color: #b0c5df; box-shadow: var(--motion-shadow); }
   .quick-starts > button:active { transform: translateY(0) scale(.99); }
   .history-card:hover { border-color: #b0c5df; box-shadow: var(--motion-shadow); }
+  .history-page .history-card:hover { transform: translateY(-2px); border-color: #9fb8d8; box-shadow: 0 18px 42px -24px #17375b45, 0 2px 6px #14273e08; }
+  .history-page .history-card:hover::before { top: 10px; bottom: 10px; }
   .quiz-exam .quiz-option-interactive:hover { transform: none; }
 }
 @media (max-width:767px) {
@@ -190,7 +198,7 @@ html[data-ambient-paused=true] .processing-track.is-indeterminate .processing-tr
 }
 
 @media print {
-  .smart-home::before, .results-page .result-summary::after { display: none !important; }
+  .smart-home::before, .history-page::before, .history-empty::before, .results-page .result-summary::after { display: none !important; }
   html *, html *::before, html *::after { animation: none !important; transition: none !important; }
   .home-heading h1 span { background: none; -webkit-text-fill-color: currentColor; }
 }
