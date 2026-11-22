@@ -143,7 +143,7 @@ try {
   assert.equal(groundedQuiz.questions.length, 6);
   assert.ok(groundedQuiz.usedGrounding && groundedQuiz.webCheckedAt);
   assert.ok(groundedQuiz.questions.every(q => q.groundingSources.length));
-  // A quota rejection moves to a different key and survives page reload.
+  // A quota rejection fails immediately without key failover and pauses the limited key.
   const first = (await localRepository.keys())[0];
   await localRepository.putKey({label:'',secret:'second-fixture-secret'});
   const second = (await localRepository.keys()).find(k=>k.id!==first.id)!;
@@ -151,12 +151,14 @@ try {
   const providerFetch=globalThis.fetch;
   let failoverCalls=0;
   globalThis.fetch=async (...args)=>{failoverCalls++;if(failoverCalls===1)return Response.json({error:{message:'Quota limit',code:429}},{status:429});return providerFetch(...args);};
-  const failoverQuiz=await generateWorkspaceQuiz(base,{...preferences,keyId:first.id,fallback:false},await localRepository.keys(),localRepository,async()=>{},new AbortController().signal);
-  assert.equal(failoverQuiz.questions.length,1);assert.equal(failoverCalls,2);
+  await assert.rejects(generateWorkspaceQuiz(base,{...preferences,keyId:first.id,fallback:false},await localRepository.keys(),localRepository,async()=>{},new AbortController().signal),(e:any)=>e.status===429);
+  assert.equal(failoverCalls,1,'Must not automatically fail over to another key on 429');
   const paused=(await localRepository.keys()).find(k=>k.id===first.id)!;
   assert.ok(keyPaused(paused));assert.equal(paused.enabled,true,'Manual enablement stays separate from temporary pause');
   assert.equal(keyPaused(paused,Date.parse(paused.testedAt!)+KEY_LIMIT_PAUSE_MS),false);
   assert.deepEqual(availableKeys(await localRepository.keys(),{...preferences,keyId:first.id,fallback:false}).map(k=>k.id),[second.id]);
+  const retryQuiz=await generateWorkspaceQuiz(base,{...preferences,keyId:first.id,fallback:false},await localRepository.keys(),localRepository,async()=>{},new AbortController().signal);
+  assert.equal(retryQuiz.questions.length,1);assert.equal(failoverCalls,2);
   globalThis.fetch=providerFetch;
   await localRepository.putKey({label:'',secret:'third-fixture-secret'});
   await localRepository.putKey({label:'',secret:'fourth-fixture-secret'});
@@ -164,8 +166,7 @@ try {
   await localRepository.recordKeyOutcome(first.id,'available');
   failure='all-quota';const beforeLimit=requests.length;
   await assert.rejects(generateWorkspaceQuiz(base,preferences,await localRepository.keys(),localRepository,async()=>{},new AbortController().signal));
-  assert.equal(requests.length-beforeLimit,3,'Stop after three different quota-limited keys');
-  assert.equal(availableKeys(await localRepository.keys(),preferences).length,1);
+  assert.equal(requests.length-beforeLimit,1,'Stop immediately after single quota-limited key without failover');
   failure=undefined;
   console.log('PASS: active generator schemas for all seven types with/without search, Gemma/custom compatibility, sparse distributions, HTTP/network diagnostics, timeout/cancel, and no repeated invalid output. No external API requests.');
 } finally {
@@ -293,11 +294,11 @@ try {
   accountKeys.push({id:'account-backup',enabled:true});accountQuotaFailures=1;
   const beforeFailover=accountCalls;
   response=await handler!(request({...preferences,keyId:accountFirst.id,fallback:false}));
-  assert.equal(response.status,200);assert.equal(accountCalls-beforeFailover,2);assert.equal(quotaReservations,1);
+  assert.equal(response.status,429);assert.equal(accountCalls-beforeFailover,1);assert.equal(quotaReservations,0);
   assert.equal(accountFirst.status,'quota');
   const beforePaused=accountCalls;
   response=await handler!(request({...preferences,keyId:accountFirst.id}));
-  assert.equal(response.status,200);assert.equal(accountCalls-beforePaused,1,'Account bypasses a paused primary key');
+  assert.equal(response.status,200);assert.equal(accountCalls-beforePaused,1,'Account bypasses a paused primary key on next manual retry');
   let providerSignal: AbortSignal | undefined;
   const originalTimeout = AbortSignal.timeout;
   const previousProviderCall = runtime.__accountGenerationCall;

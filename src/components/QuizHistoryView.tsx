@@ -22,8 +22,6 @@ import {
   Sparkles,
   Layers,
   RotateCcw,
-  Award,
-  CheckCircle2,
 } from 'lucide-react';
 
 export interface SavedHistoryItem {
@@ -111,24 +109,8 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
   const historyList = useRef<HTMLDivElement>(null);
 
   const totalQuizzes = historyItems.length;
-  const totalQuestions = historyItems.reduce((sum, item) => sum + item.quiz.questions.length, 0);
-  const completedItems = historyItems.filter((item) => Boolean(item.lastResult));
-  const completedCount = completedItems.length;
+  const completedCount = historyItems.filter((item) => Boolean(item.lastResult)).length;
   const unstartedCount = totalQuizzes - completedCount;
-
-  const totalAttempts = historyItems.reduce((sum, item) => {
-    const sessions = item.attempts?.length ? item.attempts : item.results ?? (item.lastResult ? [item.lastResult] : []);
-    return sum + sessions.length;
-  }, 0);
-
-  const finalizedScores = completedItems
-    .map((item) => getEffectiveScore(item.lastResult))
-    .filter((score): score is number => score !== null);
-
-  const avgScore =
-    finalizedScores.length > 0
-      ? Math.round((finalizedScores.reduce((sum, s) => sum + s, 0) / finalizedScores.length) * 10) / 10
-      : null;
 
   const activeFilter: HistoryFilter =
     (filter === 'completed' && completedCount === 0) || (filter === 'unstarted' && unstartedCount === 0)
@@ -230,64 +212,6 @@ export const QuizHistoryView: React.FC<QuizHistoryViewProps> = ({
           />
         </div>
       </header>
-
-      {/* Systematic Overview & Telemetry Strip */}
-      <section className="history-overview" aria-label="Ringkasan arsip kuis">
-        <div className="history-metric-card">
-          <div className="history-metric-top">
-            <span className="history-metric-label">Koleksi Tersimpan</span>
-            <span className="history-metric-icon" aria-hidden="true">
-              <Layers size={16} />
-            </span>
-          </div>
-          <p className="history-metric-value">
-            <strong>{totalQuizzes}</strong>
-            <span>kuis</span>
-          </p>
-          <p className="history-metric-foot">
-            {totalQuestions} butir soal terarsip di ruang ini
-          </p>
-        </div>
-
-        <div className="history-metric-card">
-          <div className="history-metric-top">
-            <span className="history-metric-label">Status Pengerjaan</span>
-            <span className="history-metric-icon is-emerald" aria-hidden="true">
-              <CheckCircle2 size={16} />
-            </span>
-          </div>
-          <p className="history-metric-value">
-            <strong>{completedCount}</strong>
-            <span>/ {totalQuizzes} selesai</span>
-          </p>
-          <p className="history-metric-foot">
-            {totalAttempts > 0 ? `${totalAttempts} sesi pengerjaan tercatat` : 'Belum ada sesi yang diselesaikan'}
-            {unstartedCount > 0 ? ` · ${unstartedCount} siap dimulai` : ''}
-          </p>
-        </div>
-
-        <div className="history-metric-card is-highlight">
-          <div className="history-metric-top">
-            <span className="history-metric-label">Rata-rata Skor Final</span>
-            <span className="history-metric-icon is-accent" aria-hidden="true">
-              <Award size={16} />
-            </span>
-          </div>
-          <p className="history-metric-value">
-            <strong>{avgScore !== null ? avgScore : '—'}</strong>
-            {avgScore !== null && <span>/ 100</span>}
-          </p>
-          {avgScore !== null ? (
-            <div className="history-overview-track" aria-hidden="true">
-              <span style={{ width: `${Math.max(0, Math.min(100, avgScore))}%` }} />
-            </div>
-          ) : (
-            <p className="history-metric-foot">
-              Selesaikan kuis untuk melihat rata-rata capaian
-            </p>
-          )}
-        </div>
-      </section>
 
       {/* Dynamic Filter, Search & Sort Toolbar */}
       <section className="history-toolbar" aria-label="Filter dan pencarian riwayat">

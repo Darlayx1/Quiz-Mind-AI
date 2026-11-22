@@ -6,6 +6,12 @@ import { GoogleGenAI } from "npm:@google/genai@2.27.0";
 var isProvider = (value) => value === "gemini";
 var GEMINI_MODELS = [
   {
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    tag: "Generasi terbaru",
+    description: "Model generasi terbaru untuk pembuatan kuis dan evaluasi yang presisi."
+  },
+  {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
     tag: "Penalaran mendalam",
@@ -16,18 +22,6 @@ var GEMINI_MODELS = [
     name: "Gemini 3.7 Flash",
     tag: "Penalaran & analisis",
     description: "Untuk latihan dengan penalaran bertahap dan analisis konsep."
-  },
-  {
-    id: "gemini-3.6-flash",
-    name: "Gemini 3.6 Flash",
-    tag: "Serbaguna",
-    description: "Untuk pemahaman terapan dan beragam topik belajar."
-  },
-  {
-    id: "gemini-3.5-flash",
-    name: "Gemini 3.5 Flash",
-    tag: "Latihan harian",
-    description: "Untuk membangun pemahaman melalui latihan rutin."
   },
   {
     id: "gemini-3.5-flash-lite",
@@ -45,7 +39,7 @@ var GEMINI_MODELS = [
 var AI_MODELS = [
   ...GEMINI_MODELS.map((model) => ({ ...model, provider: "gemini", grounding: model.id !== "gemma-4-31b-it", structured: model.id !== "gemma-4-31b-it" }))
 ];
-var DEFAULT_MODEL = "gemini-3.8-flash";
+var DEFAULT_MODEL = "gemini-4-hydrogen";
 var normalizeModelId = (id) => {
   if (!id) return "";
   return id.trim();
@@ -57,7 +51,7 @@ var modelInfo = (id) => {
 };
 
 // src/evaluationSettings.ts
-var defaultEvaluationSettings = { enabled: true, followGenerator: false, provider: "gemini", model: DEFAULT_MODEL, shortAnswerMode: "ai", allowKeyFallback: true, allowModelFallback: false, fallbackModel: DEFAULT_MODEL, allowProviderFallback: false, fallbackProvider: "gemini", fallbackProviderModel: "gemini-3.5-flash-lite", reviewFlagged: true };
+var defaultEvaluationSettings = { enabled: true, followGenerator: false, provider: "gemini", model: DEFAULT_MODEL, shortAnswerMode: "ai", allowKeyFallback: false, allowModelFallback: false, fallbackModel: DEFAULT_MODEL, allowProviderFallback: false, fallbackProvider: "gemini", fallbackProviderModel: "gemini-3.5-flash-lite", reviewFlagged: true };
 function normalizeEvaluationSettings(input) {
   if (input === void 0) return { ...defaultEvaluationSettings };
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Pengaturan evaluasi AI tidak valid.");
@@ -67,7 +61,7 @@ function normalizeEvaluationSettings(input) {
     ...input,
     enabled: true,
     followGenerator: false,
-    allowKeyFallback: true,
+    allowKeyFallback: false,
     allowModelFallback: false,
     allowProviderFallback: false,
     shortAnswerMode: "ai",
@@ -379,8 +373,6 @@ async function evaluateQuiz(raw, options) {
     return (source?.provider ?? quiz.provider ?? "gemini") !== requestedProvider || (source?.model ?? quiz.model ?? DEFAULT_MODEL) !== requestedModel;
   })) throw new EvaluationError("Pisahkan batch evaluasi yang memakai model pembuat soal berbeda.", "MIXED_EVALUATOR_MODELS");
   const candidates = [{ provider: requestedProvider, model: requestedModel }];
-  if (settings.allowModelFallback) candidates.push({ provider: requestedProvider, model: settings.fallbackModel });
-  if (settings.allowProviderFallback) candidates.push({ provider: settings.fallbackProvider, model: settings.fallbackProviderModel });
   const fingerprint = JSON.stringify({ v: 1, requestedProvider, requestedModel, attempt: input.submission.attemptId ?? input.submission.submissionId, revisions: questions.map((q) => input.previous?.[q.id]?.revision ?? 0), questions, answers: questions.map((q) => input.submission.userAnswers[q.id]), settings });
   let saved = cache.get(options.pool);
   if (!saved) {
@@ -421,7 +413,7 @@ async function evaluateQuiz(raw, options) {
           if (sameFailure >= 2) throw new PoolError("Dua kegagalan evaluator identik. Periksa koneksi/model sebelum melanjutkan.", 503, "POOL_CIRCUIT");
           throw error;
         }
-      }, { signal, provider: candidate.provider, model: candidate.model, maxAttempts: remaining - calls, allowKeyFallback: settings.allowKeyFallback });
+      }, { signal, provider: candidate.provider, model: candidate.model, maxAttempts: 1, allowKeyFallback: false });
       signal.throwIfAborted();
       const result = parseEvaluationOutput(sanitizeAndParseJson(text2), questions, input.submission.userAnswers, settings);
       usedProvider = candidate.provider;

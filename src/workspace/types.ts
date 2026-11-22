@@ -39,12 +39,12 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 3, fallback: true, evaluation: { ...defaultEvaluationSettings } },
+  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 1, fallback: false, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {
   const defaults = emptyWorkspace();
-  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences, fallback: true, maxAttempts: 3, evaluation: normalizeEvaluationSettings(value?.preferences?.evaluation) },
+  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences, fallback: false, allowGroundingFallback: false, maxAttempts: 1, evaluation: normalizeEvaluationSettings(value?.preferences?.evaluation) },
     history: Array.isArray(value?.history) ? value.history : [],
     activity: Array.isArray(value?.activity) ? value.activity : [] };
 }

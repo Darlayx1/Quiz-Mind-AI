@@ -2,6 +2,7 @@ import { buildResult } from './scoring.js';
 import { evaluateWorkspace } from './workspace/evaluation.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Settings2, Monitor, Cloud, ArrowRight, RefreshCw } from 'lucide-react';
+import { Button } from './components/Button.js';
 import type { Quiz, QuizConfig, QuizSubmission, QuizResult } from './types/quiz.js';
 import type { AppView } from './types/app.js';
 import { TopBar } from './components/TopBar.js';
@@ -34,6 +35,7 @@ export default function App() {
   const [cancellingEvaluation, setCancellingEvaluation] = useState(false);
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [aiFailure, setAiFailure] = useState<{ task: 'generation' | 'evaluation'; message: string; onBack: () => void; onRetry: () => void } | null>(null);
   const [toast, setToastState] = useState<{ kind: 'success' | 'error'; message: string; scope: string } | null>(null);
   const setToast = (next: { kind: 'success' | 'error'; message: string } | null) => setToastState(next ? { ...next, scope: w.scope } : null);
   const [generation, setGeneration] = useState<{ config: QuizConfig; completed: number; startedAt: number; isSaving: boolean; preferences?: import('./workspace/types.js').Preferences }>({ config: { topic: '', questionCount: 1 } as QuizConfig, completed: 0, startedAt: 0, isSaving: false });
@@ -53,7 +55,7 @@ export default function App() {
   useEffect(() => {
     workspaceEpoch.current++;
     abort.current?.abort(new Error('Sesi atau ruang penyimpanan berubah. Operasi sebelumnya dihentikan.')); abort.current = null;
-    setLoading(false); setIsEvaluating(false); setActiveEvaluation(null); setCancelling(false); setCancellingEvaluation(false); setToast(null); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
+    setLoading(false); setIsEvaluating(false); setActiveEvaluation(null); setCancelling(false); setCancellingEvaluation(false); setAiFailure(null); setToast(null); setQuiz(null); setResult(null); setView('creator'); setError(''); attemptedProgress.current = ''; restoredScope.current = null;
   }, [w.scope, w.mode]);
   useEffect(() => {
     if (!w.ready || restoredScope.current === w.scope) return;
@@ -71,7 +73,7 @@ export default function App() {
     attemptedProgress.current = serialized;
     return w.update(d => ({ ...d, progress }), w.scope).catch(() => { attemptedProgress.current = ''; });
   }, [w.update, w.scope]);
-  const newQuiz = () => { if(isEvaluating)return; setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
+  const newQuiz = () => { if(isEvaluating)return; setAiFailure(null); setQuiz(null); setResult(null); setError(''); setView('creator'); void w.update(d => ({ ...d, progress: null })).catch(() => {}); };
   const generate = async (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
     if (scope.current !== w.scope || abort.current || loading || isEvaluating || !w.ready || !w.repository) return;
     const origin = w.scope; const repository = w.repository;
@@ -79,7 +81,7 @@ export default function App() {
     const controller = new AbortController(); abort.current = controller;
     generationReturnView.current = view;
     const started = Date.now(); let currentJob: GenerationJob | undefined;
-    setLoading(true); setError(''); setGeneration({ config, completed: resume?.questions.length || 0, startedAt: started, isSaving: false, preferences });
+    setLoading(true); setError(''); setAiFailure(null); setGeneration({ config, completed: resume?.questions.length || 0, startedAt: started, isSaving: false, preferences });
     activeJobId.current = null;
     try {
       const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
@@ -99,11 +101,19 @@ export default function App() {
     } catch (e) {
       if (scope.current !== origin || abort.current !== controller) return;
       const cancelled = controller.signal.aborted;
-      setError(cancelled ? '' : (e as Error).message);
-      if (!cancelled) setToast({ kind: 'error', message: `Pembuatan kuis gagal: ${(e as Error).message}` });
+      const message = (e as Error).message || 'Pembuatan kuis gagal.';
+      setError('');
       await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
-          detail: cancelled ? 'Dibatalkan pengguna' : (e as Error).message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
+          detail: cancelled ? 'Dibatalkan pengguna' : message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
+      if (!cancelled && scope.current === origin && abort.current === controller) {
+        setAiFailure({
+          task: 'generation',
+          message,
+          onBack: () => { setAiFailure(null); setError(''); setView(generationReturnView.current); },
+          onRetry: () => { setAiFailure(null); setError(''); startGeneration(config, undefined, preferences); },
+        });
+      }
     } finally { if (scope.current === origin && abort.current === controller) { if (!controller.signal.aborted) setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
   };
   const startGeneration = (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
@@ -145,7 +155,7 @@ export default function App() {
   const runEvaluation = async (source:QuizResult,targets?:string[],prepared?:{controller:AbortController;origin:string;startedAt:number}) => {
     if((!prepared&&(isEvaluating||abort.current))||loading||!w.repository||!w.ready)return;
     if(prepared&&(scope.current!==prepared.origin||abort.current!==prepared.controller||prepared.controller.signal.aborted))return;
-    const origin=w.scope,repository=w.repository,controller=prepared?.controller??new AbortController();abort.current=controller;setIsEvaluating(true);setError('');
+    const origin=w.scope,repository=w.repository,controller=prepared?.controller??new AbortController();abort.current=controller;setIsEvaluating(true);setError('');setAiFailure(null);
     const started=prepared?.startedAt??Date.now();
     const targetIds = targets ?? Object.entries(source.evaluations ?? {})
       .filter(([, e]) => e.earnedPoints === null && e.status !== 'needs_review')
@@ -166,10 +176,12 @@ export default function App() {
       savingConfirmed: true,
       isSavingCheckpoint: false,
     });
+    let latestResult = source;
     try{
       const evaluated=await evaluateWorkspace(source,targets,w.data.preferences,[...w.keys],repository,controller.signal,async (next,meta)=>{
         controller.signal.throwIfAborted();
         if(scope.current!==origin||abort.current!==controller)return;
+        latestResult = next;
         setActiveEvaluation(prev => prev ? { ...prev, isSavingCheckpoint: true } : null);
         await saveResult(next,origin);
         if(scope.current===origin&&abort.current===controller){
@@ -187,7 +199,23 @@ export default function App() {
       const failed=Object.values(evaluated.evaluations??{}).some(e=>e.status==='failed');
       await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.model??w.data.preferences.model,status:failed?'failed' as const:'success' as const,durationMs:Date.now()-started},...d.activity].slice(0,2000)}),origin);
     }catch(e){
-      if(scope.current===origin&&abort.current===controller)setError(controller.signal.aborted?'Evaluasi dibatalkan. Jawaban tetap tersimpan.':(e as Error).message);
+      if(scope.current===origin&&abort.current===controller){
+        if(controller.signal.aborted){
+          setError('Evaluasi dibatalkan. Jawaban tetap tersimpan.');
+        }else{
+          const message=(e as Error).message||'Evaluasi jawaban gagal.';
+          await w.update(d=>({...d,activity:[{id:crypto.randomUUID(),at:new Date().toISOString(),label:'Evaluasi jawaban',model:source.quiz.evaluationSettings?.model??w.data.preferences.evaluation?.model??w.data.preferences.model,status:'failed' as const,durationMs:Date.now()-started,detail:message},...d.activity].slice(0,2000)}),origin).catch(()=>{});
+          if(scope.current===origin&&abort.current===controller){
+            setError('');
+            setAiFailure({
+              task:'evaluation',
+              message,
+              onBack:()=>{setAiFailure(null);setError('');setView('results');},
+              onRetry:()=>{setAiFailure(null);setError('');void runEvaluation(latestResult,targets);},
+            });
+          }
+        }
+      }
     }finally{
       if(scope.current===origin&&abort.current===controller){
         setIsEvaluating(false);
@@ -303,6 +331,52 @@ export default function App() {
     </PageContainer>
     {!examActive && !processingMode && <footer className="app-footer print:hidden"><span><strong>Quiz Mind AI</strong> · Ruang untuk rasa ingin tahu.</span><button onClick={() => setSettings('account')}><Settings2 size={14} />Pengaturan AI</button></footer>}
     {settings && <AISettings key={w.scope} workspace={w} initialTab={settings} onClose={() => setSettings(null)} onSelectQuiz={selectQuiz} accountLocked={loading || isEvaluating || view === 'runner'} />}
+    {aiFailure && (
+      <div className="confirm-overlay fixed inset-0 z-[110] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div
+          className="confirm-window w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-xl shadow-xl border border-slate-200 p-6 flex flex-col gap-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="ai-failure-title"
+          aria-describedby="ai-failure-message"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-red-50 text-red-600">
+              <svg aria-hidden="true" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <h3 id="ai-failure-title" className="text-lg font-semibold text-slate-900">
+                {aiFailure.task === 'generation' ? 'Pembuatan Kuis Gagal' : 'Evaluasi AI Gagal'}
+              </h3>
+              <p id="ai-failure-message" className="mt-1.5 text-sm text-slate-600 leading-relaxed break-words">
+                {aiFailure.message}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <Button
+              label="Kembali"
+              variant="outline"
+              size="md"
+              iconPosition="none"
+              onClick={aiFailure.onBack}
+            />
+            <Button
+              label="Coba Lagi"
+              variant="primary"
+              size="md"
+              iconPosition="none"
+              autoFocus
+              onClick={aiFailure.onRetry}
+            />
+          </div>
+        </div>
+      </div>
+    )}
     <AnimatePresence key={`toast:${w.scope}`}>{toast?.scope === w.scope && <m.div key={toast.message} initial={{ opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: .2 }} className={`app-toast ${toast.kind}`} role={toast.kind === 'error' ? 'alert' : 'status'}>{toast.message}</m.div>}</AnimatePresence>
   </div>;
 }

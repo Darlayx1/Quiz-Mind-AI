@@ -103,15 +103,20 @@ await test('Parallel authenticated Edge pipeline (isolated fixtures)', async t =
       const previous = saved; saved = { questions: [] };
       const response = await handler(request()); assert.equal(response.status, 200); assert.equal((await response.json()).quiz.questions.length, 1); saved = previous;
     });
-    await t.test('account empty-source fallback is disclosed for all topics', async () => {
+    await t.test('account empty-source search rejects without silent fallback', async () => {
       const previous = saved; saved = undefined; emptySearch = true;
-      const response = await handler(request()); assert.equal(response.status, 200);
-      const quiz = (await response.json()).quiz;
-      assert.equal(quiz.usedGrounding, false); assert.equal(quiz.groundingFallbackUsed, true); assert.ok(quiz.generationWarnings.length);
-      saved = undefined; const before = generations;
-      const current = await handler(request({ config: { ...config, topic: 'Pedoman terapi terbaru' } }));
-      assert.equal(current.status, 200); const currentQuiz = (await current.json()).quiz; assert.equal(currentQuiz.usedGrounding, false); assert.ok(currentQuiz.generationWarnings.some((w: string) => w.includes('belum diverifikasi'))); assert.equal(generations, before + 1);
-      emptySearch = false; saved = previous;
+      const before = generations;
+      try {
+        const response = await handler(request()); assert.equal(response.status, 502);
+        assert.equal((await response.json()).code, 'PARALLEL_SEARCH_EMPTY');
+        saved = undefined;
+        const current = await handler(request({ config: { ...config, topic: 'Pedoman terapi terbaru' } }));
+        assert.equal(current.status, 502);
+        assert.equal((await current.json()).code, 'PARALLEL_SEARCH_EMPTY');
+        assert.equal(generations, before);
+      } finally {
+        emptySearch = false; saved = previous;
+      }
     });
     await t.test('manual Parallel key test searches without calling Gemini', async () => {
       const before = generations; const beforeSearch = searches;

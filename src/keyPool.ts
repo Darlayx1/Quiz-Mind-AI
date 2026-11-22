@@ -5,7 +5,7 @@ import type { EvaluationSettings } from './types/quiz.js';
 export type KeyEntry = { id: string; name: string; project: string; key: string; enabled: boolean; priority: number; provider?: AIProvider };
 export type PoolSettings = { mode: 'priority' | 'balanced'; allowModelFallback: boolean; allowGroundingFallback: boolean; allowKeyFallback?: boolean; allowProviderFallback?: boolean; preferredProvider?: AIProvider; preferredModel?: string; fallbackProvider?: AIProvider; fallbackModel?: string; modelFallbacks?: Partial<Record<AIProvider, string>>; evaluation?:EvaluationSettings };
 export type KeyCollection = { schemaVersion?: 3; keys: KeyEntry[]; settings: PoolSettings };
-export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: true, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'gemini', fallbackModel: 'gemini-3.5-flash-lite', modelFallbacks: { gemini: 'gemini-3.5-flash-lite' } };
+export const defaultSettings: PoolSettings = { mode: 'priority', allowModelFallback: false, allowGroundingFallback: false, allowKeyFallback: false, allowProviderFallback: false, preferredProvider: 'gemini', preferredModel: DEFAULT_MODEL, fallbackProvider: 'gemini', fallbackModel: 'gemini-3.5-flash-lite', modelFallbacks: { gemini: 'gemini-3.5-flash-lite' } };
 export type KeyHealth = { state: 'untested' | 'ready' | 'waiting' | 'invalid' | 'restricted'; until?: number; scope?: string; lastSuccess?: number; reason?: string; successes: number; failures: number };
 export type KeyUsage = { calls: number; successes: number; failures: number; inputTokens: number; outputTokens: number; thinkingTokens: number; totalTokens: number; measuredResponses: number; durationMs: number; lastModel?: string; lastCall?: number };
 export type PoolEvent = { at: number; keyId: string; model?: string; type: 'success' | 'failure' | 'fallback' | 'reset'; reason: string; targetId?: string };
@@ -24,6 +24,10 @@ export function validateCollection(value: unknown): KeyCollection {
   const settings: PoolSettings = {
     ...defaultSettings,
     ...data.settings,
+    allowModelFallback: false,
+    allowGroundingFallback: false,
+    allowKeyFallback: false,
+    allowProviderFallback: false,
     preferredProvider: 'gemini',
     preferredModel: modelInfo(rawSettings?.preferredModel)?.provider === 'gemini' ? rawSettings.preferredModel : DEFAULT_MODEL,
     fallbackProvider: 'gemini',

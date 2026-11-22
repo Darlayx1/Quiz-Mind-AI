@@ -56,7 +56,7 @@ try {
   }
   for (const variant of GENERATION_VARIANTS) {
     requests = [];
-    const config = normalizeQuizConfig({ ...base, questionType: 'single_choice', experiment: 'focused-medium' });
+    const config = normalizeQuizConfig({ ...base, model: 'gemini-3.8-flash', questionType: 'single_choice', experiment: 'focused-medium' });
     assert.ok(!('experiment' in config), 'HTTP configuration cannot enable experimental reasoning');
     const quiz = await generateQuizBatch(config, 'fixture-key-never-display', [], undefined, undefined, undefined,
       { stream: true, experiment: variant });

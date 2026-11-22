@@ -52,7 +52,7 @@ try{
  const submission={quizId:quiz.id,attemptId:crypto.randomUUID(),userAnswers:answers,bookmarkedQuestions:[],timeTakenSeconds:1,completedAt:new Date().toISOString()};
  const result=buildResult(quiz,submission,undefined,settings);
  const keys=(await localRepository.keys()).filter(k=>k.status==='available');
- const evaluated=await evaluateWorkspace(result,undefined,prefs,keys,localRepository,new AbortController().signal,async()=>{});
+ const evaluated=await evaluateWorkspace(result,undefined,{...prefs,keyId:keys[0].id},keys,localRepository,new AbortController().signal,async()=>{});
  assert.equal(evaluated.pendingCount,0);
  assert.equal(evaluated.evaluations![quiz.questions.find(q=>q.type==='essay')!.id].earnedPoints,5);
  assert.equal(generatedCalls,1);

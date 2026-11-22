@@ -168,20 +168,23 @@ await test('Quality generation and recovery (simulated providers; no external re
       const quiz = await generateWorkspaceQuiz(base, preferences, keys, localRepository, save, new AbortController().signal, resumed);
       assert.equal(quiz.questions.length, 1); assert.equal(generations, 1);
     });
-    await t.test('empty and irrelevant search fall back for stable material; warning and checkpoints survive', async () => {
-      for (const scenario of ['empty-search', 'catalogue-search'] as const) {
+    await t.test('empty and irrelevant search reject without falling back to ungrounded generation', async () => {
+      for (const [scenario, expectedCode] of [['empty-search', 'PARALLEL_SEARCH_EMPTY'], ['catalogue-search', 'PARALLEL_SEARCH_IRRELEVANT']] as const) {
         reset(); mode = scenario;
-        const quiz = await generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository, save, new AbortController().signal);
-        assert.equal(searches, 1); assert.equal(generations, 1); assert.equal(quiz.usedGrounding, false);
-        assert.equal(quiz.groundingFallbackUsed, true); assert.deepEqual(quiz.qualityReviews, []);
-        assert.ok(quiz.generationWarnings![0].includes('tanpa referensi web')); assert.ok(checkpoint!.parallelFallback);
+        await assert.rejects(
+          generateWorkspaceQuiz({ ...base, questionCount: 6, questionDistribution: { single_choice: 6 } }, preferences, keys, localRepository, save, new AbortController().signal),
+          (e: any) => e.code === expectedCode
+        );
+        assert.equal(searches, 1); assert.equal(generations, 0);
       }
     });
-    await t.test('empty research allows generation with an explicit unverified-current-information warning', async () => {
+    await t.test('empty research rejects for current-information topics without silent fallback', async () => {
       reset(); mode = 'empty-search';
-      const quiz = await generateWorkspaceQuiz({ ...base, topic: 'Pedoman terapi terbaru' }, preferences, keys, localRepository, save, new AbortController().signal);
-      assert.equal(quiz.questions.length, 1); assert.equal(quiz.usedGrounding, false);
-      assert.ok(quiz.generationWarnings!.some(w => w.includes('belum diverifikasi')));
+      await assert.rejects(
+        generateWorkspaceQuiz({ ...base, topic: 'Pedoman terapi terbaru' }, preferences, keys, localRepository, save, new AbortController().signal),
+        (e: any) => e.code === 'PARALLEL_SEARCH_EMPTY'
+      );
+      assert.equal(searches, 1); assert.equal(generations, 0);
     });
     await t.test('observed calibration separates guessing-inclusive outcomes, pending grades and repeat practice', async () => {
       reset();

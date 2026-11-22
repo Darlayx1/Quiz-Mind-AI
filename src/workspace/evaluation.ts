@@ -22,33 +22,19 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
     if(exhausted)throw new Error('Tiga percobaan evaluasi telah digunakan. Tinjau jawaban secara manual.');
     const candidates=availableKeys(await repository.keys(),preferences);
     if(!candidates.length)throw new Error('Semua API key sedang dijeda atau nonaktif. Jawaban tersimpan; evaluasi dapat dilanjutkan nanti.');
-    let evaluations:Record<string,QuestionEvaluation>|undefined,last:unknown,keyIndex=0,currentModel=model;
-    const remaining=Math.min(3,...group.map(id=>3-(previous[id]?.attemptCount??0)));
-    for(let attempt=0;attempt<remaining;attempt++){
-      signal.throwIfAborted();const key=candidates[keyIndex];
-      try{
-        const input={quiz:current.quiz,submission:current.submission,settings,targetQuestionIds:group,previous};
-        if(repository.scope==='guest'){
-          const {evaluateSingleCall}=await import('../server/evaluationService.js');
-          evaluations=await evaluateSingleCall(input,await localCredential(key.id),currentModel,AbortSignal.any([signal,AbortSignal.timeout(45000)]));
-          await repository.recordKeyOutcome(key.id,'available');
-        }else evaluations=(await invokeAccount({action:'evaluate',input,model:currentModel,keyId:key.id},signal,repository.scope)).evaluations;
-        break;
-      }catch(error){
-        if(signal.aborted)throw error;last=error;
-        if(repository.scope==='guest')await repository.recordKeyOutcome(key.id,keyStatus(error));
-        for(const id of group)previous[id]={...previous[id],attemptCount:(previous[id]?.attemptCount??0)+1};
-        const code=Number((error as any).status);
-        if(code===400)break;
-        if(keyStatus(error)!=='quota' && keyStatus(error)!=='invalid' && code!==404)break;
-        if(code===404||['invalid','quota'].includes(keyStatus(error))){
-          if(code!==404&&keyIndex+1<candidates.length)keyIndex++;
-          else if(settings.allowModelFallback&&currentModel!==settings.fallbackModel)currentModel=settings.fallbackModel;
-          else break;
-        }
-      }
+    const key=candidates[0];
+    let evaluations:Record<string,QuestionEvaluation>;
+    try{
+      const input={quiz:current.quiz,submission:current.submission,settings,targetQuestionIds:group,previous};
+      if(repository.scope==='guest'){
+        const {evaluateSingleCall}=await import('../server/evaluationService.js');
+        evaluations=await evaluateSingleCall(input,await localCredential(key.id),model,AbortSignal.any([signal,AbortSignal.timeout(45000)]));
+        await repository.recordKeyOutcome(key.id,'available');
+      }else evaluations=(await invokeAccount({action:'evaluate',input,model,keyId:key.id},signal,repository.scope)).evaluations;
+    }catch(error){
+      if(!signal.aborted&&repository.scope==='guest')await repository.recordKeyOutcome(key.id,keyStatus(error));
+      throw error;
     }
-    if(!evaluations){ evaluations={};for(const id of group)evaluations[id]={...previous[id],status:'failed',earnedPoints:null,feedback:(last as Error)?.message??'Evaluasi belum berhasil.'}; }
     const next=buildResult(current.quiz,current.submission,{...previous,...evaluations},settings);
     current=next;await checkpoint(next,{completed:cursor,total:ids.length,group});
   }

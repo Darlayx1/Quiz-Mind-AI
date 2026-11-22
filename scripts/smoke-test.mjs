@@ -18,7 +18,7 @@ for (const [name, mime] of [['tesseract-core-lstm.wasm', 'application/wasm'], ['
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), await readFile('dist/ingestion-assets/' + name), 'Worker preserves binary material-processing assets');
 }
 assert.equal((await call('/api/health')).status, 200);
-assert.deepEqual((await (await call('/api/health')).json()).models, ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemma-4-31b-it']);
+assert.deepEqual((await (await call('/api/health')).json()).models, ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemma-4-31b-it']);
 assert.equal((await call('/api/missing')).status, 404);
 assert.equal((await call('/api/generate-quiz', { topic: 'Aljabar' })).status, 503);
 assert.equal((await call('/api/generate-quiz', { topic: '' })).status, 400);

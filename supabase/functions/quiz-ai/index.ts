@@ -4,7 +4,6 @@ import { generateQuizBatch, classifyApiError } from '../_shared/quiz-engine.ts';
 import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
 
 import { searchParallel, usableResearch } from '../../../src/server/parallelSearch.ts';
-import { stableResearchFallbackCodes } from '../../../src/server/assessmentPolicy.ts';
 import { normalizeQuizConfig } from '../../../src/quizConfig.ts';
 
 const headers = {
@@ -175,7 +174,6 @@ Deno.serve(async request => {
       throw Object.assign(new Error('Key Parallel hanya dapat digunakan untuk pencarian web.'), { status: 400 });
     }
     const selectedKey = generationKeys.find(k => k.id === preferences?.keyId) || generationKeys[0];
-    const candidates = selectedKey ? [selectedKey, ...generationKeys.filter(k => k.id !== selectedKey.id)].slice(0, 3) : [];
     if (!selectedKey) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
 
     const fullConfig = normalizeQuizConfig({ ...body.config, model: preferences?.model, enableGrounding: preferences?.grounding });
@@ -184,25 +182,18 @@ Deno.serve(async request => {
       const cancellation = watchGenerationCancellation(job, userId, request.signal, isBackground);
       try {
         let research = job.result?.parallelResearch;
-        const generationState = job.result?.generationState || {};
 
         if (fullConfig.enableGrounding && preferences?.searchProvider === 'parallel') {
           const searchKey = keys.find(k => k.provider === 'parallel');
           if (!searchKey) throw Object.assign(new Error('Tambahkan atau aktifkan satu API key Parallel pada akun ini.'), { status: 400, code: 'PARALLEL_KEY_MISSING' });
-          if (!generationState.parallelFallback && !usableResearch(research, fullConfig.topic, fullConfig)) {
+          if (!usableResearch(research, fullConfig.topic, fullConfig)) {
             try {
               research = await searchParallel(fullConfig.topic, await getSecret(searchKey), cancellation.signal, fullConfig);
               await outcome(searchKey.id, userId, 'available');
             } catch (error) {
               cancellation.signal.throwIfAborted();
-              if (stableResearchFallbackCodes.includes(error.code)) {
-                generationState.parallelFallback = error.code;
-                research = undefined;
-                await outcome(searchKey.id, userId, 'available');
-              } else {
-                await outcome(searchKey.id, userId, statusOf(error));
-                throw error;
-              }
+              await outcome(searchKey.id, userId, statusOf(error));
+              throw error;
             }
             if (research) {
               job.result = { ...(job.result || {}), questions: [], parallelResearch: research };
@@ -245,37 +236,22 @@ Deno.serve(async request => {
           })().catch(() => { /* A progress write failure must not discard valid output. */ })
             .finally(() => { progressWrite = undefined; });
         };
-        // Retry only explicit quota rejection, using a different eligible key.
         let quiz;
-        for (let attempt = 0; attempt < candidates.length; attempt++) {
-          const key = candidates[attempt];
-          cancellation.signal.throwIfAborted();
-          if (attempt > 0) {
-            const { data: retryReserved, error: retryError } = await admin.rpc('qm_reserve_quota_retry', { p_user: userId, p_id: job.id, p_lease: job.lease_token, p_failed_key: candidates[attempt - 1].id });
-            if (retryError || !retryReserved) throw Object.assign(new Error('Percobaan cadangan tidak dapat dicadangkan.'), { status: 409 });
+        try {
+          quiz = await generateQuizBatch(
+            fullConfig,
+            await getSecret(selectedKey), [], cancellation.signal,
+            research, undefined, { stream: true, onProgress }
+          );
+          await outcome(selectedKey.id, userId, 'available');
+        } catch (error) {
+          if (cancellation.signal.aborted) {
+            if (cancellation.signal.reason?.name === 'TimeoutError') throw classifyApiError(cancellation.signal.reason, preferences?.model);
+            cancellation.signal.throwIfAborted();
           }
-          try {
-            quiz = await generateQuizBatch(
-              { ...fullConfig, enableGrounding: generationState.parallelFallback ? false : fullConfig.enableGrounding },
-              await getSecret(key), [], cancellation.signal,
-              generationState.parallelFallback ? undefined : research, undefined, { stream: true, onProgress }
-            );
-            if (generationState.parallelFallback) {
-              quiz.groundingFallbackUsed = true;
-              quiz.generationWarnings = [...(quiz.generationWarnings || []), 'Referensi web tidak tersedia. Kuis dibuat tanpa referensi web; informasi terbaru belum diverifikasi.'];
-            }
-            await outcome(key.id, userId, 'available');
-            break;
-          } catch (error) {
-            if (cancellation.signal.aborted) {
-              if (cancellation.signal.reason?.name === 'TimeoutError') throw classifyApiError(cancellation.signal.reason, preferences?.model);
-              cancellation.signal.throwIfAborted();
-            }
-            const classified = classifyApiError(error, preferences?.model);
-            await outcome(key.id, userId, statusOf(classified));
-            if (statusOf(classified) !== 'quota' || attempt + 1 >= candidates.length) throw classified;
-            latestProgress = 0;
-          }
+          const classified = classifyApiError(error, preferences?.model);
+          await outcome(selectedKey.id, userId, statusOf(classified));
+          throw classified;
         }
 
         cancellation.signal.throwIfAborted();

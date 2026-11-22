@@ -3,6 +3,12 @@ export const isProvider = (value: unknown): value is AIProvider => value === 'ge
 export const providerName = (_value?: AIProvider) => 'Google Gemini';
 const GEMINI_MODELS = [
   {
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    tag: "Generasi terbaru",
+    description: "Model generasi terbaru untuk pembuatan kuis dan evaluasi yang presisi.",
+  },
+  {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
     tag: "Penalaran mendalam",
@@ -13,18 +19,6 @@ const GEMINI_MODELS = [
     name: "Gemini 3.7 Flash",
     tag: "Penalaran & analisis",
     description: "Untuk latihan dengan penalaran bertahap dan analisis konsep.",
-  },
-  {
-    id: "gemini-3.6-flash",
-    name: "Gemini 3.6 Flash",
-    tag: "Serbaguna",
-    description: "Untuk pemahaman terapan dan beragam topik belajar.",
-  },
-  {
-    id: "gemini-3.5-flash",
-    name: "Gemini 3.5 Flash",
-    tag: "Latihan harian",
-    description: "Untuk membangun pemahaman melalui latihan rutin.",
   },
   {
     id: "gemini-3.5-flash-lite",
@@ -43,7 +37,7 @@ export const AI_MODELS = [
   ...GEMINI_MODELS.map(model => ({ ...model, provider: 'gemini' as const, grounding: model.id !== 'gemma-4-31b-it', structured: model.id !== 'gemma-4-31b-it' })),
 ];
 export type AIModel = string;
-export const DEFAULT_MODEL: AIModel = "gemini-3.8-flash";
+export const DEFAULT_MODEL: AIModel = "gemini-4-hydrogen";
 export const normalizeModelId = (id?: string): string => {
   if (!id) return '';
   return id.trim();
