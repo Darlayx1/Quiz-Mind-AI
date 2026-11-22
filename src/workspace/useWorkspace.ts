@@ -4,7 +4,7 @@ import { supabase, AccountSessionError, authCallbackResult } from './supabase.js
 import { withSignal, storageError } from './request.js';
 import { localRepository } from './localRepository.js';
 import { accountRepository } from './accountRepository.js';
-import { keyPaused, KEY_LIMIT_PAUSE_MS, emptyWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository } from './types.js';
+import { keyPaused, keyPauseDeadline, emptyWorkspace, type ApiKeyRecord, type WorkspaceData, type WorkspaceRepository } from './types.js';
 
 export function useWorkspace() {
   const [session, setSession] = useState<Session | null>(null);
@@ -99,11 +99,19 @@ export function useWorkspace() {
   // Recompute eligibility when the earliest automatic key pause expires.
   useEffect(() => {
     const now = Date.now();
-    const deadlines = keys.filter(key => key.enabled && keyPaused(key, now)).map(key => Date.parse(key.testedAt!) + KEY_LIMIT_PAUSE_MS);
+    const deadlines = keys.filter(key => key.enabled && keyPaused(key, now)).map(key => keyPauseDeadline(key)).filter(d => d > now);
     if (!deadlines.length) return;
     const timer = setTimeout(() => setKeys(current => [...current]), Math.max(1, Math.min(...deadlines) - now + 1));
     return () => clearTimeout(timer);
   }, [keys]);
+  const refreshKeys = useCallback(async () => {
+    const captured = context.current;
+    if (!captured) return;
+    try {
+      const storedKeys = await withSignal(captured.repository.keys(AbortSignal.timeout(15000)), AbortSignal.timeout(15000));
+      if (context.current === captured) setKeys(storedKeys);
+    } catch { /* Key status refresh is advisory after generation. */ }
+  }, []);
   const update = useCallback((change: (current: WorkspaceData) => WorkspaceData, expectedScope?: string) => {
     const captured = context.current;
     if (!captured || (expectedScope && captured.repository.scope !== expectedScope)) return Promise.reject(new Error('Ruang penyimpanan berubah. Operasi dihentikan.'));
@@ -129,7 +137,7 @@ export function useWorkspace() {
   }, [load]);
   return { session, mode, scope: mode === 'guest' ? 'guest' : session?.user.id ?? '', data, keys, error, authError,
     dismissAuthError: () => setAuthError(''), saving, ready, storageLoading, update,
-    keyAction, refresh, repository: context.current?.repository, passwordRecovery,
+    keyAction, refresh, refreshKeys, repository: context.current?.repository, passwordRecovery,
     finishRecovery: () => { recovery.current = false; setPasswordRecovery(false); },
     logout: async () => { explicitLogout.current = true; const { error: authError } = await supabase.auth.signOut({ scope: 'local' }); if (authError) { explicitLogout.current = false; throw authError; } transition(null, true); explicitLogout.current = false; },
   };

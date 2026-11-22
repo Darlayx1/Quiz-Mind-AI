@@ -38,10 +38,63 @@ export const AI_MODELS = [
 ];
 export type AIModel = string;
 export const DEFAULT_MODEL: AIModel = "gemini-4-hydrogen";
+export const THINKING_EFFORTS = ["low", "medium", "high", "extra"] as const;
+export type ThinkingEffort = (typeof THINKING_EFFORTS)[number];
+export const DEFAULT_EFFORT: ThinkingEffort = "high";
+export type ApiThinkingLevel = "MINIMAL" | "LOW" | "MEDIUM" | "HIGH" | "XHIGH";
+
+export const EFFORT_OPTIONS: readonly {
+  id: ThinkingEffort;
+  label: string;
+  description: string;
+  hydrogenOnly?: boolean;
+}[] = [
+  { id: "low", label: "Low", description: "Respons paling cepat dan ringan untuk latihan rutin." },
+  { id: "medium", label: "Medium", description: "Keseimbangan kecepatan dan kedalaman penalaran." },
+  { id: "high", label: "High", description: "Penalaran mendalam untuk akurasi tinggi (Default)." },
+  { id: "extra", label: "Extra", description: "Kedalaman penalaran maksimum khusus Gemini 4 Hydrogen.", hydrogenOnly: true },
+] as const;
+
 export const normalizeModelId = (id?: string): string => {
   if (!id) return '';
   return id.trim();
 };
+export const supportsExtraEffort = (modelId?: string): boolean =>
+  normalizeModelId(modelId) === "gemini-4-hydrogen";
+export const allowedEffortsForModel = (modelId?: string) =>
+  EFFORT_OPTIONS.filter((opt) => !opt.hydrogenOnly || supportsExtraEffort(modelId));
+export const isThinkingEffort = (value: unknown): value is ThinkingEffort =>
+  typeof value === "string" && (THINKING_EFFORTS as readonly string[]).includes(value.trim().toLowerCase());
+export const normalizeEffort = (value: unknown, modelId?: string): ThinkingEffort => {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "extra") return supportsExtraEffort(modelId) ? "extra" : DEFAULT_EFFORT;
+  if (raw === "low" || raw === "medium" || raw === "high") return raw;
+  return DEFAULT_EFFORT;
+};
+export const effortLabel = (effort?: ThinkingEffort, modelId?: string): string => {
+  const norm = normalizeEffort(effort, modelId);
+  return EFFORT_OPTIONS.find((opt) => opt.id === norm)?.label ?? "High";
+};
+export function resolveApiThinkingLevel(
+  modelId: string | undefined,
+  effort: ThinkingEffort | undefined = DEFAULT_EFFORT,
+  purpose: "generate" | "evaluate" | "probe" = "generate"
+): ApiThinkingLevel | undefined {
+  const normModel = normalizeModelId(modelId || DEFAULT_MODEL);
+  const info = AI_MODELS.find((m) => m.id === normModel || m.id === modelId);
+  if (!info) return undefined;
+  const normEffort = normalizeEffort(effort, info.id);
+  if (info.id === "gemini-4-hydrogen") {
+    if (purpose === "probe") return "LOW";
+    return ({ low: "LOW", medium: "MEDIUM", high: "HIGH", extra: "XHIGH" } as const)[normEffort];
+  }
+  if (info.id === "gemma-4-31b-it") {
+    if (purpose === "probe") return "MINIMAL";
+    return normEffort === "low" ? "MINIMAL" : "HIGH";
+  }
+  if (purpose === "probe") return "MINIMAL";
+  return ({ low: "LOW", medium: "MEDIUM", high: "HIGH", extra: "HIGH" } as const)[normEffort];
+}
 export const isAIModel = (value: unknown): value is AIModel =>
   typeof value === 'string' && AI_MODELS.some((model) => model.id === value || model.id === normalizeModelId(value));
 export const validModelId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$/.test(value);

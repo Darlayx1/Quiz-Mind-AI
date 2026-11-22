@@ -1,19 +1,61 @@
+import { DEFAULT_EFFORT, normalizeEffort, resolveApiThinkingLevel, type ApiThinkingLevel, type ThinkingEffort } from '../models.js';
 import type { QuizConfig } from '../types/quiz.js';
 
 export const GENERATION_VARIANTS = ['baseline-high', 'focused-high', 'focused-medium'] as const;
 export type GenerationVariant = typeof GENERATION_VARIANTS[number];
-export type ThinkingLevel = 'HIGH' | 'MEDIUM';
+export type ThinkingLevel = ApiThinkingLevel;
 
-/** Production stays on the existing contract. Experiments are internal call
- * options, never normalized from quiz config, preferences or an HTTP body. */
-export function generationStrategy(model: string, experiment?: GenerationVariant) {
+export function computeMaxOutputTokens(
+  structured: boolean,
+  questionCount: number,
+  thinkingLevel?: ApiThinkingLevel,
+  purpose: 'generate' | 'evaluate' | 'probe' = 'generate'
+): number {
+  if (purpose === 'probe') return 1024;
+  if (thinkingLevel === 'XHIGH') return 65536;
+  if (structured) {
+    if (thinkingLevel === 'LOW' || thinkingLevel === 'MINIMAL') {
+      return Math.max(16384, Math.min(65536, questionCount * 900 + 8192));
+    }
+    if (thinkingLevel === 'MEDIUM') {
+      return Math.max(24576, Math.min(65536, questionCount * 1100 + 12288));
+    }
+    return Math.max(32768, Math.min(65536, questionCount * 1200 + 16384));
+  }
+  if (thinkingLevel === 'MINIMAL' || thinkingLevel === 'LOW') {
+    return Math.max(8192, Math.min(32768, questionCount * 800 + 4096));
+  }
+  return Math.max(24576, Math.min(32768, questionCount * 1200 + 16384));
+}
+
+/** Production honors user-configured effort (defaulting to 'high') with safe per-model mapping.
+ * Internal benchmark experiments remain isolated to Gemini 3.8 Flash. */
+export function generationStrategy(
+  model: string,
+  experiment?: GenerationVariant,
+  effort: ThinkingEffort = DEFAULT_EFFORT,
+  purpose: 'generate' | 'evaluate' | 'probe' = 'generate'
+) {
   if (experiment !== undefined && (!GENERATION_VARIANTS.includes(experiment) || model !== 'gemini-3.8-flash')) {
     throw Object.assign(new Error('Eksperimen hanya mendukung varian terverifikasi untuk Gemini 3.8 Flash.'),
       { status: 400, code: 'INVALID_EXPERIMENT' });
   }
-  return { variant: experiment ?? 'baseline-high' as GenerationVariant,
-    thinkingLevel: (experiment === 'focused-medium' ? 'MEDIUM' : 'HIGH') as ThinkingLevel,
-    focused: experiment === 'focused-high' || experiment === 'focused-medium' };
+  if (experiment !== undefined) {
+    return {
+      variant: experiment,
+      effort: (experiment === 'focused-medium' ? 'medium' : 'high') as ThinkingEffort,
+      thinkingLevel: (experiment === 'focused-medium' ? 'MEDIUM' : 'HIGH') as ThinkingLevel,
+      focused: experiment === 'focused-high' || experiment === 'focused-medium',
+    };
+  }
+  const normalizedEffort = normalizeEffort(effort, model);
+  const thinkingLevel = resolveApiThinkingLevel(model, normalizedEffort, purpose);
+  return {
+    variant: 'baseline-high' as GenerationVariant,
+    effort: normalizedEffort,
+    thinkingLevel,
+    focused: true,
+  };
 }
 
 /** Expose risks for benchmark coverage, not a shortcut to lowering reasoning.

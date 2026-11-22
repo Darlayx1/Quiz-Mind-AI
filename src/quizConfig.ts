@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, DIFFICULTIES, isProvider, modelInfo, validModelId, defaultProviderModel, normalizeModelId } from "./models.js";
+import { DEFAULT_MODEL, DIFFICULTIES, isProvider, isThinkingEffort, modelInfo, normalizeEffort, validModelId, defaultProviderModel, normalizeModelId } from "./models.js";
 import type { DifficultyLevel, QuizConfig } from "./types/quiz.js";
 import { QUESTION_TYPES, type QuestionType } from './types/quiz.js';
 import { normalizeEvaluationSettings } from './evaluationSettings.js';
@@ -47,6 +47,8 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
   if(body.partialCredit!==undefined&&typeof body.partialCredit!=='boolean')throw new QuizConfigError('Pengaturan kredit parsial tidak valid.');
   let evaluationSettings;
   try { evaluationSettings=normalizeEvaluationSettings(body.evaluationSettings); } catch { throw new QuizConfigError('Pengaturan evaluator tidak valid.'); }
+  if (body.effort !== undefined && !isThinkingEffort(body.effort)) throw new QuizConfigError('Pengaturan effort AI tidak valid.');
+  const effort = body.effort !== undefined ? normalizeEffort(body.effort, String(model)) : undefined;
   const displayMode = body.displayMode ?? "non_sequential";
   if (displayMode !== "non_sequential" && displayMode !== "sequential")
     throw new QuizConfigError("Tampilan soal tidak didukung.");
@@ -71,6 +73,7 @@ export function normalizeQuizConfig(input: unknown): QuizConfig {
     evaluationSettings,
     model,
     provider,
+    ...(effort !== undefined ? { effort } : {}),
     topic: body.topic.trim().slice(0, 300),
     studyMaterial: optionalText(body.studyMaterial, 15000),
     difficulty: difficulty as DifficultyLevel,

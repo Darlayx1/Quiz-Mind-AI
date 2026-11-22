@@ -9,7 +9,7 @@ import { quizSchemaFor } from '../src/questionValidation.js';
 import { generateQuizBatch, classifyApiError, nextQuizBatch, isRetryableGenerationError } from '../src/server/geminiService.js';
 import { localRepository } from '../src/workspace/localRepository.js';
 import { generateWorkspaceQuiz } from '../src/workspace/ai.js';
-import { availableKeys, keyPaused, KEY_LIMIT_PAUSE_MS, emptyWorkspace } from '../src/workspace/types.js';
+import { availableKeys, keyPaused, quotaPauseUntil, KEY_LIMIT_PAUSE_MS, KEY_MINUTE_PAUSE_MS, emptyWorkspace } from '../src/workspace/types.js';
 import { fixtures } from './assessment-fixtures.js';
 import { build } from 'esbuild';
 
@@ -168,6 +168,17 @@ try {
   await assert.rejects(generateWorkspaceQuiz(base,preferences,await localRepository.keys(),localRepository,async()=>{},new AbortController().signal));
   assert.equal(requests.length-beforeLimit,1,'Stop immediately after single quota-limited key without failover');
   failure=undefined;
+  // Per-minute 429 pauses only for the short retry window (~60s), not a full 24 hours
+  const rpmError = Object.assign(new Error('{"error":{"code":429,"message":"Quota exceeded for quota metricPerMinute","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"30s"}]}}'), { status: 429 });
+  const nowMs = Date.now();
+  const rpmPause = quotaPauseUntil(rpmError, nowMs);
+  assert.ok(rpmPause);
+  assert.equal(Date.parse(rpmPause!) - nowMs, 30000);
+  await localRepository.recordKeyOutcome(first.id, 'quota', rpmPause);
+  const rpmKey = (await localRepository.keys()).find(k => k.id === first.id)!;
+  assert.equal(keyPaused(rpmKey, nowMs + 10000), true);
+  assert.equal(keyPaused(rpmKey, nowMs + 31000), false, 'Per-minute pause expires after retryDelay without 24-hour lockout');
+  await localRepository.recordKeyOutcome(first.id, 'available');
   console.log('PASS: active generator schemas for all seven types with/without search, Gemma/custom compatibility, sparse distributions, HTTP/network diagnostics, timeout/cancel, and no repeated invalid output. No external API requests.');
 } finally {
   globalThis.fetch = originalFetch;
@@ -258,7 +269,7 @@ try {
   let response = await handler!(request());
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.deepEqual((await response.json()).quiz.questions.map((q: any) => q.type), ['essay', 'essay']);
-  assert.equal(accountCalls, 1);
+  assert.equal(accountCalls, 1); const sseResponse = await handler!(new Request('https://account-fixture.invalid/functions/v1/quiz-ai', { method: 'POST', headers: { Authorization: 'Bearer fixture-only', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'stream', operationId: crypto.randomUUID(), config: essayOnly, preferences: { ...preferences, effort: 'extra' } }) })); assert.equal(sseResponse.status, 200); assert.ok(sseResponse.headers.get('content-type')?.includes('text/event-stream')); const sseText = await sseResponse.text(); assert.ok(sseText.includes('event: complete') && sseText.includes('Esai akun 0')); assert.equal(accountCalls, 2); accountCalls = 1;
   assert.equal(accountProgressWrites[0].data.cursor, 2);
   for (const write of accountProgressWrites) {
     assert.equal(write.filters.user_id, 'account-fixture', 'Progress is pinned to the authenticated owner');

@@ -87,7 +87,10 @@ export default function App() {
       const generated = await generateWorkspaceQuiz(config, preferences, [...w.keys], repository, async job => {
         controller.signal.throwIfAborted();
         if (scope.current !== origin || abort.current !== controller) throw new Error('Operasi sebelumnya sudah dihentikan.');
-        currentJob = job; activeJobId.current = job.id; await w.update(d => ({ ...d, job }), origin);
+        currentJob = job; activeJobId.current = job.id;
+        // Skip redundant intermediate completed checkpoint: line below atomically saves history and clears job.
+        if (job.status === 'completed') return;
+        await w.update(d => ({ ...d, job }), origin);
       }, controller.signal, resume, completed => { if (scope.current === origin && abort.current === controller) setGeneration(previous => ({ ...previous, completed })); });
       controller.signal.throwIfAborted(); if (scope.current !== origin || abort.current !== controller) return;
       const savedQuiz: Quiz = { ...generated, generationConfig: structuredClone(currentJob?.config ?? config), generationPreferences: structuredClone(preferences) };
@@ -103,7 +106,10 @@ export default function App() {
       const cancelled = controller.signal.aborted;
       const message = (e as Error).message || 'Pembuatan kuis gagal.';
       setError('');
-      await w.update(d => ({ ...d, job: currentJob ? { ...currentJob, status: cancelled ? 'cancelled' : 'interrupted' } : d.job,
+      const resumableJob = !cancelled && currentJob && (currentJob.questions.length > 0 || (!currentJob.modelCallCount && Boolean(currentJob.parallelResearch)))
+        ? { ...currentJob, status: 'interrupted' as const }
+        : null;
+      await w.update(d => ({ ...d, job: resumableJob,
         activity: [{ id: crypto.randomUUID(), at: new Date().toISOString(), label: 'Pembuatan kuis', model: preferences.model, status: cancelled ? 'cancelled' as const : 'failed' as const, durationMs: Date.now() - started,
           detail: cancelled ? 'Dibatalkan pengguna' : message }, ...d.activity].slice(0, 2000) }), origin).catch(() => {});
       if (!cancelled && scope.current === origin && abort.current === controller) {
@@ -114,7 +120,7 @@ export default function App() {
           onRetry: () => { setAiFailure(null); setError(''); startGeneration(config, undefined, preferences); },
         });
       }
-    } finally { if (scope.current === origin && abort.current === controller) { if (!controller.signal.aborted) setLoading(false); abort.current = null; activeJobId.current = null; void w.refresh(); } }
+    } finally { if (scope.current === origin && abort.current === controller) { if (!controller.signal.aborted) setLoading(false); abort.current = null; activeJobId.current = null; void (w.refreshKeys ? w.refreshKeys() : w.refresh()); } }
   };
   const startGeneration = (config: QuizConfig, resume?: GenerationJob, originalPreferences?: import('./workspace/types.js').Preferences) => {
     if (abort.current || loading || isEvaluating || cancelling) return;
@@ -286,7 +292,7 @@ export default function App() {
   const storageLabel = w.mode === 'guest' ? 'Lokal · perangkat ini' : w.session ? 'Akun · penyimpanan pribadi' : 'Akun · pulihkan sesi';
   const hasKey = availableKeys(w.keys, w.data.preferences).length > 0 && (!w.data.preferences.grounding || w.data.preferences.searchProvider !== 'parallel' || w.keys.some(k => k.provider === 'parallel' && k.enabled && !keyPaused(k)));
   const resumable = resumableQuiz(w.data.history, w.data.progress);
-  const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) ? w.data.job : null;
+  const interrupted = w.data.job && ['running', 'interrupted'].includes(w.data.job.status) && (w.data.job.questions.length > 0 || (!w.data.job.modelCallCount && Boolean(w.data.job.parallelResearch))) ? w.data.job : null;
   const examActive = w.ready && !loading && !isEvaluating && view === 'runner' && Boolean(quiz);
   const PageContainer = examActive ? 'div' : 'main';
   const processingMode = loading ? 'generation' : isEvaluating ? 'evaluation' : undefined;

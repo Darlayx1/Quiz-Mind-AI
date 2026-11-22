@@ -22,6 +22,7 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
     await db.exec(await readFile('supabase/migrations/202610110003_single_call_high_policy.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610110004_workspace_conflict.sql', 'utf8'));
     await db.exec(await readFile('supabase/migrations/202610130001_quota_key_failover.sql', 'utf8'));
+    await db.exec(await readFile('supabase/migrations/202611220001_generation_optimization.sql', 'utf8'));
     const asUser = async uid => { await db.exec(`reset role; set role authenticated;`); await db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]); };
     const put = async (id, provider, secret = null, enabled = null) => (await db.query('select public.qm_upsert_provider_key($1,$2,$3,$4,$5,$6) as id', [id, provider + ' key', secret, enabled, 1, provider])).rows[0].id;
     await asUser(owner);
@@ -162,6 +163,8 @@ await test('Parallel account storage on disposable PostgreSQL', async t => {
       assert.equal(poll.id, singleId);
       assert.equal(poll.modelCallCount, 1);
       assert.equal(poll.completed, false);
+      assert.equal(poll.status, 'failed_after_dispatch');
+      assert.equal(poll.code, 'TIMEOUT');
 
       // Other user cannot poll
       await asUser(other);

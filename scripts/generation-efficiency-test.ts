@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { DEFAULT_MODEL, DIFFICULTIES } from '../src/models.js';
+import { DEFAULT_MODEL, DIFFICULTIES, AI_MODELS, allowedEffortsForModel, normalizeEffort, resolveApiThinkingLevel } from '../src/models.js';
 import { normalizeQuizConfig } from '../src/quizConfig.js';
 import { QUESTION_TYPES, type QuizConfig } from '../src/types/quiz.js';
 import { buildPrompt, generateQuizBatch } from '../src/server/geminiService.js';
-import { quizSchemaFor } from '../src/questionValidation.js';
+import { quizSchemaFor, validateQuestion } from '../src/questionValidation.js';
 import { fixtures } from './assessment-fixtures.js';
 import { streamingFixtureFetch } from './stream-fixture.js';
 import { GENERATION_VARIANTS, generationRiskFactors } from '../src/server/generationStrategy.js';
@@ -98,5 +98,49 @@ try {
     const fallback = buildPrompt({ ...base, model }, 10);
     assert.ok(fallback.userPrompt.includes('Output JSON schema:'), 'Unstructured models still need the schema in the prompt');
   }
+  // Verify Effort options across all AI models (low, medium, high, and extra only for gemini-4-hydrogen)
+  assert.deepEqual(allowedEffortsForModel('gemini-4-hydrogen').map(o => o.id), ['low', 'medium', 'high', 'extra']);
+  for (const m of AI_MODELS.filter(m => m.id !== 'gemini-4-hydrogen')) {
+    assert.deepEqual(allowedEffortsForModel(m.id).map(o => o.id), ['low', 'medium', 'high']);
+    assert.equal(normalizeEffort('extra', m.id), 'high', `Clamp extra to high for ${m.id}`);
+  }
+  assert.equal(resolveApiThinkingLevel('gemini-4-hydrogen', 'extra'), 'XHIGH');
+  assert.equal(resolveApiThinkingLevel('gemini-4-hydrogen', 'low'), 'LOW');
+  assert.equal(resolveApiThinkingLevel('gemini-4-hydrogen', 'high', 'probe'), 'LOW');
+  assert.equal(resolveApiThinkingLevel('gemma-4-31b-it', 'low'), 'MINIMAL');
+  assert.equal(resolveApiThinkingLevel('gemma-4-31b-it', 'medium'), 'HIGH');
+  assert.equal(resolveApiThinkingLevel('gemma-4-31b-it', 'high'), 'HIGH');
+  assert.equal(resolveApiThinkingLevel('custom-model', 'high'), undefined);
+
+  requests = [];
+  const xhighQuiz = await generateQuizBatch({ ...base, model: 'gemini-4-hydrogen', effort: 'extra' }, 'fixture-key-never-display', [], undefined, undefined, undefined, { stream: true });
+  assert.equal(requests[0].generationConfig.thinkingConfig.thinkingLevel, 'XHIGH');
+  assert.equal(requests[0].generationConfig.maxOutputTokens, 65536);
+  assert.equal(xhighQuiz.generationMetrics![0].thinkingLevel, 'XHIGH');
+  assert.equal(xhighQuiz.generationMetrics![0].effort, 'extra');
+
+  // Verify deterministic essay rubric weight normalization (33.3 * 3 = 99.9 -> 100)
+  const driftEssay = validateQuestion({
+    ...fixtures.essay,
+    rubric: [
+      { id: 'c1', description: 'Kriteria 1', weight: 33.3, anchors: ['0', '0.5', '1'] },
+      { id: 'c2', description: 'Kriteria 2', weight: 33.3, anchors: ['0', '0.5', '1'] },
+      { id: 'c3', description: 'Kriteria 3', weight: 33.3, anchors: ['0', '0.5', '1'] },
+    ],
+  }, 0, 'Konsep', [], 'essay');
+  assert.ok(driftEssay && driftEssay.type === 'essay');
+  assert.equal(Math.round(driftEssay.rubric.reduce((s, c) => s + c.weight, 0) * 100) / 100, 100);
+
+  // Verify deterministic surplus trimming (11 items returned when 10 requested)
+  globalThis.fetch = streamingFixtureFetch(async (input, init) => {
+    requests.push(await new Request(input, init).json());
+    return Response.json({ candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify({
+      title: 'Surplus', summary: 'Latihan', questions: Array.from({ length: 11 }, (_, i) =>
+        ({ ...fixtures.single_choice, question: `Soal unik surplus nomor ${i}?` }))
+    }) }] } }] });
+  });
+  const trimmedQuiz = await generateQuizBatch(base, 'fixture-key-never-display', [], undefined, undefined, undefined, { stream: true });
+  assert.equal(trimmedQuiz.questions.length, 10, 'Surplus valid items are deterministically trimmed to exact target count');
+  globalThis.fetch = successFetch;
   console.log('PASS: 10 questions across all seven types, HIGH retained, no duplicate structured schema, exact counts, material/preferences preserved, fallback schemas and provider/thinking metrics. No external API calls.');
 } finally { globalThis.fetch = originalFetch; }

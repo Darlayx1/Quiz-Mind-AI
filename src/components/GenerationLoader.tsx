@@ -99,7 +99,9 @@ export const GenerationLoader: React.FC<GenerationLoaderProps> = ({
   }
 
   // Determine status message and progress
-  let statusMessage = 'Menunggu respons pembuatan soal...';
+  let statusMessage = enableGrounding
+    ? 'Menyiapkan referensi dan menyusun soal...'
+    : 'Menyusun soal dan pembahasan...';
   let progressPercent: number | undefined;
   let progressLabel: string | undefined;
 

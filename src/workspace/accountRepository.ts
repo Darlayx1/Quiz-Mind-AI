@@ -20,7 +20,7 @@ export function accountRepository(userId: string): WorkspaceRepository {
       const data = await accountResponse(response);
       if (!Array.isArray(data)) throw new Error('Daftar API key akun tidak valid. Silakan muat ulang.');
       return data.map((k: Record<string, any>) => ({ id: k.id, provider: k.provider ?? 'gemini', label: k.label, suffix: k.suffix, fingerprint: k.fingerprint,
-        enabled: k.enabled, priority: k.priority, status: k.status, testedAt: k.tested_at,
+        enabled: k.enabled, priority: k.priority, status: k.status, testedAt: k.tested_at, pausedUntil: k.paused_until ?? undefined,
         successes: k.successes, failures: k.failures })) as ApiKeyRecord[];
     },
     async putKey(input) {

@@ -1,4 +1,4 @@
-import type { GroundingSource,Item,Question,QuestionType } from './types/quiz.js';
+import type { GroundingSource,Item,Question,QuestionType,RubricCriterion } from './types/quiz.js';
 import { QUESTION_TYPES } from './types/quiz.js';
 const str={type:'string'},int={type:'integer'},strings={type:'array',items:str};
 const object=<T extends Record<string,unknown>>(properties:T)=>({type:'object',additionalProperties:false,properties,required:Object.keys(properties)});
@@ -17,11 +17,11 @@ export function questionSchema(type:QuestionType){
  };
  return object({...common,...specific[type]});
 }
-export function quizSchemaFor(type:QuestionType='single_choice'){return object({title:str,topic:str,summary:str,questions:{type:'array',items:questionSchema(type)}});}
+export function quizSchemaFor(type:QuestionType='single_choice'){return object({title:str,summary:str,questions:{type:'array',items:questionSchema(type)}});}
 export function combinedQuizSchema(types: QuestionType[]){
   const uniqueTypes=[...new Set(types.filter(t=>QUESTION_TYPES.includes(t)))];
   if(uniqueTypes.length<=1)return quizSchemaFor(uniqueTypes[0]??'single_choice');
-  return object({title:str,topic:str,summary:str,questions:{type:'array',items:{anyOf:uniqueTypes.map(t=>{
+  return object({title:str,summary:str,questions:{type:'array',items:{anyOf:uniqueTypes.map(t=>{
     const qs=questionSchema(t);
     return {...qs,properties:{type:{type:'string',enum:[t]},...qs.properties},required:['type',...qs.required]};
   })}}});
@@ -39,11 +39,49 @@ const text=(v:unknown,max=10000):v is string=>typeof v==='string'&&!!v.trim()&&v
 const safeId=(v:unknown):v is string=>text(v,100)&&/^[\w-]+$/.test(v)&&!['__proto__','constructor','prototype'].includes(v);
 const validItems=(v:unknown):v is Item[]=>Array.isArray(v)&&v.length>=3&&v.length<=8&&v.every(i=>i&&safeId(i.id)&&text(i.text,1500))&&new Set(v.map(i=>i.id)).size===v.length&&new Set(v.map(i=>i.text.normalize('NFC').trim().toLocaleLowerCase())).size===v.length;
 const validTexts=(v:unknown,min=1,max=10):v is string[]=>Array.isArray(v)&&v.length>=min&&v.length<=max&&v.every(s=>text(s,500));
+function normalizeTextList(v: unknown, min = 1, max = 10): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const item of v) {
+    if (!text(item, 500)) return null;
+    const trimmed = item.trim();
+    const key = trimmed.normalize('NFC').toLocaleLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      cleaned.push(trimmed);
+    }
+  }
+  if (cleaned.length < min) return null;
+  return cleaned.slice(0, max);
+}
+function normalizeEssayRubric(v: unknown): RubricCriterion[] | null {
+  if (!Array.isArray(v) || v.length < 3 || v.length > 5) return null;
+  if (!v.every((c: any) => c && safeId(c.id) && text(c.description, 1500) && typeof c.weight === 'number' && Number.isFinite(c.weight) && c.weight > 0 && validTexts(c.anchors, 3, 3))) return null;
+  if (new Set(v.map((c: any) => c.id)).size !== v.length) return null;
+  const sum = v.reduce((n: number, c: any) => n + c.weight, 0);
+  if (Math.abs(sum - 100) <= 0.001) return v as RubricCriterion[];
+  // Deterministic normalization when weights are valid positive percentages with minor rounding drift (e.g. 33.3 * 3 = 99.9)
+  if (sum >= 95 && sum <= 105) {
+    const scaled = v.map((c: any) => ({ ...c, description: c.description.trim(), anchors: c.anchors.map((a: string) => a.trim()), weight: Math.round((c.weight / sum) * 10000) / 100 }));
+    const scaledSum = scaled.reduce((n: number, c: any) => n + c.weight, 0);
+    const diff = Math.round((100 - scaledSum) * 100) / 100;
+    if (Math.abs(diff) > 0) {
+      let maxIdx = 0;
+      for (let i = 1; i < scaled.length; i++) if (scaled[i].weight > scaled[maxIdx].weight) maxIdx = i;
+      scaled[maxIdx].weight = Math.round((scaled[maxIdx].weight + diff) * 100) / 100;
+    }
+    if (scaled.every((c: any) => c.weight > 0) && Math.abs(scaled.reduce((n: number, c: any) => n + c.weight, 0) - 100) <= 0.001) {
+      return scaled;
+    }
+  }
+  return null;
+}
 export function validateQuestion(raw:unknown,idx:number,topic:string,sources:GroundingSource[]=[],expected:QuestionType='single_choice',legacy=false):Question|null {
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||!QUESTION_TYPES.includes(expected))return null;
  const q=raw as Record<string,any>;
  if(q.id!==undefined&&!safeId(q.id))return null;
- if(q.type!==undefined&&q.type!==expected||!text(q.question)||q.question.trim().length<5||!text(q.explanation))return null;
+ if(q.type!==undefined&&q.type!==expected||!text(q.question)||q.question.trim().length<3||!text(q.explanation))return null;
  if(q.maxPoints!==undefined&&(!Number.isInteger(q.maxPoints)||q.maxPoints<1||q.maxPoints>20))return null;
  const base={id:text(q.id,100)?q.id:'q_'+crypto.randomUUID(),question:q.question.trim(),explanation:q.explanation.trim(),topicCategory:text(q.topicCategory,300)?q.topicCategory:topic,maxPoints:q.maxPoints??1,groundingSources:sources.filter(s=>s&&typeof s.url==='string'&&/^https?:\/\//i.test(s.url)).slice(0,3)};
  if(typeof q.referenceTitle==='string'&&q.referenceTitle.trim())base.groundingSources.push({title:q.referenceTitle.trim().slice(0,500),url:''});
@@ -58,14 +96,17 @@ export function validateQuestion(raw:unknown,idx:number,topic:string,sources:Gro
  }
  if(expected==='true_false')return typeof q.correctValue==='boolean'?{...base,type:expected,correctValue:q.correctValue}:null;
  if(expected==='short_answer'){
- if(!text(q.referenceAnswer)||!validTexts(q.acceptedAnswers)||!validTexts(q.requiredConcepts)||typeof q.caseSensitive!=='boolean'||typeof q.allowPartial!=='boolean')return null;
+ const acceptedAnswers=normalizeTextList(q.acceptedAnswers,1,10);
+ const requiredConcepts=normalizeTextList(q.requiredConcepts,1,10);
+ if(!text(q.referenceAnswer)||!acceptedAnswers||!requiredConcepts||typeof q.caseSensitive!=='boolean'||typeof q.allowPartial!=='boolean')return null;
  if(q.maxLength!==undefined&&(!Number.isInteger(q.maxLength)||q.maxLength<1||q.maxLength>500))return null;
- return {...base,type:expected,referenceAnswer:q.referenceAnswer,acceptedAnswers:q.acceptedAnswers,requiredConcepts:q.requiredConcepts,maxLength:q.maxLength??500,caseSensitive:q.caseSensitive,allowPartial:q.allowPartial};
+ return {...base,type:expected,referenceAnswer:q.referenceAnswer.trim(),acceptedAnswers,requiredConcepts,maxLength:q.maxLength??500,caseSensitive:q.caseSensitive,allowPartial:q.allowPartial};
  }
  if(expected==='essay'){
- if(!text(q.referenceAnswer)||!Array.isArray(q.rubric)||q.rubric.length<3||q.rubric.length>5||!q.rubric.every((c:any)=>c&&safeId(c.id)&&text(c.description,1500)&&typeof c.weight==='number'&&Number.isFinite(c.weight)&&c.weight>0&&validTexts(c.anchors,3,3))||new Set(q.rubric.map((c:any)=>c.id)).size!==q.rubric.length||Math.abs(q.rubric.reduce((n:number,c:any)=>n+c.weight,0)-100)>0.001)return null;
+ const rubric=normalizeEssayRubric(q.rubric);
+ if(!text(q.referenceAnswer)||!rubric)return null;
  if(q.maxLength!==undefined&&(!Number.isInteger(q.maxLength)||q.maxLength<1||q.maxLength>5000))return null;
- return {...base,type:expected,referenceAnswer:q.referenceAnswer,rubric:q.rubric,maxLength:q.maxLength??5000};
+ return {...base,type:expected,referenceAnswer:q.referenceAnswer.trim(),rubric,maxLength:q.maxLength??5000};
  }
  if(expected==='matching'){
  if(!validItems(q.leftItems)||!validItems(q.rightItems)||q.leftItems.length!==q.rightItems.length)return null;

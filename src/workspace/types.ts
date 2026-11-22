@@ -1,18 +1,19 @@
-import { DEFAULT_MODEL, type AIModel } from '../models.js';
+import { DEFAULT_EFFORT, DEFAULT_MODEL, normalizeEffort, type AIModel, type ThinkingEffort } from '../models.js';
 import type { Quiz, QuizConfig, QuizResult, Question, StoredAnswer, EvaluationSettings } from '../types/quiz.js';
 import { normalizeEvaluationSettings, defaultEvaluationSettings } from '../evaluationSettings.js';
 import type { ParallelResearch } from '../server/parallelSearch.js';
+import { geminiQuotaDetails } from '../geminiQuota.js';
 
 export type KeyStatus = 'untested' | 'available' | 'invalid' | 'quota' | 'unavailable';
 export interface ApiKeyRecord {
   provider?: 'gemini' | 'parallel';
   id: string; label: string; suffix: string; fingerprint: string; enabled: boolean;
-  priority: number; status: KeyStatus; testedAt?: string; successes: number; failures: number;
+  priority: number; status: KeyStatus; testedAt?: string; pausedUntil?: string; successes: number; failures: number;
 }
 export interface Preferences {
   searchProvider?: 'google' | 'parallel';
   allowGroundingFallback?: boolean;
-  model: AIModel; keyId: string | null; grounding: boolean; maxAttempts: number; fallback: boolean;
+  model: AIModel; effort?: ThinkingEffort; keyId: string | null; grounding: boolean; maxAttempts: number; fallback: boolean;
   evaluation?: EvaluationSettings;
 }
 export interface HistoryItem { quiz: Quiz; lastResult?: QuizResult; attempts?: QuizResult[]; savedAt: string }
@@ -39,12 +40,13 @@ export interface WorkspaceData {
   progress: QuizProgress | null; draft: Record<string, unknown> | null; job: GenerationJob | null;
 }
 export const emptyWorkspace = (): WorkspaceData => ({
-  preferences: { model: DEFAULT_MODEL, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 1, fallback: false, evaluation: { ...defaultEvaluationSettings } },
+  preferences: { model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, keyId: null, grounding: true, searchProvider: 'google', allowGroundingFallback: false, maxAttempts: 1, fallback: false, evaluation: { ...defaultEvaluationSettings } },
   history: [], activity: [], progress: null, draft: null, job: null,
 });
 export function sanitizeWorkspace(value: Partial<WorkspaceData> | null): WorkspaceData {
   const defaults = emptyWorkspace();
-  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences, fallback: false, allowGroundingFallback: false, maxAttempts: 1, evaluation: normalizeEvaluationSettings(value?.preferences?.evaluation) },
+  const model = value?.preferences?.model ?? defaults.preferences.model;
+  return { ...defaults, ...value, preferences: { ...defaults.preferences, ...value?.preferences, model, effort: normalizeEffort(value?.preferences?.effort, model), fallback: false, allowGroundingFallback: false, maxAttempts: 1, evaluation: normalizeEvaluationSettings(value?.preferences?.evaluation) },
     history: Array.isArray(value?.history) ? value.history : [],
     activity: Array.isArray(value?.activity) ? value.activity : [] };
 }
@@ -56,7 +58,7 @@ export interface WorkspaceRepository {
   keys(signal?: AbortSignal): Promise<ApiKeyRecord[]>;
   putKey(input: { id?: string; label: string; secret?: string; enabled?: boolean; priority?: number; provider?: 'gemini' | 'parallel' }): Promise<void>;
   removeKey(id: string): Promise<void>;
-  recordKeyOutcome(id: string, status: KeyStatus): Promise<void>;
+  recordKeyOutcome(id: string, status: KeyStatus, pausedUntil?: string): Promise<void>;
 }
 export function keyStatus(error: unknown): KeyStatus {
   const status = Number((error as { status?: number })?.status);
@@ -69,8 +71,31 @@ export function nextKeyLabel(keys: Pick<ApiKeyRecord, 'label'>[]) {
  let n=1; while(keys.some(k=>k.label===`API key ${n}`)) n++; return `API key ${n}`;
 }
 export const KEY_LIMIT_PAUSE_MS = 24 * 60 * 60 * 1000;
+export const KEY_MINUTE_PAUSE_MS = 60 * 1000;
+export function quotaPauseUntil(error: unknown, now = Date.now()): string | undefined {
+  if (keyStatus(error) !== 'quota') return undefined;
+  const details = geminiQuotaDetails(error);
+  if (details.retryMs && details.retryMs > 0 && !details.daily && !details.zero) {
+    return new Date(now + Math.min(Math.max(details.retryMs, 15_000), KEY_LIMIT_PAUSE_MS)).toISOString();
+  }
+  const msg = String((error as Error)?.message || error);
+  if (!details.daily && !details.zero && (/per.?minute|per.?second|RPM|TPM|batas permintaan atau token per menit/i.test(msg))) {
+    return new Date(now + KEY_MINUTE_PAUSE_MS).toISOString();
+  }
+  return undefined;
+}
+export function keyPauseDeadline(key: ApiKeyRecord): number {
+  if (key.status !== 'quota') return 0;
+  if (key.pausedUntil) {
+    const parsed = Date.parse(key.pausedUntil);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return key.testedAt ? Date.parse(key.testedAt) + KEY_LIMIT_PAUSE_MS : 0;
+}
 export function keyPaused(key: ApiKeyRecord, now = Date.now()) {
-  return key.status === 'quota' && !!key.testedAt && Date.parse(key.testedAt) + KEY_LIMIT_PAUSE_MS > now;
+  if (key.status !== 'quota') return false;
+  const deadline = keyPauseDeadline(key);
+  return deadline > now;
 }
 export function availableKeys(keys: ApiKeyRecord[], preferences: Preferences) {
   if (preferences.keyId && keys.some(k => k.id === preferences.keyId && k.provider === 'parallel')) return [];

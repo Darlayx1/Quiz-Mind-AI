@@ -1,16 +1,48 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { localRepository } from '../src/workspace/localRepository.js';
 import { emptyWorkspace, sanitizeWorkspace, keyPaused } from '../src/workspace/types.js';
 import { normalizeEvaluationSettings } from '../src/evaluationSettings.js';
 import { validateQuestion } from '../src/questionValidation.js';
 import { buildResult } from '../src/scoring.js';
 import { evaluateWorkspace } from '../src/workspace/evaluation.js';
+import { AISettings } from '../src/components/AISettings.js';
 import type { Quiz, QuizSubmission } from '../src/types/quiz.js';
 import { fixtures } from './assessment-fixtures.js';
 const preferences=emptyWorkspace().preferences;
-const settings=normalizeEvaluationSettings({...preferences.evaluation,model:'gemini-3.5-flash-lite',followGenerator:true,enabled:false,allowKeyFallback:true,allowModelFallback:true,allowProviderFallback:true});
-assert.equal(settings.enabled,true);assert.equal(settings.followGenerator,false);assert.equal(settings.allowKeyFallback,false);assert.equal(settings.allowModelFallback,false);assert.equal(settings.allowProviderFallback,false);
+assert.equal(preferences.effort,'high','Default generator effort is high');
+assert.equal(preferences.evaluation?.effort,'high','Default evaluator effort is high');
+const extraHydrogen=normalizeEvaluationSettings({...preferences.evaluation,model:'gemini-4-hydrogen',effort:'extra'});
+assert.equal(extraHydrogen.effort,'extra','Gemini 4 Hydrogen supports extra effort in evaluator');
+const clampedFlash=normalizeEvaluationSettings({...preferences.evaluation,model:'gemini-3.5-flash-lite',effort:'extra'});
+assert.equal(clampedFlash.effort,'high','Non-Hydrogen evaluator model clamps extra effort to high');
+const sanitizedClamped=sanitizeWorkspace({preferences:{...preferences,model:'gemini-3.8-flash',effort:'extra'}});
+assert.equal(sanitizedClamped.preferences.effort,'high','Non-Hydrogen generator model clamps extra effort to high');
+const settings=normalizeEvaluationSettings({...preferences.evaluation,model:'gemini-3.5-flash-lite',effort:'medium',followGenerator:true,enabled:false,allowKeyFallback:true,allowModelFallback:true,allowProviderFallback:true});
+assert.equal(settings.enabled,true);assert.equal(settings.followGenerator,false);assert.equal(settings.effort,'medium');assert.equal(settings.allowKeyFallback,false);assert.equal(settings.allowModelFallback,false);assert.equal(settings.allowProviderFallback,false);
+// Verify UI renders Effort dropdowns for both Quiz Generator and Quiz Evaluator, with Extra only on Gemini 4 Hydrogen
+const hydrogenWorkspace = emptyWorkspace();
+hydrogenWorkspace.preferences.effort = 'extra';
+hydrogenWorkspace.preferences.evaluation = normalizeEvaluationSettings({ ...hydrogenWorkspace.preferences.evaluation, model: 'gemini-4-hydrogen', effort: 'extra' });
+const hydrogenUi = renderToStaticMarkup(createElement(AISettings, {
+  workspace: { keys: [], scope: 'guest', mode: 'guest', ready: true, data: hydrogenWorkspace } as any,
+  initialTab: 'models', onClose() {}, onSelectQuiz() {}
+}));
+assert.ok(hydrogenUi.includes('id="settings-effort"'), 'Generator effort control present');
+assert.ok(hydrogenUi.includes('id="eval-effort"'), 'Evaluator effort control present');
+assert.equal((hydrogenUi.match(/<span>Extra<\/span>/g) || []).length, 2, 'Extra selected and displayed for both generator and evaluator when Gemini 4 Hydrogen is active');
+const flashWorkspace = emptyWorkspace();
+flashWorkspace.preferences.model = 'gemini-3.8-flash';
+flashWorkspace.preferences.effort = 'extra' as any;
+flashWorkspace.preferences.evaluation = normalizeEvaluationSettings({ ...flashWorkspace.preferences.evaluation, model: 'gemma-4-31b-it', effort: 'extra' });
+const flashUi = renderToStaticMarkup(createElement(AISettings, {
+  workspace: { keys: [], scope: 'guest', mode: 'guest', ready: true, data: flashWorkspace } as any,
+  initialTab: 'models', onClose() {}, onSelectQuiz() {}
+}));
+assert.equal((flashUi.match(/<span>Extra<\/span>/g) || []).length, 0, 'Extra clamped to High when neither generator nor evaluator uses Gemini 4 Hydrogen');
+assert.equal((flashUi.match(/<span>High<\/span>/g) || []).length, 2, 'Both controls display clamped High');
 assert.equal(sanitizeWorkspace({preferences:{...preferences,fallback:true,allowGroundingFallback:true,evaluation:settings}}).preferences.fallback,false);
 await localRepository.load();
 await localRepository.putKey({label:'',secret:'fixture-evaluator-primary'});

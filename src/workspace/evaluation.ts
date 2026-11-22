@@ -1,6 +1,6 @@
 import type { QuizResult, QuestionEvaluation } from '../types/quiz.js';
 import type { Preferences, ApiKeyRecord, WorkspaceRepository } from './types.js';
-import { availableKeys, keyStatus } from './types.js';
+import { availableKeys, keyStatus, quotaPauseUntil } from './types.js';
 import { localCredential } from './localRepository.js';
 import { invokeAccount } from './ai.js';
 import { buildResult } from '../scoring.js';
@@ -12,6 +12,7 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
   if(!settings.enabled)throw new Error('Aktifkan evaluator pada Model & penggunaan, atau tinjau nilai secara manual.');
   const ids=targets??Object.entries(result.evaluations??{}).filter(([,e])=>e.earnedPoints===null&&e.status!=='needs_review').map(([id])=>id);
   const model=settings.model;
+  const timeoutMs = settings.effort === 'extra' ? 140000 : settings.effort === 'high' ? 90000 : 60000;
   if(!availableKeys(keys,preferences).length)throw new Error('Tambahkan key aktif pada ruang ini untuk evaluasi.');
   let current=structuredClone(result),cursor=0;
   while(cursor<ids.length){
@@ -28,11 +29,11 @@ export async function evaluateWorkspace(result: QuizResult, targets: string[] | 
       const input={quiz:current.quiz,submission:current.submission,settings,targetQuestionIds:group,previous};
       if(repository.scope==='guest'){
         const {evaluateSingleCall}=await import('../server/evaluationService.js');
-        evaluations=await evaluateSingleCall(input,await localCredential(key.id),model,AbortSignal.any([signal,AbortSignal.timeout(45000)]));
+        evaluations=await evaluateSingleCall(input,await localCredential(key.id),model,AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]));
         await repository.recordKeyOutcome(key.id,'available');
-      }else evaluations=(await invokeAccount({action:'evaluate',input,model,keyId:key.id},signal,repository.scope)).evaluations;
+      }else evaluations=(await invokeAccount({action:'evaluate',input,model,effort:settings.effort,keyId:key.id},signal,repository.scope)).evaluations;
     }catch(error){
-      if(!signal.aborted&&repository.scope==='guest')await repository.recordKeyOutcome(key.id,keyStatus(error));
+      if(!signal.aborted&&repository.scope==='guest')await repository.recordKeyOutcome(key.id,keyStatus(error),quotaPauseUntil(error));
       throw error;
     }
     const next=buildResult(current.quiz,current.submission,{...previous,...evaluations},settings);

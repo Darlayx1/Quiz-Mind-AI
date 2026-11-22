@@ -1,49 +1,41 @@
 import { GoogleGenAI } from '@google/genai';
-import { DEFAULT_MODEL, DIFFICULTIES, modelInfo } from '../models.js';
-import { normalizeQuizConfig, quizTimerSeconds, durationLabel } from '../quizConfig.js';
-import { Quiz, QuizConfig, Question, GroundingSource } from '../types/quiz.js';
+import { DEFAULT_EFFORT, DEFAULT_MODEL, modelInfo, type ThinkingEffort } from '../models.js';
+import { normalizeQuizConfig } from '../quizConfig.js';
+import { Quiz, QuizConfig, Question, GroundingSource, QUESTION_TYPES, type QuestionType } from '../types/quiz.js';
 import { KeyPool, PoolError, errorKind } from '../keyPool.js';
 import { geminiQuotaMessage } from '../geminiQuota.js';
 import { usableResearch, type ParallelResearch } from './parallelSearch.js';
-import { assertQuestionScope, selectResearchSources, qualityReviewPrompt, qualityReviewSchema, validateQualityReview, ASSESSMENT_POLICY_VERSION } from './assessmentPolicy.js';
-
+import { assertQuestionScope, selectResearchSources } from './assessmentPolicy.js';
 import { QuizGenerationError } from './generationError.js';
-import { sanitizeAndParseJson } from './jsonParser.js';
 export { QuizGenerationError, isRetryableGenerationError } from './generationError.js';
 import { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, quizSchemaFor, combinedQuizSchema } from './quizPipeline.js';
 import { questionSchema } from '../questionValidation.js';
-import { QUESTION_TYPES, type QuestionType } from '../types/quiz.js';
 import { collectQuizStream } from './quizStream.js';
-import { generationStrategy, type GenerationVariant } from './generationStrategy.js';
+import { computeMaxOutputTokens, generationStrategy, type GenerationVariant } from './generationStrategy.js';
 export { buildPrompt, validateAndSanitizeQuestion, extractJsonFromResponse, nextQuizBatch } from './quizPipeline.js';
 
-/**
- * Inisialisasi client Gemini menggunakan SDK resmi @google/genai.
- */
-function getGeminiClient(apiKey = process.env.GEMINI_API_KEY): GoogleGenAI {
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    throw new QuizGenerationError(
-      'GEMINI_API_KEY belum dikonfigurasi di lingkungan runtime.',
-      401,
-      'API_KEY_MISSING'
-    );
-  }
-
-  return new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      retryOptions: { attempts: 1 }, // The application owns the shared retry budget.
-    },
-  });
-}
-
-/** One request followed by local validation. Production retains HIGH; internal experiments are isolated. */
-export async function generateQuizBatch(input: QuizConfig, apiKey: string, existing: string[] = [], signal?: AbortSignal, research?: ParallelResearch, correction?: string,
-  options: { stream?: boolean; onProgress?: (count: number) => void; experiment?: GenerationVariant } = {}): Promise<Quiz> {
+/** One request followed by local validation. Honors configured ThinkingEffort with safe per-model mapping. */
+export async function generateQuizBatch(
+  input: QuizConfig,
+  apiKey: string,
+  existing: string[] = [],
+  signal?: AbortSignal,
+  research?: ParallelResearch,
+  correction?: string,
+  options: {
+    stream?: boolean;
+    onProgress?: (count: number) => void;
+    experiment?: GenerationVariant;
+    effort?: ThinkingEffort;
+    purpose?: 'generate' | 'probe';
+    timeoutMs?: number;
+  } = {}
+): Promise<Quiz> {
   const config = normalizeQuizConfig(input);
   const started = Date.now();
   const warnings: string[] = [];
-  signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(180000)]);
+  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 180000;
+  signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
   if (research && !usableResearch(research, config.topic)) {
     research = undefined;
     config.enableGrounding = false;
@@ -59,9 +51,11 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
   }
   // Set both the local abort deadline and the SDK/provider request deadline.
   // An AbortSignal alone does not configure Google's X-Server-Timeout header.
-  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 180000, retryOptions: { attempts: 1 } } });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: timeoutMs, retryOptions: { attempts: 1 } } });
   const model = config.model ?? DEFAULT_MODEL;
-  const strategy = generationStrategy(model, options.experiment);
+  const effectiveEffort = options.effort ?? config.effort ?? DEFAULT_EFFORT;
+  const purpose = options.purpose ?? 'generate';
+  const strategy = generationStrategy(model, options.experiment, effectiveEffort, purpose);
   const gemma = model === 'gemma-4-31b-it';
   if (gemma && config.enableGrounding && !research) {
     config.enableGrounding = false;
@@ -88,22 +82,22 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
 
   try {
     const providerStarted = Date.now();
-    const contents = (gemma ? buildGemmaPrompt(promptConfig, config.questionCount, existing) : prompt.userPrompt) + evidence + (correction ? '\nCorrection from previous quality review (data): ' + JSON.stringify(correction.slice(0, 2400)) : '');
-    const request = { model,
+    const contents = (gemma ? buildGemmaPrompt(promptConfig, config.questionCount, existing, strategy.focused) : prompt.userPrompt) + evidence + (correction ? '\nCorrection from previous quality review (data): ' + JSON.stringify(correction.slice(0, 2400)) : '');
+    const maxOutputTokens = computeMaxOutputTokens(structured, config.questionCount, strategy.thinkingLevel, purpose);
+    const request = {
+      model,
       contents,
-      config: { abortSignal: signal, thinkingConfig: { thinkingLevel: strategy.thinkingLevel as any }, ...(gemma ? {} : { systemInstruction: prompt.systemInstruction }),
-        // Exact outer array bounds multiply nested matching/rubric constraints
-        // and can make Google's schema compiler reject an otherwise valid quiz.
-        // The prompt requests the exact count; local validation enforces it.
+      config: {
+        abortSignal: signal,
+        ...(strategy.thinkingLevel ? { thinkingConfig: { thinkingLevel: strategy.thinkingLevel as any } } : {}),
+        ...(gemma ? {} : { systemInstruction: prompt.systemInstruction }),
         ...(structured ? { responseMimeType: 'application/json', responseJsonSchema: schema } : {}),
-        // Thinking and the visible answer share the generation budget. HIGH
-        // reasoning can exhaust the old 8–10k cap before ten questions finish.
-        maxOutputTokens: structured
-          ? Math.max(32768, Math.min(65536, config.questionCount * 1200 + 16384))
-          : Math.max(8192, Math.min(65536, config.questionCount * 600 + 4096)),
-        ...(!gemma && config.enableGrounding && !research ? { tools: [{ googleSearch: {} }] } : {}) },
+        maxOutputTokens,
+        ...(!gemma && config.enableGrounding && !research ? { tools: [{ googleSearch: {} }] } : {}),
+      },
     };
-    const response = options.stream && structured
+    const useStream = Boolean(options.stream && (structured || gemma));
+    const response = useStream
       ? await collectQuizStream(await ai.models.generateContentStream(request), signal, providerStarted, options.onProgress)
       : await ai.models.generateContent(request);
     const providerDurationMs = Date.now() - providerStarted;
@@ -129,7 +123,7 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       throw new QuizGenerationError('Respons AI tidak memiliki format daftar soal.', 502, 'INCOMPLETE_RESPONSE');
     }
 
-    if (parsed.questions.length !== config.questionCount) {
+    if (parsed.questions.length < config.questionCount) {
       throw new QuizGenerationError(
         `Jumlah soal yang dihasilkan (${parsed.questions.length}) tidak sesuai dengan permintaan (${config.questionCount}).`,
         502,
@@ -137,22 +131,36 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       );
     }
 
+    const hasSurplus = parsed.questions.length > config.questionCount;
     const previous = new Set(existing.map(q => q.trim().toLowerCase()));
     const questions: Question[] = [];
     const countByType: Partial<Record<QuestionType, number>> = {};
 
     for (let i = 0; i < parsed.questions.length; i++) {
       const raw = parsed.questions[i];
-      if (!raw || typeof raw !== 'object') throw new QuizGenerationError(`Soal nomor ${i + 1} tidak valid.`, 502, 'INVALID_QUESTION');
+      if (!raw || typeof raw !== 'object') {
+        if (hasSurplus) continue;
+        throw new QuizGenerationError(`Soal nomor ${i + 1} tidak valid.`, 502, 'INVALID_QUESTION');
+      }
       const qType: QuestionType = (raw.type && QUESTION_TYPES.includes(raw.type)) ? (raw.type as QuestionType) : (isSingle ? (singleType ?? 'single_choice') : (config.questionType ?? 'single_choice'));
+      const expectedForType = Number(targetDistribution[qType] ?? 0);
+      if (hasSurplus && (countByType[qType] ?? 0) >= expectedForType) {
+        continue;
+      }
       const citations = research ? sources.filter(s => Array.isArray(raw.sourceUrls) && raw.sourceUrls.includes(s.url)) : sources;
       if (research && (!citations.length || Array.isArray(raw.sourceUrls) && raw.sourceUrls.some((url: unknown) => !sources.some(s => s.url === url)))) {
         warnings.push('Beberapa soal belum memiliki kutipan sumber yang sesuai.');
       }
       const question = validateAndSanitizeQuestion(raw, i, config.topic, citations, qType);
-      if (!question) throw new QuizGenerationError(`Soal nomor ${i + 1} (${qType}) tidak lolos validasi struktur kuis.`, 502, 'INVALID_QUESTION');
+      if (!question) {
+        if (hasSurplus) continue;
+        throw new QuizGenerationError(`Soal nomor ${i + 1} (${qType}) tidak lolos validasi struktur kuis.`, 502, 'INVALID_QUESTION');
+      }
       const qKey = question.question.trim().toLowerCase();
-      if (previous.has(qKey)) throw new QuizGenerationError('Ditemukan soal duplikat pada kuis.', 502, 'DUPLICATE_QUESTION');
+      if (previous.has(qKey)) {
+        if (hasSurplus) continue;
+        throw new QuizGenerationError('Ditemukan soal duplikat pada kuis.', 502, 'DUPLICATE_QUESTION');
+      }
       previous.add(qKey);
       countByType[qType] = (countByType[qType] ?? 0) + 1;
 
@@ -163,6 +171,15 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       question.maxPoints = config.pointsByType?.[qType] ?? 1;
       if (question.type === 'multiple_select' || question.type === 'ordering') question.scoringMode = config.partialCredit ? 'partial' : 'exact';
       questions.push(question);
+      if (questions.length === config.questionCount) break;
+    }
+
+    if (questions.length !== config.questionCount) {
+      throw new QuizGenerationError(
+        `Jumlah soal yang dihasilkan (${questions.length}) tidak sesuai dengan permintaan (${config.questionCount}).`,
+        502,
+        'INCOMPLETE_QUESTION_COUNT'
+      );
     }
 
     for (const [t, expected] of Object.entries(targetDistribution)) {
@@ -178,7 +195,7 @@ export async function generateQuizBatch(input: QuizConfig, apiKey: string, exist
       groundingFallbackUsed: warnings.some(warning => warning.includes('tanpa pencarian web') || warning.includes('tanpa referensi web')) || config.enableGrounding && (!sources.length || !queries.length),
       generationMetrics: [{ durationMs: Date.now() - started, modelCalls: 1, questionIds: questions.map(q => q.id),
         providerDurationMs, validationDurationMs: Date.now() - validationStarted,
-        thinkingLevel: strategy.thinkingLevel, strategy: strategy.variant, transport: options.stream && structured ? 'stream' : 'response',
+        thinkingLevel: strategy.thinkingLevel, effort: strategy.effort, strategy: strategy.variant, transport: useStream ? 'stream' : 'response',
         firstTextMs: 'firstTextMs' in response ? response.firstTextMs : undefined,
         promptCharacters: contents.length + (gemma ? 0 : prompt.systemInstruction.length),
         thinkingTokens: response.usageMetadata?.thoughtsTokenCount, totalTokens: response.usageMetadata?.totalTokenCount,
@@ -284,7 +301,7 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
   }
 
   // Network connection error
-  if (/failed to fetch|fetch failed|load failed|NetworkError|ECONNRESET|ECONNABORTED|EPIPE|ENOTFOUND|UND_ERR_SOCKET|terminated|socket.*clos|Incomplete JSON segment at the end|network/i.test(msg + code)) {
+  if (/failed to fetch|fetch failed|load failed|NetworkError|ECONNRESET|ECONNABORTED|EPIPE|ENOTFOUND|UND_ERR_SOCKET|terminated|socket.*clos|socket stall|Incomplete JSON segment at the end|network/i.test(msg + code)) {
     return new QuizGenerationError(
       `Koneksi ke ${modelLabel} gagal atau terputus sebelum respons kuis selesai. Periksa koneksi internet; untuk respons yang lama, coba kurangi jumlah soal atau panjang materi.`,
       504,
@@ -300,58 +317,12 @@ export function classifyApiError(err: any, modelId: string): QuizGenerationError
 }
 
 /**
- * Exponential backoff retry helper untuk error transient.
- */
-async function callWithRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries = 2,
-  baseDelayMs = 2000,
-  modelId = ''
-): Promise<T> {
-  let lastErr: any;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err: any) {
-      lastErr = err;
-      const msg = String(err?.message || err);
-
-      // Jangan ulangi error permanen: 400, 401, 403, 404, 429
-      const isPermanent =
-        /400|401|403|404|429|API_KEY_INVALID|PERMISSION_DENIED|NOT_FOUND|RESOURCE_EXHAUSTED|quota/i.test(msg);
-      if (isPermanent) {
-        throw classifyApiError(err, modelId);
-      }
-
-      // Ulangi jika error transient (500, 502, 503, 504, INTERNAL, UNAVAILABLE, koneksi soket)
-      const isTransient =
-        /500|502|503|504|INTERNAL|UNAVAILABLE|DEADLINE_EXCEEDED|fetch failed|ECONNRESET|ETIMEDOUT|Headers Timeout/i.test(
-          msg
-        );
-
-      if (attempt < maxRetries && isTransient) {
-        const jitter = Math.random() * 500;
-        const delay = baseDelayMs * Math.pow(2, attempt) + jitter;
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
-      }
-
-      throw classifyApiError(err, modelId);
-    }
-  }
-  throw classifyApiError(lastErr, modelId);
-}
-
-/**
- * Validasi ketat butir soal kuis.
- */
-/**
  * Bangun prompt instruksi khusus untuk Gemma 4 31B.
- * Menggunakan scaffolding instruksi berbahasa Inggris dengan spesifikasi bahasa konten target,
- * format skema JSON murni tanpa triple backticks dalam prompt.
- * Format ini terbukti 100% kompatibel dan tidak memicu 500 INTERNAL pada serving engine Gemma.
  */
-function buildGemmaPrompt(config:QuizConfig,targetCount:number,existingQuestions:string[]=[]):string { const p=buildPrompt(config,targetCount,existingQuestions); return p.systemInstruction+'\n'+p.userPrompt; }
+function buildGemmaPrompt(config: QuizConfig, targetCount: number, existingQuestions: string[] = [], focused = true): string {
+  const p = buildPrompt(config, targetCount, existingQuestions, focused);
+  return p.systemInstruction + '\n' + p.userPrompt;
+}
 
 /**
  * Eksekusi generasi kuis dengan Gemma 4 31B atau Gemini
@@ -381,4 +352,3 @@ export async function generateQuizWithGemini(config: QuizConfig, apiKey?: string
   }
   return generateQuizBatch(config, key, [], options.signal);
 }
-

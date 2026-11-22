@@ -80,6 +80,7 @@ export const localRepository: WorkspaceRepository = {
       fingerprint: digest ?? existing!.fingerprint, enabled: input.enabled ?? existing?.enabled ?? true,
       priority: input.priority ?? existing?.priority ?? (Math.max(0, ...all.map(k => k.priority)) + 1),
       status: secret ? 'untested' : existing!.status, testedAt: secret ? undefined : existing?.testedAt,
+      pausedUntil: secret ? undefined : existing?.pausedUntil,
       successes: existing?.successes ?? 0, failures: existing?.failures ?? 0 });
     if (secret) await tx.objectStore('credentials').put(secret, id);
     await tx.done; localChanges();
@@ -91,9 +92,9 @@ export const localRepository: WorkspaceRepository = {
     if (saved?.data.preferences.keyId === id) { saved.data.preferences.keyId = null; saved.revision++; await tx.objectStore('workspace').put(saved, 'active'); }
     await tx.done; localChanges();
   },
-  async recordKeyOutcome(id, status: KeyStatus) {
+  async recordKeyOutcome(id, status: KeyStatus, pausedUntil?: string) {
     const db = await dbPromise(); const tx = db.transaction('keys', 'readwrite'); const key = await tx.store.get(id);
-    if (key) { key.status = status; key.testedAt = new Date().toISOString(); if (status === 'available') key.successes++; else key.failures++; await tx.store.put(key); }
+    if (key) { key.status = status; key.testedAt = new Date().toISOString(); key.pausedUntil = status === 'quota' ? pausedUntil : undefined; if (status === 'available') key.successes++; else key.failures++; await tx.store.put(key); }
     await tx.done; localChanges();
   },
 };

@@ -1,4 +1,4 @@
-import type { AIModel, AIProvider } from "../models.js";
+import type { AIModel, AIProvider, ApiThinkingLevel, ThinkingEffort } from "../models.js";
 export type DifficultyLevel =
   (typeof import("../models.js").DIFFICULTIES)[number]["id"];
 export type QuizDisplayMode = "non_sequential" | "sequential";
@@ -15,6 +15,7 @@ export interface Item { id: string; text: string }
 export interface RubricCriterion { id: string; description: string; weight: number; anchors: string[] }
 export interface EvaluationSettings {
   enabled: boolean; followGenerator: boolean; provider: AIProvider; model: string;
+  effort?: ThinkingEffort;
   shortAnswerMode: 'hybrid' | 'ai'; allowKeyFallback: boolean; allowModelFallback: boolean;
   fallbackModel: string; allowProviderFallback: boolean; fallbackProvider: AIProvider; fallbackProviderModel: string; reviewFlagged: boolean;
 }
@@ -61,7 +62,7 @@ export interface Quiz {
   targetAudience?: string;
   qualityReviews?: import('../server/assessmentPolicy.js').QualityReviewRecord[];
   generationMetrics?: { durationMs: number; modelCalls: number; questionIds: string[]; inputTokens?: number; outputTokens?: number;
-    providerDurationMs?: number; validationDurationMs?: number; thinkingLevel?: 'HIGH' | 'MEDIUM'; promptCharacters?: number;
+    providerDurationMs?: number; validationDurationMs?: number; thinkingLevel?: ApiThinkingLevel; effort?: ThinkingEffort; promptCharacters?: number;
     strategy?: import('../server/generationStrategy.js').GenerationVariant;
     thinkingTokens?: number; totalTokens?: number; firstTextMs?: number; transport?: 'stream' | 'response' }[];
   searchProvider?: 'google' | 'parallel';
@@ -104,6 +105,7 @@ export interface QuizConfig {
   evaluationSettings?: EvaluationSettings;
   provider?: AIProvider;
   model?: AIModel;
+  effort?: ThinkingEffort;
   topic: string;
   studyMaterial?: string;
   difficulty: DifficultyLevel;

@@ -58,35 +58,73 @@ export class QuestionStreamCounter {
 const unique = <T>(items: T[]) => [...new Map(items.map(item => [JSON.stringify(item), item])).values()];
 
 /** Collect one request's stream without exposing drafts as a playable quiz. */
-export async function collectQuizStream(stream: AsyncIterable<GenerateContentResponse>, signal: AbortSignal,
-  started: number, onProgress?: (count: number) => void) {
+export async function collectQuizStream(
+  stream: AsyncIterable<GenerateContentResponse>,
+  signal: AbortSignal,
+  started: number,
+  onProgress?: (count: number) => void,
+  stallTimeoutMs = 60000
+) {
   let text = '', firstTextMs: number | undefined;
   let candidate: NonNullable<GenerateContentResponse['candidates']>[number] | undefined;
   let usageMetadata: GenerateContentResponse['usageMetadata'];
   let promptFeedback: GenerateContentResponse['promptFeedback'];
   const counter = new QuestionStreamCounter();
-  for await (const chunk of stream) {
-    signal.throwIfAborted();
-    const incoming = chunk.candidates?.[0];
-    const part = incoming?.content?.parts?.filter(p => !p.thought).map(p => p.text ?? '').join('') ?? chunk.text ?? '';
-    if (part) {
-      firstTextMs ??= Date.now() - started;
-      text += part;
-      const previous = counter.count;
-      const received = counter.append(part);
-      if (received > previous) onProgress?.(received);
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  const stallController = new AbortController();
+  const resetStallTimer = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    if (firstTextMs !== undefined && stallTimeoutMs > 0) {
+      stallTimer = setTimeout(() => {
+        stallController.abort(new Error('Aliran respons AI terhenti di tengah pengiriman (socket stall).'));
+      }, stallTimeoutMs);
     }
-    if (incoming) {
-      const previousGrounding = candidate?.groundingMetadata;
-      const grounding = incoming.groundingMetadata;
-      candidate = { ...candidate, ...incoming, finishReason: incoming.finishReason ?? candidate?.finishReason,
-        ...(previousGrounding || grounding ? { groundingMetadata: { ...previousGrounding, ...grounding,
-          groundingChunks: unique([...(previousGrounding?.groundingChunks ?? []), ...(grounding?.groundingChunks ?? [])]),
-          webSearchQueries: unique([...(previousGrounding?.webSearchQueries ?? []), ...(grounding?.webSearchQueries ?? [])])
-        } } : {}) };
+  };
+  const combinedSignal = AbortSignal.any([signal, stallController.signal]);
+
+  try {
+    for await (const chunk of stream) {
+      if (stallController.signal.aborted) throw stallController.signal.reason;
+      signal.throwIfAborted();
+      const incoming = chunk.candidates?.[0];
+      const parts = incoming?.content?.parts;
+      const part = Array.isArray(parts)
+        ? parts.filter(p => !p.thought).map(p => p.text ?? '').join('')
+        : (chunk.text ?? '');
+      if (part) {
+        firstTextMs ??= Date.now() - started;
+        resetStallTimer();
+        text += part;
+        const previous = counter.count;
+        const received = counter.append(part);
+        if (received > previous) onProgress?.(received);
+      }
+      if (incoming) {
+        const previousGrounding = candidate?.groundingMetadata;
+        const grounding = incoming.groundingMetadata;
+        candidate = {
+          ...candidate,
+          ...incoming,
+          finishReason: incoming.finishReason ?? candidate?.finishReason,
+          ...(previousGrounding || grounding ? {
+            groundingMetadata: {
+              ...previousGrounding,
+              ...grounding,
+              groundingChunks: unique([...(previousGrounding?.groundingChunks ?? []), ...(grounding?.groundingChunks ?? [])]),
+              webSearchQueries: unique([...(previousGrounding?.webSearchQueries ?? []), ...(grounding?.webSearchQueries ?? [])])
+            }
+          } : {})
+        };
+      }
+      if (chunk.usageMetadata) usageMetadata = { ...usageMetadata, ...chunk.usageMetadata };
+      promptFeedback = chunk.promptFeedback ?? promptFeedback;
+      if (combinedSignal.aborted) {
+        if (stallController.signal.aborted) throw stallController.signal.reason;
+        signal.throwIfAborted();
+      }
     }
-    if (chunk.usageMetadata) usageMetadata = { ...usageMetadata, ...chunk.usageMetadata };
-    promptFeedback = chunk.promptFeedback ?? promptFeedback;
+  } finally {
+    if (stallTimer) clearTimeout(stallTimer);
   }
   signal.throwIfAborted();
   return { text, candidates: candidate ? [candidate] : [], usageMetadata, promptFeedback, firstTextMs };

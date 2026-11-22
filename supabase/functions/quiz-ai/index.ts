@@ -1,16 +1,25 @@
 // @ts-nocheck -- Deno Edge runtime; bundled independently from the Vite application.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { generateQuizBatch, classifyApiError } from '../_shared/quiz-engine.ts';
-import { evaluateSingleCall } from '../_shared/evaluation-engine.ts';
+import { evaluateSingleCall, evaluationTimeoutsForEffort } from '../_shared/evaluation-engine.ts';
 
 import { searchParallel, usableResearch } from '../../../src/server/parallelSearch.ts';
 import { normalizeQuizConfig } from '../../../src/quizConfig.ts';
+import { normalizeEffort } from '../../../src/models.ts';
 
 const headers = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json'
+};
+const sseHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Content-Type': 'text/event-stream; charset=utf-8',
+  'Cache-Control': 'no-cache, no-transform',
+  'Connection': 'keep-alive'
 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const url = Deno.env.get('SUPABASE_URL');
@@ -54,6 +63,14 @@ function watchGenerationCancellation(job, userId, requestSignal, isBackground = 
   };
 }
 
+function isKeyEligible(k, now = Date.now()) {
+  if (k.status !== 'quota') return true;
+  if (k.paused_until && Number.isFinite(Date.parse(k.paused_until))) {
+    return Date.parse(k.paused_until) <= now;
+  }
+  return !(k.tested_at && Date.parse(k.tested_at) + 86400000 > now);
+}
+
 Deno.serve(async request => {
   if (request.method === 'OPTIONS') return new Response(null, { headers });
   if (request.method !== 'POST') return json({ error: 'Metode tidak didukung' }, 405);
@@ -70,13 +87,40 @@ Deno.serve(async request => {
     if (raw.length > 2000000) return json({ error: 'Permintaan terlalu besar.' }, 413);
     const body = JSON.parse(raw);
 
-    // Status/cancel never dispatch AI. Avoid loading keys on every polling request.
-    let keys = [];
-    if (!['status', 'cancel'].includes(body.action)) {
+    if (body.action === 'status') {
+      if (!/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
+      const { data: jobRow, error: pollError } = await admin.from('qm_ai_jobs').select('id,status,phase,cursor,policy_version,lease_until,result').eq('id', body.operationId).eq('user_id', userId).single();
+      if (pollError || !jobRow) return json({ error: 'Operasi tidak ditemukan.' }, 404);
+      const leaseExpired = jobRow.status === 'running' && jobRow.lease_until && Number.isFinite(Date.parse(jobRow.lease_until)) && Date.parse(jobRow.lease_until) < Date.now();
+      const effectiveStatus = leaseExpired ? 'failed_after_dispatch' : jobRow.status;
+      return json({
+        id: jobRow.id,
+        status: effectiveStatus,
+        phase: leaseExpired ? 'failed_after_dispatch' : jobRow.phase,
+        receivedQuestionCount: jobRow.cursor || 0,
+        policyVersion: jobRow.policy_version,
+        complete: effectiveStatus === 'completed',
+        quiz: effectiveStatus === 'completed' ? jobRow.result : undefined,
+        error: ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(effectiveStatus)
+          ? (jobRow.result?.error || (leaseExpired ? 'Operasi melewati batas waktu pemrosesan server. Silakan coba kembali.' : 'Operasi gagal.'))
+          : undefined,
+        code: jobRow.result?.code || (leaseExpired ? 'TIMEOUT' : undefined),
+        statusCode: jobRow.result?.statusCode || (leaseExpired ? 504 : undefined)
+      });
+    }
+
+    if (body.action === 'cancel') {
+      if (!/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
+      await admin.rpc('qm_cancel_job', { p_id: body.operationId });
+      return json({ success: true, status: 'cancelled' });
+    }
+
+    const loadKeys = async () => {
       const { data, error } = await admin.from('qm_api_keys').select('*').eq('user_id', userId).eq('enabled', true).order('priority').order('id');
       if (error) throw new Error('Penyimpanan akun belum siap.');
-      keys = data.filter(k => !(k.status === 'quota' && k.tested_at && Date.parse(k.tested_at) + 86400000 > Date.now()));
-    }
+      return data.filter(k => isKeyEligible(k));
+    };
+
     const getSecret = async key => {
       const { data, error } = await admin.rpc('qm_service_credential', { p_user: userId, p_key: key.id });
       if (error || !data) throw new Error('Key tidak tersedia pada akun ini.');
@@ -84,11 +128,12 @@ Deno.serve(async request => {
     };
 
     if (body.action === 'test') {
+      const keys = await loadKeys();
       const key = keys.find(k => k.id === body.keyId);
       if (!key) return json({ error: 'Key aktif tidak ditemukan pada akun ini.' }, 404);
       try {
         if (key.provider === 'parallel') await searchParallel('Penjumlahan sederhana', await getSecret(key), request.signal);
-        else await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], request.signal);
+        else await generateQuizBatch({ model: body.model, topic: 'Penjumlahan sederhana', questionCount: 1, difficulty: 'easy', timeLimitMinutes: 0, language: 'id', enableGrounding: false }, await getSecret(key), [], request.signal, undefined, undefined, { purpose: 'probe', timeoutMs: 25000 });
         await outcome(key.id, userId, 'available');
         return json({ success: true });
       } catch (error) {
@@ -99,13 +144,21 @@ Deno.serve(async request => {
     }
 
     if (body.action === 'evaluate') {
+      const keys = await loadKeys();
       const key = keys.find(k => k.id === body.keyId && k.provider !== 'parallel');
       if (!key) return json({ error: 'Key aktif tidak tersedia pada akun ini.' }, 404);
       const { data: workspace, error } = await admin.from('qm_workspaces').select('data').eq('user_id', userId).single();
       const stored = workspace?.data?.history?.find(h => h.quiz.id === body.input?.quiz?.id)?.lastResult;
       if (error || !stored || stored.submission.completedAt !== body.input?.submission?.completedAt) return json({ error: 'Jawaban belum tersimpan pada akun aktif.' }, 409);
       try {
-        const evaluations = await evaluateSingleCall({ ...body.input, quiz: stored.quiz, submission: stored.submission }, await getSecret(key), body.model, AbortSignal.timeout(45000));
+        const effort = normalizeEffort(body.effort ?? body.input?.settings?.effort ?? stored.quiz?.evaluationSettings?.effort, body.model);
+        const { timeoutMs } = evaluationTimeoutsForEffort(effort, body.model);
+        const evaluations = await evaluateSingleCall(
+          { ...body.input, settings: { ...(body.input?.settings || {}), effort }, quiz: stored.quiz, submission: stored.submission },
+          await getSecret(key),
+          body.model,
+          AbortSignal.timeout(timeoutMs)
+        );
         await outcome(key.id, userId, 'available');
         return json({ evaluations });
       } catch (error) {
@@ -115,31 +168,7 @@ Deno.serve(async request => {
       }
     }
 
-    if (body.action === 'status') {
-      if (!/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
-      const { data: jobRow, error: pollError } = await admin.from('qm_ai_jobs').select('id,status,phase,cursor,policy_version,result').eq('id', body.operationId).eq('user_id', userId).single();
-      if (pollError || !jobRow) return json({ error: 'Operasi tidak ditemukan.' }, 404);
-      return json({
-        id: jobRow.id,
-        status: jobRow.status,
-        phase: jobRow.phase,
-        receivedQuestionCount: jobRow.cursor || 0,
-        policyVersion: jobRow.policy_version,
-        complete: jobRow.status === 'completed',
-        quiz: jobRow.status === 'completed' ? jobRow.result : undefined,
-        error: ['failed_after_dispatch', 'failed_preflight', 'failed'].includes(jobRow.status) ? (jobRow.result?.error || 'Operasi gagal.') : undefined,
-        code: jobRow.result?.code,
-        statusCode: jobRow.result?.statusCode
-      });
-    }
-
-    if (body.action === 'cancel') {
-      if (!/^[0-9a-f-]{36}$/i.test(body.operationId)) return json({ error: 'Operasi tidak valid.' }, 400);
-      await admin.rpc('qm_cancel_job', { p_id: body.operationId });
-      return json({ success: true, status: 'cancelled' });
-    }
-
-    if (!['generate', 'start'].includes(body.action) || !/^[0-9a-f-]{36}$/i.test(body.operationId)) {
+    if (!['generate', 'start', 'stream'].includes(body.action) || !/^[0-9a-f-]{36}$/i.test(body.operationId)) {
       return json({ error: 'Operasi tidak valid.' }, 400);
     }
 
@@ -151,12 +180,17 @@ Deno.serve(async request => {
       return json({ error: 'Penyedia pencarian tidak valid.' }, 400);
     }
 
-    const { data: claimed, error: claimError } = await admin.rpc('qm_claim_job', {
-      p_user: userId,
-      p_id: body.operationId,
-      p_config: body.config,
-      p_preferences: preferences ?? {}
-    });
+    // Parallelize key lookup and job claim to save a database roundtrip
+    const [keys, claimResponse] = await Promise.all([
+      loadKeys(),
+      admin.rpc('qm_claim_job', {
+        p_user: userId,
+        p_id: body.operationId,
+        p_config: body.config,
+        p_preferences: preferences ?? {}
+      })
+    ]);
+    const { data: claimed, error: claimError } = claimResponse;
     if (claimError) {
       return json(
         { error: claimError.code === '55P03' ? 'Operasi masih diproses atau telah dikirim sebelumnya.' : claimError.message },
@@ -176,9 +210,14 @@ Deno.serve(async request => {
     const selectedKey = generationKeys.find(k => k.id === preferences?.keyId) || generationKeys[0];
     if (!selectedKey) throw Object.assign(new Error('Tambahkan API key aktif pada akun ini.'), { status: 400 });
 
-    const fullConfig = normalizeQuizConfig({ ...body.config, model: preferences?.model, enableGrounding: preferences?.grounding });
+    const fullConfig = normalizeQuizConfig({
+      ...body.config,
+      model: preferences?.model,
+      enableGrounding: preferences?.grounding,
+      ...(preferences?.effort !== undefined ? { effort: preferences.effort } : {})
+    });
 
-    const executeGeneration = async (isBackground = false) => {
+    const executeGeneration = async (isBackground = false, onStreamEvent = undefined) => {
       const cancellation = watchGenerationCancellation(job, userId, request.signal, isBackground);
       try {
         let research = job.result?.parallelResearch;
@@ -187,6 +226,7 @@ Deno.serve(async request => {
           const searchKey = keys.find(k => k.provider === 'parallel');
           if (!searchKey) throw Object.assign(new Error('Tambahkan atau aktifkan satu API key Parallel pada akun ini.'), { status: 400, code: 'PARALLEL_KEY_MISSING' });
           if (!usableResearch(research, fullConfig.topic, fullConfig)) {
+            onStreamEvent?.('phase', { phase: 'researching' });
             try {
               research = await searchParallel(fullConfig.topic, await getSecret(searchKey), cancellation.signal, fullConfig);
               await outcome(searchKey.id, userId, 'available');
@@ -204,19 +244,23 @@ Deno.serve(async request => {
 
         cancellation.signal.throwIfAborted();
 
-        // Atomic dispatch reservation: consumed ONCE before socket connection
-        const { data: reserved, error: reserveErr } = await admin.rpc('qm_reserve_dispatch', {
-          p_user: userId,
-          p_id: job.id,
-          p_lease: job.lease_token
-        });
-        if (reserveErr || !reserved) {
+        // Parallelize atomic dispatch reservation and credential retrieval
+        const [reserveRes, secret] = await Promise.all([
+          admin.rpc('qm_reserve_dispatch', {
+            p_user: userId,
+            p_id: job.id,
+            p_lease: job.lease_token
+          }),
+          getSecret(selectedKey)
+        ]);
+        if (reserveRes.error || !reserveRes.data) {
           throw Object.assign(new Error('Hak pengiriman model AI untuk operasi ini telah dikonsumsi.'), { status: 409, code: 'DISPATCH_ALREADY_RESERVED' });
         }
         job.dispatch_reserved_at = new Date().toISOString();
         job.model_call_count = 1;
 
         cancellation.signal.throwIfAborted();
+        onStreamEvent?.('phase', { phase: 'generating' });
 
         // Coalesce progress writes without blocking token reception. Progress is
         // advisory; only the final atomic commit publishes a validated quiz.
@@ -224,6 +268,7 @@ Deno.serve(async request => {
         let progressWrite;
         const onProgress = count => {
           latestProgress = Math.min(count, fullConfig.questionCount);
+          onStreamEvent?.('progress', { receivedQuestionCount: latestProgress, total: fullConfig.questionCount });
           if (progressWrite) return;
           progressWrite = (async () => {
             let saved = 0;
@@ -240,8 +285,12 @@ Deno.serve(async request => {
         try {
           quiz = await generateQuizBatch(
             fullConfig,
-            await getSecret(selectedKey), [], cancellation.signal,
-            research, undefined, { stream: true, onProgress }
+            secret,
+            [],
+            cancellation.signal,
+            research,
+            undefined,
+            { stream: true, onProgress, effort: fullConfig.effort }
           );
           await outcome(selectedKey.id, userId, 'available');
         } catch (error) {
@@ -266,6 +315,7 @@ Deno.serve(async request => {
         });
         if (commitError) throw new Error('Operasi berubah atau dibatalkan. Hasil kuis tidak dapat disimpan.');
 
+        onStreamEvent?.('complete', { quiz, complete: true });
         return json({ quiz, complete: true });
       } catch (error) {
         const timedOut = cancellation.signal.aborted && cancellation.signal.reason?.name === 'TimeoutError';
@@ -290,6 +340,50 @@ Deno.serve(async request => {
         cancellation.stop();
       }
     };
+
+    if (body.action === 'stream') {
+      const encoder = new TextEncoder();
+      const hasWaitUntil = typeof globalThis.EdgeRuntime?.waitUntil === 'function';
+      const stream = new ReadableStream({
+        start(controller) {
+          let closed = false;
+          const send = (event, payload) => {
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
+            } catch {
+              closed = true;
+            }
+          };
+          const heartbeat = setInterval(() => {
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(': heartbeat\n\n'));
+            } catch {
+              closed = true;
+            }
+          }, 5000);
+          const task = executeGeneration(hasWaitUntil, send)
+            .catch(err => {
+              const cancelled = err?.name === 'AbortError';
+              const status = cancelled ? 409 : (Number(err?.status) >= 400 && Number(err?.status) <= 599 ? Number(err.status) : 502);
+              const code = cancelled ? 'CANCELLED' : (err?.code || 'ACCOUNT_REQUEST_FAILED');
+              send('error', { error: cancelled ? 'Pembuatan kuis dibatalkan.' : (err?.message || 'Operasi AI belum berhasil.'), code, status });
+            })
+            .finally(() => {
+              clearInterval(heartbeat);
+              if (!closed) {
+                closed = true;
+                try { controller.close(); } catch { /* stream already closed */ }
+              }
+            });
+          if (hasWaitUntil) {
+            globalThis.EdgeRuntime.waitUntil(task);
+          }
+        }
+      });
+      return new Response(stream, { status: 200, headers: sseHeaders });
+    }
 
     if (body.action === 'start' && typeof globalThis.EdgeRuntime?.waitUntil === 'function') {
       globalThis.EdgeRuntime.waitUntil(
